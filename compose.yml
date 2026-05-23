@@ -1,4 +1,4 @@
-name: cloud-hygiene
+name: vigil
 
 services:
   db:
@@ -34,6 +34,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
       REDIS_URL: redis://redis:6379/0
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
     depends_on:
       db:
         condition: service_healthy
@@ -41,9 +45,10 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - ./api:/app
+      - ${HOME}/.aws:/root/.aws:ro
 
   worker:
     build:
@@ -52,6 +57,10 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
       REDIS_URL: redis://redis:6379/0
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
     depends_on:
       db:
         condition: service_healthy
@@ -60,6 +69,7 @@ services:
     command: watchfiles --filter python "celery -A app.worker.celery_app worker --beat --loglevel=info" app
     volumes:
       - ./api:/app
+      - ${HOME}/.aws:/root/.aws:ro
 
   web:
     build:

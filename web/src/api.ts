@@ -12,6 +12,11 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
   const t = token();
   if (t) headers["Authorization"] = `Bearer ${t}`;
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  if (res.status === 401) {
+    localStorage.removeItem("token");
+    window.location.href = "/login";
+    throw new Error("session expired");
+  }
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`${res.status}: ${body}`);

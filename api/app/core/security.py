@@ -21,10 +21,25 @@ def issue_token(sub: str, org_id: str, ttl_hours: int = 24) -> str:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
 
+def issue_mfa_challenge_token(sub: str, org_id: str) -> str:
+    now = datetime.now(timezone.utc)
+    payload = {
+        "type": "mfa_challenge",
+        "sub": sub,
+        "org_id": org_id,
+        "iat": int(now.timestamp()),
+        "exp": int((now + timedelta(minutes=5)).timestamp()),
+    }
+    return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
+
+
 def current_principal(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> dict:
     if not creds:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing token")
     try:
-        return jwt.decode(creds.credentials, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
+        payload = jwt.decode(creds.credentials, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
+        if payload.get("type") == "mfa_challenge":
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="MFA not verified")
+        return payload
     except JWTError as e:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"bad token: {e}")

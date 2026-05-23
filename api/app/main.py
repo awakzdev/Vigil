@@ -2,11 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routes import accounts, findings, auth
+from app.routes import accounts, findings, auth, auth_oauth
 
 settings = get_settings()
 
-app = FastAPI(title="Cloud Hygiene API", version="0.1.0")
+app = FastAPI(title="Vigil API", version="0.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,5 +22,6 @@ def healthz():
 
 
 app.include_router(auth.router, prefix="/v1/auth", tags=["auth"])
+app.include_router(auth_oauth.router, prefix="/v1/auth", tags=["auth"])
 app.include_router(accounts.router, prefix="/v1/accounts", tags=["accounts"])
 app.include_router(findings.router, prefix="/v1/findings", tags=["findings"])

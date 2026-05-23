@@ -52,15 +52,20 @@ HANDOFF.md      detailed status + roadmap (read this for scope)
 ## What works today
 
 - Signup / login (JWT, bcrypt + sha256 prehash — passlib removed due to bcrypt 4.x bug)
+- GitHub OAuth + Google OAuth (login + connect/disconnect from Account settings)
+- Account settings page: change/set password (SSO-aware), GitHub connect/disconnect
 - Create AWS account → CFN launch URL (pre-filled ExternalId + control plane principal)
 - Verify role via `sts:AssumeRole`
 - Trigger scan → Celery task
-- Collectors: IAM users + console password + MFA + access keys + last-used
-- 3 checks: `iam.user.inactive_90d`, `iam.access_key.unused_90d`, `iam.user.no_mfa`
+- Collectors: IAM users + console password + MFA + access keys + last-used + service last-accessed per role
+- 6 checks: `iam.user.inactive_90d`, `iam.access_key.unused_90d`, `iam.user.no_mfa`, `iam.role.unassumed_90d`, `iam.role.wildcard_action`, `iam.role.unused_services_90d`
 - Risk scoring (severity base + age + admin)
 - Diff-aware persist: open new, refresh existing, auto-resolve missing, auto-reopen
-- Findings UI: filter by status, severity chips, snooze/resolve/ignore
+- Findings UI: grouped by check, severity-tinted headers, indented rows, stat cards, snooze/resolve/ignore
+- Finding detail drawer: evidence (service pills, removable statements), Console/CLI remediation (auto-interpolates role/user/key names), generate least-privilege policy button (`GET /v1/accounts/:id/roles/generated-policy`)
+- Scan status polling + auto-refresh; Re-scan unlocks after 5 min if stuck
 - Hot reload everywhere: api (uvicorn --reload), worker (watchfiles), web (Vite HMR)
+- Service-linked roles (`/aws-service-role/`) excluded from all checks and perm-usage collection
 
 ## P0 (revised, in order)
 
@@ -120,6 +125,6 @@ docker compose up
 
 ## Repo
 
-https://github.com/awakzdev/cloud-hygiene
+https://github.com/awakzdev/Vigil
 
 Read `HANDOFF.md` for full status + 2-week roadmap. Read `README.md` for onboarding flow.

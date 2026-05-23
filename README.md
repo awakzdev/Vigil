@@ -1,84 +1,141 @@
-# Cloud Hygiene
+# Vigil
 
-AWS IAM hygiene for small teams. Read-only. Connect an account → daily scan → ranked findings + weekly digest.
+**AWS IAM hygiene for small teams.** Read-only. Connect an account → daily scan → ranked findings.
 
-MVP scope: one AWS account per org, three IAM checks (inactive users, unused access keys, console users without MFA).
+> Not a CSPM. Focused on the things that actually bite teams: stale access, over-permissive roles, forgotten keys, users without MFA.
 
-## Architecture (MVP)
+---
+
+## How it works
 
 ```
-[browser] → [caddy] → ┬→ [api FastAPI :8000]
-                      └→ [web React :5173]
-                              ↓
-                    [postgres]   [redis] ← [worker Celery + beat]
-                                                ↓
-                                       sts:AssumeRole → customer AWS
+Your browser
+     │
+     ▼
+  Caddy (reverse proxy)
+     ├──▶ API (FastAPI :8000) ──▶ Postgres
+     └──▶ Web (React :5173)
+                                    ▲
+                               Worker (Celery)
+                                    │
+                              sts:AssumeRole
+                                    │
+                                    ▼
+                            Customer AWS account
+                         (read-only, via CFN role)
 ```
 
-Single VPS. Docker Compose. No microservices, no k8s.
+Single VPS · Docker Compose · No k8s · No microservices
 
-## Quickstart (dev)
+---
+
+## Quickstart
 
 ```bash
 cp .env.example .env
-# Set TRUST_PRINCIPAL_ARN to your AWS control-plane account root or scanner role ARN.
+# Required: set TRUST_PRINCIPAL_ARN to your scanner role/account ARN
+# Required: set JWT_SECRET to a long random string
 
 docker compose up -d db redis
 docker compose run --rm api alembic upgrade head
 docker compose up api worker web
 ```
 
-Open http://localhost:5173 → sign up → connect AWS account.
+Open **http://localhost:5173**
 
-## Onboarding flow
+---
 
-1. Sign up (email + password).
-2. `Accounts` page → name account (e.g. `prod`) → `Create`.
-3. Click **Launch CloudFormation stack** — pre-fills `ExternalId` + control-plane principal.
-4. In AWS console: create stack → copy `RoleArn` output.
-5. Paste ARN → **Verify** (server runs `sts:AssumeRole`).
-6. **Run scan now** → ~1–3 min → findings populate.
+## Onboarding a customer account
 
-## IAM permissions requested
+1. Sign up (email + password, or GitHub/Google SSO)
+2. **AWS Accounts** → name it → **Create**
+3. Click **Launch CloudFormation stack** — ExternalId and trust principal are pre-filled
+4. In the AWS Console: deploy the stack → copy the `RoleArn` output
+5. Paste the ARN → **Verify** (server calls `sts:AssumeRole` to confirm)
+6. **Run scan** → ~1–3 min → findings appear
 
-CFN template at [infra/cfn/hygiene-readonly-role.yaml](infra/cfn/hygiene-readonly-role.yaml).
+---
 
-Managed: `SecurityAudit`, `ViewOnlyAccess`.
-Custom: `iam:Generate/GetServiceLastAccessedDetails`, `iam:Get/GenerateCredentialReport`, `iam:GetAccountAuthorizationDetails`, `access-analyzer:List*/Get*`.
+## Checks
+
+| Check ID | Severity | What it finds |
+|---|---|---|
+| `iam.user.inactive_90d` | medium | Console user with no login or API activity in 90+ days |
+| `iam.access_key.unused_90d` | high | Active access key unused for 90+ days |
+| `iam.user.no_mfa` | high | Console user with no MFA device |
+| `iam.role.unassumed_90d` | medium | Role not assumed in 90+ days |
+| `iam.role.wildcard_action` | high | Inline policy grants `Action: "*"` |
+| `iam.role.unused_services_90d` | medium | Role has permissions to services it never calls |
+
+Risk score = severity base + age bonus + admin flag. See [`app/checks/base.py`](api/app/checks/base.py).
+
+---
+
+## IAM permissions
+
+Deployed via [`infra/cfn/hygiene-readonly-role.yaml`](infra/cfn/hygiene-readonly-role.yaml).
+
+**Managed policies:** `SecurityAudit`, `ViewOnlyAccess`
+
+**Custom additions:**
+- `iam:GenerateServiceLastAccessedDetails` / `iam:GetServiceLastAccessedDetails`
+- `iam:GenerateCredentialReport` / `iam:GetCredentialReport`
+- `iam:GetAccountAuthorizationDetails`
+- `access-analyzer:List*` / `access-analyzer:Get*`
 
 **No write permissions. Ever.**
 
-## Checks (MVP)
+The role uses an `ExternalId` condition (confused deputy protection). Only your `TRUST_PRINCIPAL_ARN` can assume it.
 
-| Check ID | Severity | Description |
-|---|---|---|
-| `iam.user.inactive_90d` | medium | Console user not logged in 90+ days |
-| `iam.access_key.unused_90d` | high | Active access key unused 90+ days |
-| `iam.user.no_mfa` | high | Console user with no MFA device |
+---
 
-Risk score = severity base + age + admin multiplier. Documented in `app/checks/base.py`.
+## Architecture notes
+
+- **Cross-account scanning:** Vigil's worker (Account A) assumes a read-only role in the customer's account (Account B) via `sts:AssumeRole`. Nothing runs inside the customer's network — IAM and STS are AWS control-plane APIs reachable over public HTTPS.
+- **Diff-aware findings:** findings are not recreated on each scan. Existing open findings are refreshed; findings that disappear are auto-resolved; fixed-then-broken findings are reopened.
+- **Snooze-first UX:** customers will never resolve everything. Snooze is first-class.
+
+---
 
 ## Project layout
 
 ```
-api/         FastAPI + SQLAlchemy + Celery + boto3
+api/
   app/
-    core/        config, db, security, aws (sts)
-    models/      SQLAlchemy tables
+    core/        config, db, security, aws (sts), passwords
+    models/      SQLAlchemy 2.0 tables (org, user, aws_account, iam, finding)
     routes/      auth, accounts, findings
-    collectors/  boto3 → DB upserts
-    checks/      pure functions → FindingDraft
-    worker/      celery_app + tasks
-  migrations/  Alembic
-web/         React + Vite + Tailwind + TanStack Query
-infra/cfn/   CloudFormation template
-caddy/       Caddyfile (prod profile)
+    collectors/  boto3 → DB upserts (iam.py, last_accessed.py)
+    checks/      pure functions → FindingDraft (base, registry, persist)
+    worker/      celery_app + tasks (run_scan, scan_all_accounts)
+  migrations/    Alembic (0001_init → 0004_iam_perm_usage)
+web/             React + Vite + Tailwind + TanStack Query
+infra/cfn/       hygiene-readonly-role.yaml
+caddy/           Caddyfile (prod profile only)
+compose.yml
 ```
+
+---
+
+## Auth
+
+- Email + password (bcrypt + sha256 prehash)
+- GitHub OAuth (connect in Account settings or sign in directly)
+- Google OAuth
+- JWT (24h). Refresh tokens: planned.
+
+---
 
 ## Pricing (target)
 
-Per-account, monthly subscription. Free trial. One account in MVP.
+Per-account monthly subscription · Free trial · One AWS account per org in MVP (schema is multi-account ready)
 
-## Roadmap (not yet)
+---
 
-Wildcard policies, certs/secrets, S3 hygiene, multi-account via AWS Orgs, k8s RBAC, Terraform remediation diffs, Slack/Jira push.
+## Roadmap
+
+**P0 (current):** sandbox AWS account with seeded junk · encrypt `role_arn` at rest · E2E test · tighten CFN perms · scan progress UI · pagination · CSV export · pytest skeleton · Hetzner deploy
+
+**P1:** Weekly digest email (Resend) · Stripe billing · Finding detail drawer with remediation tabs · PDF report · Slack webhook · TOTP MFA
+
+**Phase 2:** S3/cert/secret checks · multi-account via AWS Orgs StackSet · Terraform remediation diffs · Kubernetes RBAC

@@ -13,8 +13,14 @@ class Settings(BaseSettings):
     DATABASE_URL: str = "postgresql+psycopg://hygiene:hygiene@db:5432/hygiene"
     REDIS_URL: str = "redis://redis:6379/0"
 
+    DEV_MODE: bool = False
     TRUST_PRINCIPAL_ARN: str = "arn:aws:iam::000000000000:root"
     API_PUBLIC_URL: str = "http://localhost:8000"
+
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
 
     RESEND_API_KEY: str = ""
     DIGEST_FROM: str = "hygiene@example.com"

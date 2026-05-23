@@ -5,13 +5,16 @@ import uuid
 from datetime import datetime, timezone
 from typing import Iterable
 
+import structlog
 from botocore.exceptions import ClientError
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.aws import assume_role
-from app.models import AwsAccount, IamAccessKey, IamUser
+from app.models import AwsAccount, IamAccessKey, IamRole, IamUser
+
+log = structlog.get_logger()
 
 
 def _now() -> datetime:
@@ -20,7 +23,8 @@ def _now() -> datetime:
 
 def collect_iam(db: Session, account: AwsAccount) -> dict:
     """Collect IAM users, console password state, MFA, access keys + last-used."""
-    sess = assume_role(account.role_arn, account.external_id, session_name="cloud-hygiene-collect")
+    log.info("collect_iam.start", account_id=str(account.id), role_arn=account.role_arn)
+    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-collect")
     iam = sess.client("iam")
 
     user_count = 0
@@ -30,6 +34,7 @@ def collect_iam(db: Session, account: AwsAccount) -> dict:
     for page in paginator.paginate():
         for u in page["Users"]:
             user_count += 1
+            log.debug("collect_iam.user", username=u["UserName"], n=user_count)
             mfa_enabled = _has_mfa(iam, u["UserName"])
             has_pw = _has_console_password(iam, u["UserName"])
             _upsert_user(
@@ -57,8 +62,69 @@ def collect_iam(db: Session, account: AwsAccount) -> dict:
                     last_used_region=last_used.get("Region"),
                 )
 
+    log.info("collect_iam.users_done", users=user_count, access_keys=key_count)
     db.commit()
-    return {"iam_users": user_count, "iam_access_keys": key_count}
+
+    role_count = _collect_roles(db, sess, account)
+    db.commit()
+
+    log.info("collect_iam.done", users=user_count, access_keys=key_count, roles=role_count)
+    return {"iam_users": user_count, "iam_access_keys": key_count, "iam_roles": role_count}
+
+
+def _collect_roles(db: Session, sess, account: AwsAccount) -> int:
+    log.info("collect_roles.start", account_id=str(account.id))
+    iam = sess.client("iam")
+    role_count = 0
+    paginator = iam.get_paginator("list_roles")
+    for page in paginator.paginate():
+        for r in page["Roles"]:
+            role_count += 1
+            last_used = r.get("RoleLastUsed", {}).get("LastUsedDate")
+
+            inline_policies: dict = {}
+            try:
+                for pname in iam.list_role_policies(RoleName=r["RoleName"]).get("PolicyNames", []):
+                    doc = iam.get_role_policy(RoleName=r["RoleName"], PolicyName=pname)
+                    inline_policies[pname] = doc["PolicyDocument"]
+            except ClientError:
+                pass
+
+            _upsert_role(
+                db,
+                account.id,
+                arn=r["Arn"],
+                name=r["RoleName"],
+                created=r.get("CreateDate"),
+                last_assumed=last_used,
+                trust_policy=r["AssumeRolePolicyDocument"],
+                inline_policies=inline_policies,
+            )
+    log.info("collect_roles.done", roles=role_count)
+    return role_count
+
+
+def _upsert_role(db: Session, account_id, *, arn, name, created, last_assumed, trust_policy, inline_policies):
+    stmt = pg_insert(IamRole).values(
+        id=uuid.uuid4(),
+        account_id=account_id,
+        arn=arn,
+        name=name,
+        created=created,
+        last_assumed=last_assumed,
+        trust_policy=trust_policy,
+        inline_policies=inline_policies,
+    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["account_id", "arn"],
+        set_={
+            "name": stmt.excluded.name,
+            "last_assumed": stmt.excluded.last_assumed,
+            "trust_policy": stmt.excluded.trust_policy,
+            "inline_policies": stmt.excluded.inline_policies,
+        },
+    )
+    db.execute(stmt)
 
 
 def _has_mfa(iam, username: str) -> bool:

@@ -58,6 +58,21 @@ Resources:
                   - access-analyzer:GetFinding
                   - access-analyzer:ListAccessPreviewFindings
                 Resource: "*"
+              - Sid: AccessAnalyzerPolicyGeneration
+                Effect: Allow
+                Action:
+                  - access-analyzer:StartPolicyGeneration
+                  - access-analyzer:GetGeneratedPolicy
+                  - access-analyzer:CancelPolicyGeneration
+                  - iam:GetServiceLastAccessedDetails
+                Resource: "*"
+              - Sid: CloudTrailReadForPolicyGeneration
+                Effect: Allow
+                Action:
+                  - cloudtrail:GetTrail
+                  - cloudtrail:GetTrailStatus
+                  - cloudtrail:ListTrails
+                Resource: "*"
 
 Outputs:
   RoleArn:

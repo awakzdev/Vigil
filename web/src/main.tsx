@@ -6,6 +6,8 @@ import "./index.css";
 import Login from "./pages/Login";
 import Findings from "./pages/Findings";
 import Accounts from "./pages/Accounts";
+import AuthCallback from "./pages/AuthCallback";
+import Account from "./pages/Account";
 import Layout from "./Layout";
 
 const qc = new QueryClient();
@@ -16,10 +18,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
           <Route element={<Layout />}>
             <Route path="/" element={<Navigate to="/findings" replace />} />
             <Route path="/findings" element={<Findings />} />
             <Route path="/accounts" element={<Accounts />} />
+            <Route path="/account" element={<Account />} />
           </Route>
         </Routes>
       </BrowserRouter>
