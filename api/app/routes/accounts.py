@@ -1,0 +1,129 @@
+import secrets
+import uuid
+from urllib.parse import quote
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.aws import verify_account
+from app.core.config import get_settings
+from app.core.db import get_db
+from app.core.security import current_principal
+from app.models import AwsAccount
+
+router = APIRouter()
+settings = get_settings()
+
+CFN_TEMPLATE_URL = (
+    "https://raw.githubusercontent.com/awakzdev/cloud-hygiene/main/infra/cfn/hygiene-readonly-role.yaml"
+)
+
+
+class AccountIn(BaseModel):
+    label: str
+
+
+class AccountOut(BaseModel):
+    id: str
+    label: str
+    account_id: str | None
+    status: str
+    external_id: str
+    cfn_launch_url: str | None = None
+
+
+class VerifyIn(BaseModel):
+    role_arn: str
+
+
+def _launch_url(external_id: str) -> str:
+    params = {
+        "templateURL": CFN_TEMPLATE_URL,
+        "stackName": "CloudHygieneReadOnly",
+        "param_ExternalId": external_id,
+        "param_HygieneAccountPrincipal": settings.TRUST_PRINCIPAL_ARN,
+    }
+    qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
+    return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
+
+
+@router.post("", response_model=AccountOut, status_code=status.HTTP_201_CREATED)
+def create_account(body: AccountIn, p=Depends(current_principal), db: Session = Depends(get_db)):
+    # MVP: one account per org
+    existing = db.scalar(select(AwsAccount).where(AwsAccount.org_id == uuid.UUID(p["org_id"])))
+    if existing:
+        raise HTTPException(status.HTTP_409_CONFLICT, "account already exists for this org")
+
+    ext = secrets.token_urlsafe(24)
+    acc = AwsAccount(
+        id=uuid.uuid4(),
+        org_id=uuid.UUID(p["org_id"]),
+        label=body.label,
+        external_id=ext,
+    )
+    db.add(acc)
+    db.commit()
+    return AccountOut(
+        id=str(acc.id),
+        label=acc.label,
+        account_id=acc.account_id,
+        status=acc.status,
+        external_id=ext,
+        cfn_launch_url=_launch_url(ext),
+    )
+
+
+@router.get("", response_model=list[AccountOut])
+def list_accounts(p=Depends(current_principal), db: Session = Depends(get_db)):
+    rows = db.scalars(select(AwsAccount).where(AwsAccount.org_id == uuid.UUID(p["org_id"]))).all()
+    return [
+        AccountOut(
+            id=str(a.id),
+            label=a.label,
+            account_id=a.account_id,
+            status=a.status,
+            external_id=a.external_id,
+            cfn_launch_url=_launch_url(a.external_id),
+        )
+        for a in rows
+    ]
+
+
+@router.post("/{account_id}/verify", response_model=AccountOut)
+def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Session = Depends(get_db)):
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    ok, aws_account_id, err = verify_account(body.role_arn, acc.external_id)
+    if not ok:
+        acc.status = "error"
+        acc.last_error = err
+        db.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"assume role failed: {err}")
+    acc.role_arn = body.role_arn
+    acc.account_id = aws_account_id
+    acc.status = "connected"
+    acc.last_error = None
+    db.commit()
+    return AccountOut(
+        id=str(acc.id),
+        label=acc.label,
+        account_id=acc.account_id,
+        status=acc.status,
+        external_id=acc.external_id,
+        cfn_launch_url=_launch_url(acc.external_id),
+    )
+
+
+@router.post("/{account_id}/scan")
+def trigger_scan(account_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    from app.worker.tasks import run_scan
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    if acc.status != "connected":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "account not connected")
+    job = run_scan.delay(str(acc.id))
+    return {"job_id": job.id}

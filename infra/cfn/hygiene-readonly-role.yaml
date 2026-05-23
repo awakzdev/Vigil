@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Cloud Hygiene read-only IAM role. Grants the Cloud Hygiene control plane
+  scoped read access to enumerate IAM, generate last-accessed reports, and
+  query Access Analyzer findings. NO write permissions.
+
+Parameters:
+  HygieneAccountPrincipal:
+    Type: String
+    Description: ARN of the Cloud Hygiene control plane principal (provided during onboarding).
+  ExternalId:
+    Type: String
+    Description: Unique ExternalId issued at onboarding. Required to assume the role.
+    NoEcho: true
+  RoleName:
+    Type: String
+    Default: CloudHygieneReadOnly
+    Description: Name of the IAM role created in this account.
+
+Resources:
+  HygieneRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RoleName
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref HygieneAccountPrincipal
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/SecurityAudit
+        - arn:aws:iam::aws:policy/job-function/ViewOnlyAccess
+      Policies:
+        - PolicyName: HygieneIamReadExtras
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: IamReports
+                Effect: Allow
+                Action:
+                  - iam:GenerateServiceLastAccessedDetails
+                  - iam:GetServiceLastAccessedDetails
+                  - iam:GenerateCredentialReport
+                  - iam:GetCredentialReport
+                  - iam:GetAccountAuthorizationDetails
+                Resource: "*"
+              - Sid: AccessAnalyzerRead
+                Effect: Allow
+                Action:
+                  - access-analyzer:ListAnalyzers
+                  - access-analyzer:ListFindings
+                  - access-analyzer:GetFinding
+                  - access-analyzer:ListAccessPreviewFindings
+                Resource: "*"
+
+Outputs:
+  RoleArn:
+    Description: Paste this ARN into Cloud Hygiene to finish onboarding.
+    Value: !GetAtt HygieneRole.Arn
+  ExternalId:
+    Description: ExternalId required to assume the role.
+    Value: !Ref ExternalId

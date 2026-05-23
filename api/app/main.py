@@ -1,0 +1,26 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+
+from app.core.config import get_settings
+from app.routes import accounts, findings, auth
+
+settings = get_settings()
+
+app = FastAPI(title="Cloud Hygiene API", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"] if settings.APP_ENV == "dev" else [settings.API_PUBLIC_URL],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/healthz")
+def healthz():
+    return {"ok": True, "env": settings.APP_ENV}
+
+
+app.include_router(auth.router, prefix="/v1/auth", tags=["auth"])
+app.include_router(accounts.router, prefix="/v1/accounts", tags=["accounts"])
+app.include_router(findings.router, prefix="/v1/findings", tags=["findings"])

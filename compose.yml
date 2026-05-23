@@ -1,0 +1,93 @@
+name: cloud-hygiene
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-hygiene}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hygiene}
+      POSTGRES_DB: ${POSTGRES_DB:-hygiene}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./api
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./api:/app
+
+  worker:
+    build:
+      context: ./api
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: celery -A app.worker.celery_app worker --beat --loglevel=info
+    volumes:
+      - ./api:/app
+
+  web:
+    build:
+      context: ./web
+    environment:
+      VITE_API_URL: http://localhost:8000
+    ports:
+      - "127.0.0.1:5173:5173"
+    command: npm run dev -- --host 0.0.0.0
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["prod"]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - web
+
+volumes:
+  db_data:
+  caddy_data:
+  caddy_config:
