@@ -57,7 +57,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: celery -A app.worker.celery_app worker --beat --loglevel=info
+    command: watchfiles --filter python "celery -A app.worker.celery_app worker --beat --loglevel=info" app
     volumes:
       - ./api:/app
 
