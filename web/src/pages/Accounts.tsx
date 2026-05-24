@@ -13,6 +13,14 @@ type Account = {
 
 type Finding = { id: string; severity: string; status: string };
 
+function AwsProviderBadge() {
+  return (
+    <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-orange-600">
+      AWS
+    </span>
+  );
+}
+
 export default function Accounts() {
   const qc = useQueryClient();
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
@@ -82,7 +90,10 @@ export default function Accounts() {
                   </svg>
                 </div>
                 <div>
-                  <div className="font-semibold text-zinc-900 text-base">{acc.label}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-semibold text-zinc-900 text-base">{acc.label}</div>
+                    <AwsProviderBadge />
+                  </div>
                   {acc.account_id && <div className="text-xs text-zinc-400 font-mono mt-0.5">{acc.account_id}</div>}
                 </div>
               </div>
