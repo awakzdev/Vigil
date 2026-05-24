@@ -13,10 +13,18 @@ type Account = {
 
 type Finding = { id: string; severity: string; status: string };
 
-function AwsProviderBadge() {
+function AwsProviderIcon() {
   return (
-    <span className="inline-flex items-center rounded-md border border-orange-200 bg-orange-50 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-orange-600">
-      AWS
+    <span
+      title="Amazon Web Services"
+      aria-label="Amazon Web Services"
+      className="inline-flex h-5 w-5 items-center justify-center rounded-md bg-white ring-1 ring-zinc-200"
+    >
+      <img
+        src="https://www.google.com/s2/favicons?domain=aws.amazon.com&sz=64"
+        alt="AWS"
+        className="h-3.5 w-3.5 object-contain"
+      />
     </span>
   );
 }
@@ -92,7 +100,7 @@ export default function Accounts() {
                 <div>
                   <div className="flex items-center gap-2">
                     <div className="font-semibold text-zinc-900 text-base">{acc.label}</div>
-                    <AwsProviderBadge />
+                    <AwsProviderIcon />
                   </div>
                   {acc.account_id && <div className="text-xs text-zinc-400 font-mono mt-0.5">{acc.account_id}</div>}
                 </div>
