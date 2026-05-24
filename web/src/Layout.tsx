@@ -6,7 +6,7 @@ const navItem = ({ isActive }: { isActive: boolean }) =>
   `flex items-center gap-4 px-5 py-3 rounded-xl text-base font-medium transition-all ${
     isActive
       ? "bg-white/10 text-white shadow-sm ring-1 ring-white/5"
-      : "text-slate-400 hover:text-slate-100 hover:bg-white/6"
+      : "text-slate-400 hover:bg-white/6 hover:text-slate-100"
   }`;
 
 export default function Layout() {
@@ -20,9 +20,11 @@ export default function Layout() {
       <aside
         className="w-64 flex-shrink-0 sticky top-0 h-screen flex flex-col overflow-y-auto"
         style={{
-          background: "linear-gradient(160deg, #0f172a 0%, #0d1424 50%, #090e1a 100%)",
+          background:
+            "linear-gradient(160deg, #0f172a 0%, #0d1424 50%, #090e1a 100%)",
           borderRight: "1px solid rgba(56, 189, 248, 0.12)",
-          boxShadow: "4px 0 32px -4px rgba(14, 165, 233, 0.12), inset -1px 0 0 rgba(56, 189, 248, 0.06)",
+          boxShadow:
+            "4px 0 32px -4px rgba(14, 165, 233, 0.12), inset -1px 0 0 rgba(56, 189, 248, 0.06)",
         }}
       >
         {/* Logo */}
@@ -31,8 +33,10 @@ export default function Layout() {
             <div
               className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0"
               style={{
-                background: "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(14,165,233,0.2))",
-                boxShadow: "0 0 12px rgba(99,102,241,0.25), inset 0 1px 0 rgba(255,255,255,0.1)",
+                background:
+                  "linear-gradient(135deg, rgba(99,102,241,0.3), rgba(14,165,233,0.2))",
+                boxShadow:
+                  "0 0 12px rgba(99,102,241,0.25), inset 0 1px 0 rgba(255,255,255,0.1)",
                 border: "1px solid rgba(99,102,241,0.3)",
               }}
             >
