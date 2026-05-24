@@ -88,7 +88,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             FindingDraft(
                 check_id=CHECK_ID,
                 resource_arn=r.arn,
-                title=f"Role `{r.name}` granted {len(unused)}/{total} service(s) unused in 90+ days",
+                title=f"Role `{r.name}` has {len(unused)}/{total} granted services unused for 90+ days",
                 severity="medium",
                 risk_score=score("medium", age_days=age_days),
                 evidence={

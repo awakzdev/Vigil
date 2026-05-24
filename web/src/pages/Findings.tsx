@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState, useEffect, useRef, useMemo } from "react";
-import { api } from "../api";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { api, token } from "../api";
 import { FindingDrawer } from "../components/FindingDrawer";
 
 type Finding = {
@@ -18,26 +18,59 @@ type Finding = {
 
 type Account = { id: string; status: string };
 
-const sevDot: Record<string, string> = {
-  critical: "bg-red-600",
-  high: "bg-red-500",
-  medium: "bg-amber-500",
-  low: "bg-zinc-400",
+const sevBadge: Record<string, string> = {
+  critical: "border-red-200 bg-red-50 text-red-700",
+  high: "border-red-200 bg-red-50 text-red-600",
+  medium: "border-amber-200 bg-amber-50 text-amber-600",
+  low: "border-zinc-200 bg-zinc-50 text-zinc-500",
 };
 
-const sevWeight: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+const sevWeight: Record<string, number> = {
+  critical: 0,
+  high: 1,
+  medium: 2,
+  low: 3,
+};
 
 const checkLabels: Record<string, string> = {
   "iam.user.no_mfa": "MFA not enabled",
   "iam.user.inactive_90d": "Inactive user",
   "iam.access_key.unused_90d": "Unused access key",
+  "iam.access_key.no_rotation_90d": "Long-lived access key",
+  "iam.access_key.multiple_active": "Multiple active access keys",
   "iam.role.unassumed_90d": "Role unassumed",
   "iam.role.wildcard_action": "Wildcard action",
   "iam.role.unused_services_90d": "Unused granted services",
+  "iam.role.trust_wildcard": "Wildcard trust policy",
+  "iam.role.allows_iam_star": "Grants iam:*",
+  "iam.role.confused_deputy": "Confused deputy risk",
+};
+
+const checkDescriptions: Record<string, string> = {
+  "iam.user.no_mfa": "Require MFA for interactive IAM users.",
+  "iam.user.inactive_90d": "Disable or remove dormant IAM users.",
+  "iam.access_key.unused_90d":
+    "Deactivate stale access keys, then delete after validation.",
+  "iam.access_key.no_rotation_90d": "Rotate active keys older than 90 days.",
+  "iam.access_key.multiple_active":
+    "Valid during rotation, but persistent duplicates increase exposure.",
+  "iam.role.unassumed_90d":
+    "Confirm ownership, then remove roles that are no longer used.",
+  "iam.role.wildcard_action":
+    "Replace wildcard permissions with scoped actions.",
+  "iam.role.unused_services_90d":
+    "Trim unused service permissions from role policies.",
+  "iam.role.trust_wildcard": "Trust policy allows an unrestricted principal.",
+  "iam.role.allows_iam_star":
+    "Inline policy grants iam:* — privilege escalation path.",
+  "iam.role.confused_deputy":
+    "Cross-account trust without ExternalId — confused deputy risk.",
 };
 
 const statusTabs = ["open", "snoozed", "resolved", "all"] as const;
 type StatusTab = (typeof statusTabs)[number];
+type SeverityFilter = "all" | "critical_high" | "medium" | "low";
+type SortKey = "severity" | "score" | "first_seen";
 
 function shortArn(arn: string): string {
   const tail = arn.split(":").pop() ?? arn;
@@ -54,7 +87,24 @@ function daysAgo(iso: string): string {
   return `${Math.floor(d / 365)}y`;
 }
 
-type SortKey = "severity" | "score" | "first_seen";
+function lastScanLabel(iso: string): string {
+  const date = new Date(iso);
+  const sameDay = date.toDateString() === new Date().toDateString();
+  const time = date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return sameDay
+    ? `today at ${time}`
+    : `${date.toLocaleDateString()} at ${time}`;
+}
+
+function matchesSeverityFilter(f: Finding, filter: SeverityFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "critical_high")
+    return f.severity === "critical" || f.severity === "high";
+  return f.severity === filter;
+}
 
 export default function Findings() {
   const qc = useQueryClient();
@@ -62,7 +112,26 @@ export default function Findings() {
   const [selected, setSelected] = useState<Finding | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("severity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+  const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
+  const [search, setSearch] = useState("");
   const prevScanStatus = useRef<string | null>(null);
+
+  const downloadCsv = useCallback(async () => {
+    const BASE =
+      (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
+    const t = token();
+    const res = await fetch(`${BASE}/v1/findings/export/csv?status=${status}`, {
+      headers: t ? { Authorization: `Bearer ${t}` } : {},
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "vigil-findings.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [status]);
 
   const q = useQuery({
     queryKey: ["findings", status],
@@ -89,12 +158,17 @@ export default function Findings() {
           } | null>(`/v1/accounts/${connectedId}/scan-runs/latest`)
         : null,
     enabled: !!connectedId,
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 5000 : false),
+    refetchInterval: (query) =>
+      query.state.data?.status === "running" ? 5000 : false,
   });
 
   const scanStatus = scanRun.data?.status ?? null;
-  const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
-  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
+  const scanStartedAt = scanRun.data?.started_at
+    ? new Date(scanRun.data.started_at)
+    : null;
+  const scanStuck = scanStartedAt
+    ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000
+    : false;
   const isRunning = scanStatus === "running" && !scanStuck;
 
   useEffect(() => {
@@ -105,40 +179,76 @@ export default function Findings() {
   }, [scanStatus, qc]);
 
   const scan = useMutation({
-    mutationFn: (id: string) => api(`/v1/accounts/${id}/scan`, { method: "POST" }),
-    onSuccess: () => {
-      setTimeout(() => qc.invalidateQueries({ queryKey: ["scan-run-latest"] }), 1000);
-    },
+    mutationFn: (id: string) =>
+      api(`/v1/accounts/${id}/scan`, { method: "POST" }),
+    onSuccess: () =>
+      setTimeout(
+        () => qc.invalidateQueries({ queryKey: ["scan-run-latest"] }),
+        1000,
+      ),
   });
 
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "snooze" | "resolve" | "ignore" }) =>
+    mutationFn: ({
+      id,
+      action,
+    }: {
+      id: string;
+      action: "snooze" | "resolve" | "ignore";
+    }) =>
       api(`/v1/findings/${id}/${action}`, {
         method: "POST",
-        body: action === "snooze" ? JSON.stringify({ days: 30 }) : JSON.stringify({}),
+        body:
+          action === "snooze"
+            ? JSON.stringify({ days: 30 })
+            : JSON.stringify({}),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["findings"] }),
   });
 
   const findings = q.data ?? [];
 
+  const totals = useMemo(() => {
+    const t = { open: 0, critical: 0, high: 0, medium: 0, low: 0 };
+    for (const f of findings) {
+      t.open++;
+      if (f.severity in t) t[f.severity as keyof typeof t]++;
+    }
+    return t;
+  }, [findings]);
+
   const rows = useMemo(() => {
-    const arr = [...findings];
+    const needle = search.trim().toLowerCase();
+    const arr = findings.filter((f) => {
+      if (!matchesSeverityFilter(f, severityFilter)) return false;
+      if (!needle) return true;
+      return [
+        f.title,
+        f.check_id,
+        f.resource_arn,
+        checkLabels[f.check_id] ?? "",
+        checkDescriptions[f.check_id] ?? "",
+      ]
+        .join(" ")
+        .toLowerCase()
+        .includes(needle);
+    });
     arr.sort((a, b) => {
       let cmp = 0;
       if (sortKey === "severity") {
-        const sa = sevWeight[a.severity] ?? 9;
-        const sb = sevWeight[b.severity] ?? 9;
-        cmp = sa - sb || b.risk_score - a.risk_score;
+        cmp =
+          (sevWeight[a.severity] ?? 9) - (sevWeight[b.severity] ?? 9) ||
+          b.risk_score - a.risk_score;
       } else if (sortKey === "score") {
         cmp = b.risk_score - a.risk_score;
-      } else if (sortKey === "first_seen") {
-        cmp = new Date(b.first_seen).getTime() - new Date(a.first_seen).getTime();
+      } else {
+        cmp =
+          new Date(b.first_seen).getTime() - new Date(a.first_seen).getTime();
       }
       return sortDir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [findings, sortKey, sortDir]);
+  }, [findings, search, severityFilter, sortKey, sortDir]);
 
   const grouped = useMemo(() => {
     if (sortKey !== "severity") return null;
@@ -148,27 +258,13 @@ export default function Findings() {
       list.push(f);
       map.set(f.check_id, list);
     }
-    // sort groups by max severity then by count desc
     return [...map.entries()].sort(([, a], [, b]) => {
-      const sa = sevWeight[a[0].severity] ?? 9;
-      const sb = sevWeight[b[0].severity] ?? 9;
-      return sa - sb || b.length - a.length;
+      return (
+        (sevWeight[a[0].severity] ?? 9) - (sevWeight[b[0].severity] ?? 9) ||
+        b.length - a.length
+      );
     });
   }, [rows, sortKey]);
-
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  function toggleGroup(s: string) {
-    setCollapsed((c) => ({ ...c, [s]: !c[s] }));
-  }
-
-  const totals = useMemo(() => {
-    const t = { open: 0, critical: 0, high: 0, medium: 0, low: 0 };
-    for (const f of findings) {
-      t.open++;
-      t[f.severity as keyof typeof t]++;
-    }
-    return t;
-  }, [findings]);
 
   function toggleSort(k: SortKey) {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -178,42 +274,82 @@ export default function Findings() {
     }
   }
 
+  const summaryCards = [
+    {
+      key: "all" as SeverityFilter,
+      label: "Open",
+      value: totals.open,
+      tone: "text-zinc-900",
+      hint: "active IAM posture issues",
+      dot: "bg-zinc-400",
+    },
+    {
+      key: "critical_high" as SeverityFilter,
+      label: "Critical / High",
+      value: totals.critical + totals.high,
+      tone: "text-red-600",
+      hint: "fix first",
+      dot: "bg-red-500",
+    },
+    {
+      key: "medium" as SeverityFilter,
+      label: "Medium",
+      value: totals.medium,
+      tone: "text-amber-600",
+      hint: "reduce backlog",
+      dot: "bg-amber-500",
+    },
+    {
+      key: "low" as SeverityFilter,
+      label: "Low",
+      value: totals.low,
+      tone: "text-zinc-500",
+      hint: "monitor",
+      dot: "bg-zinc-300",
+    },
+  ];
+
   return (
-    <>
-      {/* Top bar */}
-      <div className="flex items-center justify-between mb-4">
+    <div className="mx-auto max-w-[1320px] px-8 py-7">
+      {/* Header */}
+      <div className="mb-7 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-zinc-900">Findings</h1>
-          <p className="text-[13px] text-zinc-500 mt-0.5">
-            {totals.open} open
-            {totals.critical + totals.high > 0 && (
-              <>
-                <span className="mx-1.5 text-zinc-300">·</span>
-                <span className="text-red-600 font-medium">{totals.critical + totals.high} critical/high</span>
-              </>
-            )}
-            {totals.medium > 0 && (
-              <>
-                <span className="mx-1.5 text-zinc-300">·</span>
-                <span className="text-amber-600">{totals.medium} medium</span>
-              </>
-            )}
+          <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">
+            Findings
+          </h1>
+          <p className="text-sm text-zinc-500 mt-1">
+            IAM posture issues from the latest account scan.
             {scanRun.data?.finished_at && (
-              <>
-                <span className="mx-1.5 text-zinc-300">·</span>
-                <span>last scan {daysAgo(scanRun.data.finished_at)} ago</span>
-              </>
+              <> Last scan {lastScanLabel(scanRun.data.finished_at)}.</>
             )}
           </p>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <button
-            onClick={() => qc.invalidateQueries({ queryKey: ["findings"] })}
-            className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-[13px] font-medium px-2.5 py-1.5 rounded transition-colors"
-            title="Refresh"
+            onClick={downloadCsv}
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] transition-all hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
           >
             <svg
-              className={`w-3.5 h-3.5 ${q.isFetching ? "animate-spin" : ""}`}
+              className="w-4 h-4"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+              />
+            </svg>
+            Export
+          </button>
+          <button
+            onClick={() => qc.invalidateQueries({ queryKey: ["findings"] })}
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] transition-all hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+          >
+            <svg
+              className={`w-4 h-4 ${q.isFetching ? "animate-spin" : ""}`}
               fill="none"
               stroke="currentColor"
               strokeWidth={2}
@@ -231,10 +367,10 @@ export default function Findings() {
             <button
               onClick={() => scan.mutate(connectedId)}
               disabled={scan.isPending || isRunning}
-              className="flex items-center gap-1.5 bg-zinc-900 hover:bg-zinc-800 text-white text-[13px] font-medium px-3 py-1.5 rounded transition-colors disabled:opacity-50"
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition-all hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <svg
-                className={`w-3.5 h-3.5 ${isRunning || scan.isPending ? "animate-spin" : ""}`}
+                className={`w-4 h-4 ${isRunning || scan.isPending ? "animate-spin" : ""}`}
                 fill="none"
                 stroke="currentColor"
                 strokeWidth={2}
@@ -246,142 +382,263 @@ export default function Findings() {
                   d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                 />
               </svg>
-              {isRunning ? "Scanning…" : scan.isPending ? "Triggering…" : "Re-scan"}
+              {isRunning
+                ? "Scanning…"
+                : scan.isPending
+                  ? "Triggering…"
+                  : "Re-scan"}
             </button>
           )}
         </div>
       </div>
 
-      {/* Status strips */}
+      {/* Scan status banners */}
       {isRunning && (
-        <div className="mb-3 border-l-2 border-zinc-900 bg-zinc-50 px-3 py-2 text-[13px] text-zinc-700 flex items-center gap-2">
-          <svg className="w-3.5 h-3.5 animate-spin flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+        <div className="mb-4 flex items-center gap-2.5 rounded-lg border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm text-indigo-700">
+          <svg
+            className="w-4 h-4 animate-spin flex-shrink-0"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
+          >
             <path
               strokeLinecap="round"
               strokeLinejoin="round"
               d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
             />
           </svg>
-          Scan running — findings refresh on completion.
+          Scan running — findings will refresh automatically on completion.
         </div>
       )}
       {scanStatus === "error" && scanRun.data?.error && (
-        <div className="mb-3 border-l-2 border-red-600 bg-red-50 px-3 py-2 text-[13px] text-red-700">
-          <span className="font-medium">Last scan failed:</span> {scanRun.data.error}
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          <span className="font-medium">Last scan failed:</span>{" "}
+          {scanRun.data.error}
         </div>
       )}
 
-      {/* Tabs */}
-      <div className="flex items-center border-b border-zinc-200 mb-3">
-        {statusTabs.map((s) => (
+      {/* Stat cards */}
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        {summaryCards.map((card) => (
           <button
-            key={s}
-            onClick={() => setStatus(s)}
-            className={`px-3 py-2 text-[13px] font-medium capitalize border-b-2 -mb-px transition-colors ${
-              status === s
-                ? "border-zinc-900 text-zinc-900"
-                : "border-transparent text-zinc-500 hover:text-zinc-700"
+            key={card.key}
+            onClick={() => setSeverityFilter(card.key)}
+            className={`group relative overflow-hidden rounded-2xl border bg-white px-5 py-5 text-left shadow-sm shadow-zinc-950/[0.03] transition-all hover:-translate-y-0.5 hover:shadow-md ${
+              severityFilter === card.key
+                ? "border-zinc-900 ring-4 ring-zinc-950/[0.04]"
+                : "border-zinc-200 hover:border-zinc-300"
             }`}
           >
-            {s}
+            <div className="mb-3 flex items-center justify-between">
+              <span className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
+                {card.label}
+              </span>
+              <span
+                className={`h-2.5 w-2.5 rounded-full ${card.dot} shadow-sm`}
+              />
+            </div>
+            <div
+              className={`text-4xl font-bold tabular-nums leading-none tracking-tight ${card.tone}`}
+            >
+              {card.value}
+            </div>
+            <div className="mt-3 text-sm text-zinc-500">{card.hint}</div>
           </button>
         ))}
       </div>
 
-      {/* Sort controls */}
-      <div className="flex items-center justify-end gap-3 mb-3 text-[11px] uppercase tracking-wide text-zinc-500 font-medium">
-        <span>Sort:</span>
-        <button onClick={() => toggleSort("severity")} className={`hover:text-zinc-900 ${sortKey === "severity" ? "text-zinc-900" : ""}`}>
-          Severity {sortKey === "severity" && (sortDir === "asc" ? "↑" : "↓")}
-        </button>
-        <button onClick={() => toggleSort("score")} className={`hover:text-zinc-900 ${sortKey === "score" ? "text-zinc-900" : ""}`}>
-          Score {sortKey === "score" && (sortDir === "asc" ? "↑" : "↓")}
-        </button>
-        <button onClick={() => toggleSort("first_seen")} className={`hover:text-zinc-900 ${sortKey === "first_seen" ? "text-zinc-900" : ""}`}>
-          Age {sortKey === "first_seen" && (sortDir === "asc" ? "↑" : "↓")}
-        </button>
+      {/* Tabs + search row */}
+      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex w-fit items-center gap-1 rounded-2xl bg-zinc-100 p-1">
+          {statusTabs.map((s) => (
+            <button
+              key={s}
+              onClick={() => setStatus(s)}
+              className={`rounded-xl px-4 py-2 text-sm font-semibold capitalize transition-all ${
+                status === s
+                  ? "bg-zinc-950 text-white shadow-sm"
+                  : "text-zinc-500 hover:bg-white hover:text-zinc-900"
+              }`}
+            >
+              {s}
+            </button>
+          ))}
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <svg
+              className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M21 21l-4.35-4.35m1.1-5.15a6.25 6.25 0 11-12.5 0 6.25 6.25 0 0112.5 0z"
+              />
+            </svg>
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search findings…"
+              className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm text-zinc-800 shadow-sm shadow-zinc-950/[0.02] outline-none transition focus:border-zinc-400 lg:w-64 placeholder:text-zinc-400"
+            />
+          </div>
+          <div className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-xs font-bold uppercase tracking-[0.14em] text-zinc-400 shadow-sm shadow-zinc-950/[0.02]">
+            <span>Sort</span>
+            {(["severity", "score", "first_seen"] as SortKey[]).map((k) => (
+              <button
+                key={k}
+                onClick={() => toggleSort(k)}
+                className={`hover:text-zinc-700 transition-colors ${sortKey === k ? "text-zinc-900" : ""}`}
+              >
+                {k === "first_seen"
+                  ? "Age"
+                  : k.charAt(0).toUpperCase() + k.slice(1)}
+                {sortKey === k && (sortDir === "asc" ? " ↑" : " ↓")}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
+      {/* Empty / loading states */}
       {q.isLoading && (
-        <div className="rounded border border-zinc-200 bg-white px-3 py-10 text-center text-[13px] text-zinc-400">Loading…</div>
+        <div className="rounded-xl border border-zinc-200 bg-white px-4 py-16 text-center text-sm text-zinc-400">
+          Loading…
+        </div>
       )}
       {!q.isLoading && rows.length === 0 && (
-        <div className="rounded border border-zinc-200 bg-white px-3 py-12 text-center text-[13px] text-zinc-500">
-          No {status} findings.
+        <div className="rounded-xl border border-zinc-200 bg-white px-4 py-16 text-center">
+          <div className="w-10 h-10 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-3">
+            <svg
+              className="w-5 h-5 text-green-500"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth={2}
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M5 13l4 4L19 7"
+              />
+            </svg>
+          </div>
+          <p className="text-sm font-medium text-zinc-700">
+            No {status} findings
+          </p>
+          <p className="text-sm text-zinc-400 mt-1">
+            {status === "open"
+              ? "Run a scan to check your account for IAM issues."
+              : "Nothing to show here."}
+          </p>
         </div>
       )}
 
-      {/* Grouped cards */}
-      <div className="space-y-3">
-        {(grouped ?? [["all", rows] as const]).map(([key, items]) => {
-          const isGrouped = grouped !== null;
-          const isCollapsed = isGrouped && collapsed[key];
-          const sev = items[0]?.severity ?? "low";
-          const label = checkLabels[key] ?? key;
-          return (
-              <div key={key} className="rounded-lg border border-zinc-200 bg-white shadow-sm overflow-hidden">
-                {isGrouped && (
-                  <button
-                    onClick={() => toggleGroup(key)}
-                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] font-semibold text-zinc-800 hover:bg-zinc-50 transition-colors ${isCollapsed ? "" : "border-b border-zinc-200"}`}
-                  >
-                    <svg
-                      className={`w-3 h-3 text-zinc-400 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth={2.5}
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-                    </svg>
-                    <span className={`w-1.5 h-1.5 rounded-full ${sevDot[sev] ?? sevDot.low}`} />
-                    <span>{label}</span>
-                    <span className="text-zinc-400 font-normal tabular-nums">{items.length}</span>
-                    <span className="ml-auto text-[11px] font-normal text-zinc-400 uppercase tracking-wide capitalize">{sev}</span>
-                  </button>
-                )}
-                {!isCollapsed && (
+      {/* Findings list — sections always expanded */}
+      {rows.length > 0 && (
+        <div className="space-y-4 pb-8">
+          {(grouped ?? [["all", rows] as [string, Finding[]]]).map(
+            ([key, items]) => {
+              const isGrouped = grouped !== null;
+              const sev = items[0]?.severity ?? "low";
+              const label = checkLabels[key] ?? key;
+              const description = checkDescriptions[key];
+
+              return (
+                <div
+                  key={key}
+                  className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]"
+                >
+                  {/* Section header */}
+                  {isGrouped && (
+                    <div className="flex flex-wrap items-center gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50 to-white px-5 py-4">
+                      <span
+                        className={`flex-shrink-0 rounded-lg border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.14em] ${sevBadge[sev] ?? sevBadge.low}`}
+                      >
+                        {sev}
+                      </span>
+                      <span className="text-sm font-bold text-zinc-950">
+                        {label}
+                      </span>
+                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-semibold tabular-nums text-zinc-500">
+                        {items.length}
+                      </span>
+                      {description && (
+                        <span className="hidden text-sm text-zinc-500 lg:block">
+                          {description}
+                        </span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Column header */}
+                  <div className="grid grid-cols-[minmax(0,1fr)_88px_72px] items-center gap-4 border-b border-zinc-100 bg-zinc-50/80 px-5 py-2.5">
+                    <div className="text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
+                      Resource
+                    </div>
+                    <div className="text-right text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
+                      Score
+                    </div>
+                    <div className="text-right text-[11px] font-bold uppercase tracking-[0.16em] text-zinc-400">
+                      Age
+                    </div>
+                  </div>
+
+                  {/* Rows */}
                   <div className="divide-y divide-zinc-100">
                     {items.map((f) => (
                       <div
                         key={f.id}
                         onClick={() => setSelected(f)}
-                        className="grid grid-cols-[minmax(0,1fr)_60px_70px_120px] items-center px-3 py-2 hover:bg-zinc-50 cursor-pointer text-[13px] group"
+                        className="group grid cursor-pointer grid-cols-[minmax(0,1fr)_88px_72px] items-center gap-4 px-5 py-4 transition-colors hover:bg-indigo-50/35"
                       >
-                        <span className="font-mono text-[12px] text-zinc-700 truncate" title={f.resource_arn}>
-                          {shortArn(f.resource_arn)}
-                        </span>
-                        <span className="text-right tabular-nums font-medium text-zinc-700">{f.risk_score}</span>
-                        <span className="text-right tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span>
-                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              act.mutate({ id: f.id, action: "snooze" });
-                            }}
-                            className="text-[11px] text-zinc-500 hover:text-zinc-900 px-1.5 py-0.5 rounded hover:bg-zinc-100"
-                            title="Snooze 30d"
-                          >
-                            Snooze
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              act.mutate({ id: f.id, action: "resolve" });
-                            }}
-                            className="text-[11px] text-zinc-500 hover:text-zinc-900 px-1.5 py-0.5 rounded hover:bg-zinc-100"
-                          >
-                            Resolve
-                          </button>
+                        <div className="flex-1 min-w-0 relative">
+                          <div className="truncate font-mono text-sm text-zinc-700 group-hover:pr-36">
+                            {shortArn(f.resource_arn)}
+                          </div>
+                          <div className="absolute right-0 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {(["resolve", "snooze", "ignore"] as const).map(
+                              (action) => (
+                                <button
+                                  key={action}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    act.mutate({ id: f.id, action });
+                                  }}
+                                  className="rounded-lg px-2 py-1 text-xs font-medium capitalize text-zinc-500 hover:bg-white hover:text-zinc-950 hover:shadow-sm"
+                                >
+                                  {action}
+                                </button>
+                              ),
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="inline-flex min-w-10 justify-center rounded-full bg-zinc-100 px-2 py-1 text-sm font-bold tabular-nums text-zinc-800">
+                            {f.risk_score}
+                          </span>
+                        </div>
+
+                        <div className="text-right">
+                          <span className="text-sm tabular-nums text-zinc-500">
+                            {daysAgo(f.first_seen)}
+                          </span>
                         </div>
                       </div>
                     ))}
                   </div>
-                )}
-            </div>
-          );
-        })}
-      </div>
+                </div>
+              );
+            },
+          )}
+        </div>
+      )}
 
       <FindingDrawer
         finding={selected}
@@ -389,6 +646,6 @@ export default function Findings() {
         onClose={() => setSelected(null)}
         onAction={(id, action) => act.mutate({ id, action })}
       />
-    </>
+    </div>
   );
 }

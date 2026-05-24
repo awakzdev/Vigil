@@ -11,6 +11,8 @@ type Account = {
   cfn_launch_url: string;
 };
 
+type Finding = { id: string; severity: string; status: string };
+
 export default function Accounts() {
   const qc = useQueryClient();
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
@@ -29,14 +31,28 @@ export default function Accounts() {
     mutationFn: (id: string) => api(`/v1/accounts/${id}/scan`, { method: "POST" }),
     onSuccess: () => setScanQueued(true),
   });
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/v1/accounts/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+  });
 
   const acc = accounts.data?.[0];
 
+  const findings = useQuery({
+    queryKey: ["findings-snapshot", acc?.id],
+    queryFn: () => api<Finding[]>(`/v1/findings?status=open`),
+    enabled: acc?.status === "connected",
+  });
+
+  const critHigh = findings.data?.filter(f => f.severity === "critical" || f.severity === "high").length ?? 0;
+  const medium = findings.data?.filter(f => f.severity === "medium").length ?? 0;
+  const totalOpen = findings.data?.length ?? 0;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 max-w-5xl">
       <div>
-        <h1 className="text-2xl font-bold text-zinc-900">AWS Accounts</h1>
-        <p className="text-sm text-zinc-500 mt-0.5">Connect your AWS account to start scanning</p>
+        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">AWS Accounts</h1>
+        <p className="text-sm text-zinc-500 mt-1">Connect your AWS account to start scanning.</p>
       </div>
 
       {!acc && (
@@ -46,7 +62,7 @@ export default function Accounts() {
           <button
             onClick={() => create.mutate()}
             disabled={create.isPending}
-            className="bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+            className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
           >
             {create.isPending ? "Setting up…" : "Connect account"}
           </button>
@@ -54,118 +70,166 @@ export default function Accounts() {
       )}
 
       {acc && (
-        <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden max-w-2xl">
-          {/* Account header */}
-          <div className="px-6 py-4 border-b border-zinc-100 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-orange-100 flex items-center justify-center">
-                <svg className="w-4 h-4 text-orange-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
-                </svg>
-              </div>
-              <div>
-                <div className="font-semibold text-zinc-900">{acc.label}</div>
-                {acc.account_id && <div className="text-xs text-zinc-400 font-mono">{acc.account_id}</div>}
-              </div>
-            </div>
-            <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
-              acc.status === "connected"
-                ? "bg-green-50 text-green-700"
-                : "bg-amber-50 text-amber-700"
-            }`}>
-              <span className={`w-1.5 h-1.5 rounded-full ${acc.status === "connected" ? "bg-green-500" : "bg-amber-500"}`} />
-              {acc.status}
-            </span>
-          </div>
-
-          {/* Setup steps (not connected) */}
-          {acc.status !== "connected" && (
-            <div className="px-6 py-5 space-y-5">
-              <div className="space-y-3">
-                {[
-                  {
-                    n: 1,
-                    label: "Deploy IAM role via CloudFormation",
-                    content: (
-                      <a href={acc.cfn_launch_url} target="_blank" rel="noreferrer"
-                        className="inline-flex items-center gap-1.5 text-sm text-zinc-600 font-medium hover:text-zinc-700">
-                        Launch CloudFormation stack
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                      </a>
-                    ),
-                  },
-                  {
-                    n: 2,
-                    label: "Copy the RoleArn from stack Outputs",
-                    content: null,
-                  },
-                  {
-                    n: 3,
-                    label: "Paste and verify",
-                    content: (
-                      <div className="space-y-2">
-                        <div className="text-xs text-zinc-400">
-                          ExternalId: <code className="font-mono bg-zinc-100 px-1.5 py-0.5 rounded">{acc.external_id}</code>
-                        </div>
-                        <div className="flex gap-2">
-                          <input
-                            className="flex-1 border border-zinc-200 rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-transparent"
-                            placeholder="arn:aws:iam::123456789012:role/CloudHygieneReadOnly"
-                            value={roleArn}
-                            onChange={e => setRoleArn(e.target.value)}
-                          />
-                          <button
-                            onClick={() => verify.mutate(acc.id)}
-                            disabled={verify.isPending || !roleArn}
-                            className="bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                          >
-                            {verify.isPending ? "Verifying…" : "Verify"}
-                          </button>
-                        </div>
-                        {verify.error && (
-                          <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
-                            {(verify.error as Error).message}
-                          </div>
-                        )}
-                      </div>
-                    ),
-                  },
-                ].map(({ n, label, content }) => (
-                  <div key={n} className="flex gap-3">
-                    <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-xs font-bold text-zinc-500 flex-shrink-0 mt-0.5">
-                      {n}
-                    </div>
-                    <div className="flex-1 space-y-2">
-                      <div className="text-sm font-medium text-zinc-700">{label}</div>
-                      {content}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Connected — scan */}
-          {acc.status === "connected" && (
-            <div className="px-6 py-5 space-y-3">
-              <p className="text-sm text-zinc-500">Account connected. Run a scan to detect IAM issues.</p>
+        <div className="grid grid-cols-[1fr_320px] gap-4 items-stretch">
+          {/* Main card */}
+          <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
+            {/* Account header */}
+            <div className="px-6 py-5 border-b border-zinc-100 flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => { setScanQueued(false); scan.mutate(acc.id); }}
-                  disabled={scan.isPending}
-                  className="flex items-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  <svg className={`w-4 h-4 ${scan.isPending ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                <div className="w-10 h-10 rounded-xl bg-orange-100 flex items-center justify-center flex-shrink-0">
+                  <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
                   </svg>
-                  {scan.isPending ? "Triggering…" : "Run scan now"}
-                </button>
+                </div>
+                <div>
+                  <div className="font-semibold text-zinc-900 text-base">{acc.label}</div>
+                  {acc.account_id && <div className="text-xs text-zinc-400 font-mono mt-0.5">{acc.account_id}</div>}
+                </div>
+              </div>
+              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                acc.status === "connected" ? "bg-green-50 text-green-700" : "bg-amber-50 text-amber-700"
+              }`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${acc.status === "connected" ? "bg-green-500" : "bg-amber-500"}`} />
+                {acc.status}
+              </span>
+            </div>
+
+            {/* Setup steps (not connected) */}
+            {acc.status !== "connected" && (
+              <div className="px-6 py-5 space-y-5">
+                <div className="space-y-4">
+                  {[
+                    {
+                      n: 1,
+                      label: "Deploy IAM role via CloudFormation",
+                      content: (
+                        <a href={acc.cfn_launch_url} target="_blank" rel="noreferrer"
+                          className="inline-flex items-center gap-1.5 text-sm text-indigo-600 font-medium hover:text-indigo-700">
+                          Launch CloudFormation stack
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
+                      ),
+                    },
+                    { n: 2, label: "Copy the RoleArn from stack Outputs", content: null },
+                    {
+                      n: 3,
+                      label: "Paste and verify",
+                      content: (
+                        <div className="space-y-2">
+                          <div className="text-xs text-zinc-400">
+                            ExternalId: <code className="font-mono bg-zinc-100 px-1.5 py-0.5 rounded">{acc.external_id}</code>
+                          </div>
+                          <div className="flex gap-2">
+                            <input
+                              className="flex-1 border border-zinc-200 rounded-lg px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                              placeholder="arn:aws:iam::123456789012:role/CloudHygieneReadOnly"
+                              value={roleArn}
+                              onChange={e => setRoleArn(e.target.value)}
+                            />
+                            <button
+                              onClick={() => verify.mutate(acc.id)}
+                              disabled={verify.isPending || !roleArn}
+                              className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                            >
+                              {verify.isPending ? "Verifying…" : "Verify"}
+                            </button>
+                          </div>
+                          {verify.error && (
+                            <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-3 py-2">
+                              {(verify.error as Error).message}
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ].map(({ n, label, content }) => (
+                    <div key={n} className="flex gap-3">
+                      <div className="w-6 h-6 rounded-full bg-zinc-100 flex items-center justify-center text-xs font-bold text-zinc-500 flex-shrink-0 mt-0.5">
+                        {n}
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <div className="text-sm font-medium text-zinc-700">{label}</div>
+                        {content}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Connected state */}
+            {acc.status === "connected" && (
+              <div className="px-6 py-5 space-y-5">
+                {/* Info tiles */}
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+                    <div className="text-xs text-zinc-400 uppercase tracking-wide font-medium mb-1">Open findings</div>
+                    <div className="font-semibold text-sm text-zinc-800">{findings.isLoading ? "…" : totalOpen}</div>
+                  </div>
+                  <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
+                    <div className="text-xs text-zinc-400 uppercase tracking-wide font-medium mb-1">External ID</div>
+                    <div className="font-mono text-xs text-zinc-600 truncate" title={acc.external_id}>{acc.external_id}</div>
+                  </div>
+                </div>
+
+                {/* Actions */}
+                <div className="flex items-center gap-2 flex-wrap">
+                  <button
+                    onClick={() => { setScanQueued(false); scan.mutate(acc.id); }}
+                    disabled={scan.isPending}
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-50"
+                  >
+                    <svg className={`w-4 h-4 ${scan.isPending ? "animate-spin" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    {scan.isPending ? "Triggering…" : "Run scan now"}
+                  </button>
+                  <a
+                    href={acc.cfn_launch_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+                  >
+                    Update IAM role
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                    </svg>
+                  </a>
+                  <button
+                    onClick={() => { if (confirm("Remove this account? All findings will be deleted.")) remove.mutate(acc.id); }}
+                    disabled={remove.isPending}
+                    className="ml-auto text-sm font-medium text-red-500 hover:text-red-700 transition-colors disabled:opacity-50"
+                  >
+                    {remove.isPending ? "Removing…" : "Remove account"}
+                  </button>
+                </div>
+
                 {scanQueued && (
-                  <span className="text-sm text-zinc-500">Scan queued — check Findings in ~30s</span>
+                  <p className="text-sm text-zinc-500">Scan queued — check Findings in ~30s.</p>
                 )}
               </div>
+            )}
+          </div>
+
+          {/* Posture snapshot sidebar */}
+          {acc.status === "connected" && (
+            <div className="bg-white rounded-xl border border-zinc-200 shadow-sm px-5 py-5">
+              <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-4">Posture Snapshot</div>
+              <div className="grid grid-cols-2 gap-3 mb-4">
+                <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-center">
+                  <div className="text-2xl font-bold text-red-600 tabular-nums">{findings.isLoading ? "…" : critHigh}</div>
+                  <div className="text-xs text-red-500 font-medium mt-0.5">critical / high</div>
+                </div>
+                <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-3 text-center">
+                  <div className="text-2xl font-bold text-amber-600 tabular-nums">{findings.isLoading ? "…" : medium}</div>
+                  <div className="text-xs text-amber-500 font-medium mt-0.5">medium</div>
+                </div>
+              </div>
+              <p className="text-[12px] text-zinc-400 leading-relaxed">
+                Use this account as the control point for scan health, while Findings stays focused on remediation work.
+              </p>
             </div>
           )}
         </div>

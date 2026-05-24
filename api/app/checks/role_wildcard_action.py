@@ -24,7 +24,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
                 FindingDraft(
                     check_id=CHECK_ID,
                     resource_arn=r.arn,
-                    title=f"Role `{r.name}` has wildcard Action (*) in inline policy",
+                    title=f"Role `{r.name}` has wildcard permissions in an inline policy",
                     severity="high",
                     risk_score=score("high", admin=True),
                     evidence={

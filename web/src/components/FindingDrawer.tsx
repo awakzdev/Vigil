@@ -15,12 +15,14 @@ type Finding = {
   last_seen: string;
 };
 
-const sevBadge: Record<string, string> = {
-  critical: "bg-red-50 text-red-700 border border-red-200",
-  high:     "bg-red-50 text-red-700 border border-red-200",
-  medium:   "bg-amber-50 text-amber-700 border border-amber-200",
-  low:      "bg-zinc-100 text-zinc-600 border border-zinc-200",
+const sevHeaderBadge: Record<string, string> = {
+  critical: "bg-red-600 text-white",
+  high:     "bg-red-500 text-white",
+  medium:   "bg-amber-500 text-white",
+  low:      "bg-zinc-500 text-white",
 };
+
+
 
 type Remediation = {
   why: string;
@@ -40,7 +42,7 @@ const remediations: Record<string, Remediation> = {
     ],
     cli: `aws iam create-virtual-mfa-device --virtual-mfa-device-name <name> --outfile /tmp/qr.png --bootstrap-method QRCodePNG
 aws iam enable-mfa-device --user-name <user> --serial-number <arn> --authentication-code1 <code1> --authentication-code2 <code2>`,
-    risk: "Until MFA is enabled, a single credential leak grants full console access.",
+    risk: "Until MFA is enabled, a leaked password can be enough to sign in to the console.",
   },
   "iam.user.inactive_90d": {
     why: "Inactive accounts have no baseline of normal activity, making compromise invisible. Attackers who obtain credentials can operate undetected for months.",
@@ -55,7 +57,7 @@ aws iam delete-login-profile --user-name <user>
 
 # Or delete the user entirely (remove keys + policies first)
 aws iam delete-user --user-name <user>`,
-    risk: "Stale accounts with active credentials remain exploitable indefinitely.",
+    risk: "Stale console users should be disabled or removed after ownership is confirmed.",
   },
   "iam.access_key.unused_90d": {
     why: "Unused access keys are typically abandoned in scripts, CI config, or developer machines — often forgotten and never rotated. They're persistent credentials with no expiry.",
@@ -68,10 +70,40 @@ aws iam delete-user --user-name <user>`,
     cli: `# Deactivate first, confirm nothing breaks, then delete
 aws iam update-access-key --access-key-id <key-id> --status Inactive --user-name <user>
 aws iam delete-access-key --access-key-id <key-id> --user-name <user>`,
-    risk: "Forgotten keys are exfiltrated without detection and never expire.",
+    risk: "Forgotten keys are long-lived credentials. Deactivate first, then delete after confirming nothing still depends on them.",
+  },
+  "iam.access_key.no_rotation_90d": {
+    why: "This access key is older than the configured key-age threshold. Long-lived keys are harder to reason about because they may be stored in old scripts, CI secrets, or developer machines.",
+    console: [
+      "Open IAM → Users → select the user",
+      'Click "Security credentials" tab',
+      "Create a replacement access key for the current workload",
+      "Update the workload secret, then deactivate and delete the old key",
+    ],
+    cli: `# Create a replacement key, update the workload, then retire the old one
+aws iam create-access-key --user-name <user>
+aws iam update-access-key --access-key-id <key-id> --status Inactive --user-name <user>
+aws iam delete-access-key --access-key-id <key-id> --user-name <user>`,
+    risk: "This is a key hygiene finding. Validate where the key is used before rotation or deletion.",
+  },
+  "iam.access_key.multiple_active": {
+    why: "The user has more than one active access key. That can be valid during rotation, but persistent duplicate keys make ownership and cleanup harder.",
+    console: [
+      "Open IAM → Users → select the user",
+      'Click "Security credentials" tab',
+      "Review both active access keys, including creation and last-used dates",
+      "Deactivate and delete the key that is no longer needed",
+    ],
+    cli: `# Review active keys for the user
+aws iam list-access-keys --user-name <user>
+
+# Deactivate the unused key first, then delete it
+aws iam update-access-key --access-key-id <key-id> --status Inactive --user-name <user>
+aws iam delete-access-key --access-key-id <key-id> --user-name <user>`,
+    risk: "Treat this as a review item unless the extra key is clearly stale or unauthorized.",
   },
   "iam.role.unassumed_90d": {
-    why: "Roles not assumed in 90+ days are likely orphaned. They add attack surface and may carry overly broad policies from an earlier, less careful time.",
+    why: "Roles not assumed in 90+ days are often orphaned. They add attack surface and may carry policies that nobody actively owns.",
     console: [
       "Open IAM → Roles → select the role",
       "Review the trust policy and attached policies",
@@ -83,10 +115,10 @@ aws iam get-role --role-name <role-name> --query 'Role.RoleLastUsed'
 
 # Delete if confirmed unused
 aws iam delete-role --role-name <role-name>`,
-    risk: "Orphaned roles can be assumed by compromised services or used for lateral movement.",
+    risk: "Unused roles should be removed after ownership and service dependencies are confirmed.",
   },
   "iam.role.wildcard_action": {
-    why: 'Action: "*" in an inline policy is effectively admin access. It violates least privilege and means any compromise of this role grants unrestricted IAM access.',
+    why: 'Action: "*" in an inline policy is admin-like unless constrained by resource, condition, or permissions boundary. It should be reviewed and scoped to the actions the role actually needs.',
     console: [
       "Open IAM → Roles → select the role",
       'Click "Permissions" tab → find the inline policy',
@@ -99,10 +131,10 @@ aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>
 
 # Replace with scoped policy
 aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json`,
-    risk: "A wildcard role can create users, escalate privileges, exfiltrate data, or destroy infrastructure.",
+    risk: "Broad wildcard permissions increase blast radius if the role is compromised or misused.",
   },
   "iam.role.unused_services_90d": {
-    why: "This role has permissions to services it never calls. Each unused permission is unnecessary blast radius — if this role is compromised via SSRF, metadata endpoint theft, or lateral movement, an attacker can pivot to every service the role can reach.",
+    why: "This role has permissions to services it has not recently used according to IAM service-last-accessed data. Those permissions may be removable, but should be validated against workload behavior and data freshness.",
     console: [
       "Open IAM → Roles → select the role",
       'Click "Permissions" tab → find inline policies under "Permissions policies"',
@@ -120,7 +152,22 @@ aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --po
 
 # Or delete entirely if all permissions are unused
 aws iam delete-role-policy --role-name <role-name> --policy-name <policy-name>`,
-    risk: "Overly permissive roles violate least privilege. Reducing granted services limits the blast radius of any future compromise.",
+    risk: "Unused service permissions increase blast radius. Removing them improves least privilege after validation.",
+  },
+  "iam.role.trust_wildcard": {
+    why: 'This role trust policy allows any AWS principal. That is high risk unless strong conditions narrow who can assume the role.',
+    console: [
+      "Open IAM → Roles → select the role",
+      'Click "Trust relationships"',
+      "Review the principal and any conditions",
+      "Replace wildcard principals with specific AWS accounts, roles, services, or federated identities",
+    ],
+    cli: `# Review the role trust policy
+aws iam get-role --role-name <role-name> --query 'Role.AssumeRolePolicyDocument'
+
+# Update the trust policy after scoping Principal and Conditions
+aws iam update-assume-role-policy --role-name <role-name> --policy-document file://trust-policy.json`,
+    risk: "Wildcard trust can expose a role to unintended principals, especially when conditions are missing or weak.",
   },
 };
 
@@ -173,7 +220,7 @@ function RemovableStatementsBlock({ statements }: { statements: RemovableStateme
                   </span>
                 ))}
               </div>
-              <div className="font-mono text-zinc-400 text-[11px]">
+              <div className="font-mono text-zinc-400 text-xs">
                 on: {stmt.resources.join(", ")}
               </div>
             </div>
@@ -342,7 +389,7 @@ function GeneratePolicySection({ accountId, finding }: { accountId: string; find
               ))}
             </div>
           </div>
-          <pre className="bg-zinc-950 text-zinc-200 rounded-lg px-4 py-4 text-[11px] font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
+          <pre className="bg-zinc-950 text-zinc-200 rounded-lg px-4 py-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
             {JSON.stringify(view === "cleaned" ? data.cleaned_policies : data.original_policies, null, 2)}
           </pre>
         </div>
@@ -367,49 +414,61 @@ export function FindingDrawer({
   if (!finding) return null;
 
   const rem = remediations[finding.check_id] ?? fallbackRemediation;
-  const badge = sevBadge[finding.severity] ?? sevBadge.low;
+  const headerBadge = sevHeaderBadge[finding.severity] ?? sevHeaderBadge.low;
   const hasEvidence = Object.keys(finding.evidence).length > 0;
   const showPolicyGen = finding.check_id === "iam.role.unused_services_90d" && !!accountId;
 
   return (
     <>
-      <div className="fixed inset-0 bg-black/25 z-40 backdrop-blur-sm" onClick={onClose} />
+      <div className="fixed inset-0 bg-black/30 z-40 backdrop-blur-sm" onClick={onClose} />
 
       <div className="fixed right-0 top-0 h-full w-full max-w-[480px] bg-white z-50 shadow-2xl flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="px-6 pt-5 pb-4 border-b border-zinc-100">
+        <div className="bg-zinc-900 px-6 pt-5 pb-5">
           <div className="flex items-start justify-between gap-3">
-            <div className="space-y-2 min-w-0">
+            <div className="space-y-2.5 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
-                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold ${badge}`}>
+                <span className={`inline-flex items-center px-2.5 py-0.5 rounded text-xs font-bold uppercase tracking-wide ${headerBadge}`}>
                   {finding.severity}
                 </span>
                 <span className="text-xs font-mono text-zinc-400">{finding.check_id}</span>
               </div>
-              <h2 className="text-sm font-semibold text-zinc-900 leading-snug">{finding.title}</h2>
-              <p className="text-[11px] font-mono text-zinc-400 break-all leading-relaxed">{finding.resource_arn}</p>
+              <h2 className="text-base font-semibold text-white leading-snug">{finding.title}</h2>
             </div>
-            <button onClick={onClose} className="text-zinc-300 hover:text-zinc-500 transition-colors flex-shrink-0 mt-0.5">
+            <button onClick={onClose} className="text-zinc-500 hover:text-zinc-300 transition-colors flex-shrink-0 mt-0.5">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
           </div>
+          {/* Affected resource */}
+          <div className="mt-4 pt-4 border-t border-zinc-800">
+            <div className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-1">Affected Resource</div>
+            <p className="text-xs font-mono text-zinc-300 break-all leading-relaxed">{finding.resource_arn}</p>
+          </div>
         </div>
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
-          {/* Context */}
-          <div className="rounded-lg border border-zinc-200 px-4 py-4 space-y-3">
-            <p className="text-sm text-zinc-700 leading-relaxed">{rem.why}</p>
-            <hr className="border-zinc-100" />
-            <p className="text-sm text-zinc-500 leading-relaxed">{rem.risk}</p>
+          {/* Context + Risk side by side */}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="rounded-lg border border-zinc-200 bg-white px-4 py-4">
+              <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2">Finding Context</div>
+              <p className="text-xs text-zinc-700 leading-relaxed">{rem.why}</p>
+            </div>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-4">
+              <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-2">Risk</div>
+              <p className="text-xs text-zinc-500 leading-relaxed">{rem.risk}</p>
+            </div>
           </div>
 
-          {/* Evidence */}
+          {/* Scan Details */}
           {hasEvidence && (
             <div>
-              <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Evidence</div>
+              <div className="flex items-center justify-between mb-3">
+                <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Scan Details</div>
+                <span className="text-xs text-zinc-400">Raw values used to produce this finding</span>
+              </div>
               <EvidenceSection evidence={finding.evidence} checkId={finding.check_id} />
             </div>
           )}
@@ -421,7 +480,10 @@ export function FindingDrawer({
 
           {/* Remediation */}
           <div>
-            <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide mb-3">Remediation</div>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs font-semibold text-zinc-500 uppercase tracking-wide">Remediation</div>
+              <span className="text-xs text-zinc-400">Choose console steps or AWS CLI</span>
+            </div>
             <div className="flex gap-1 mb-4 bg-zinc-100 rounded-lg p-1 w-fit">
               {(["console", "cli"] as Tab[]).map(t => (
                 <button
@@ -440,7 +502,7 @@ export function FindingDrawer({
               <ol className="space-y-2.5">
                 {rem.console.map((step, i) => (
                   <li key={i} className="flex gap-3 text-sm text-zinc-700 leading-relaxed">
-                    <span className="w-5 h-5 rounded-full bg-zinc-900 text-zinc-50 text-[11px] font-semibold flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="w-5 h-5 rounded-full bg-zinc-900 text-zinc-50 text-xs font-semibold flex items-center justify-center flex-shrink-0 mt-0.5">
                       {i + 1}
                     </span>
                     {step}

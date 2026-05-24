@@ -27,7 +27,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             FindingDraft(
                 check_id=CHECK_ID,
                 resource_arn=r.arn,
-                title=f"Role `{r.name}` not assumed in {days or '90+'} days",
+                title=f"Role `{r.name}` has not been assumed for {days or '90+'} days",
                 severity="medium",
                 risk_score=score("medium", age_days=days or THRESHOLD_DAYS),
                 evidence={

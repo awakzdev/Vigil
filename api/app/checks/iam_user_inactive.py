@@ -28,7 +28,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             FindingDraft(
                 check_id=CHECK_ID,
                 resource_arn=u.arn,
-                title=f"User `{u.name}` hasn't logged in {days or '90+'} days",
+                title=f"User `{u.name}` has not signed in for {days or '90+'} days",
                 severity="medium",
                 risk_score=score("medium", age_days=days or THRESHOLD_DAYS),
                 evidence={

@@ -27,7 +27,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             FindingDraft(
                 check_id=CHECK_ID,
                 resource_arn=f"{k.user_arn}#{k.key_id}",
-                title=f"Access key `{k.key_id[-4:]}…` on {_uname(k.user_arn)} unused {days or '90+'} days",
+                title=f"Access key `{k.key_id[-4:]}...` on `{_uname(k.user_arn)}` unused for {days or '90+'} days",
                 severity="high",
                 risk_score=score("high", age_days=days or THRESHOLD_DAYS),
                 evidence={
