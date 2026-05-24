@@ -18,6 +18,8 @@ type Finding = {
 
 type Account = { id: string; status: string };
 
+const COLLAPSED_FINDINGS_KEY = "vigil.findings.collapsedGroups";
+
 const sevBadge: Record<string, string> = {
   critical: "border-red-200 bg-red-50 text-red-700",
   high: "border-red-200 bg-red-50 text-red-600",
@@ -59,6 +61,17 @@ const statusTabs = ["open", "snoozed", "resolved", "all"] as const;
 type StatusTab = (typeof statusTabs)[number];
 type SeverityFilter = "all" | "critical_high" | "medium" | "low";
 type SortKey = "severity" | "score" | "first_seen";
+
+function loadCollapsedGroups(): Record<string, boolean> {
+  try {
+    const raw = localStorage.getItem(COLLAPSED_FINDINGS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 function resourceName(arn: string): string {
   const tail = arn.split(":").pop() ?? arn;
@@ -109,8 +122,12 @@ export default function Findings() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
   const [search, setSearch] = useState("");
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => loadCollapsedGroups());
   const prevScanStatus = useRef<string | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(COLLAPSED_FINDINGS_KEY, JSON.stringify(collapsed));
+  }, [collapsed]);
 
   const downloadCsv = useCallback(async () => {
     const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
