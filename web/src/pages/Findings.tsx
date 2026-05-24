@@ -288,40 +288,42 @@ export default function Findings() {
         ))}
       </div>
 
-      {/* Table */}
-      <div className="border border-zinc-200 rounded bg-white overflow-hidden">
-        <div className="grid grid-cols-[minmax(0,1fr)_60px_70px_120px] items-center text-[11px] font-medium text-zinc-500 uppercase tracking-wide px-3 py-2 border-b border-zinc-200 bg-zinc-50">
-          <span>Resource</span>
-          <button onClick={() => toggleSort("score")} className="text-right hover:text-zinc-900">
-            Score {sortKey === "score" && (sortDir === "asc" ? "↑" : "↓")}
-          </button>
-          <button onClick={() => toggleSort("first_seen")} className="text-right hover:text-zinc-900">
-            Age {sortKey === "first_seen" && (sortDir === "asc" ? "↑" : "↓")}
-          </button>
-          <span className="text-right pr-1">Actions</span>
+      {/* Sort controls */}
+      <div className="flex items-center justify-end gap-3 mb-3 text-[11px] uppercase tracking-wide text-zinc-500 font-medium">
+        <span>Sort:</span>
+        <button onClick={() => toggleSort("severity")} className={`hover:text-zinc-900 ${sortKey === "severity" ? "text-zinc-900" : ""}`}>
+          Severity {sortKey === "severity" && (sortDir === "asc" ? "↑" : "↓")}
+        </button>
+        <button onClick={() => toggleSort("score")} className={`hover:text-zinc-900 ${sortKey === "score" ? "text-zinc-900" : ""}`}>
+          Score {sortKey === "score" && (sortDir === "asc" ? "↑" : "↓")}
+        </button>
+        <button onClick={() => toggleSort("first_seen")} className={`hover:text-zinc-900 ${sortKey === "first_seen" ? "text-zinc-900" : ""}`}>
+          Age {sortKey === "first_seen" && (sortDir === "asc" ? "↑" : "↓")}
+        </button>
+      </div>
+
+      {q.isLoading && (
+        <div className="rounded border border-zinc-200 bg-white px-3 py-10 text-center text-[13px] text-zinc-400">Loading…</div>
+      )}
+      {!q.isLoading && rows.length === 0 && (
+        <div className="rounded border border-zinc-200 bg-white px-3 py-12 text-center text-[13px] text-zinc-500">
+          No {status} findings.
         </div>
+      )}
 
-        {q.isLoading && (
-          <div className="px-3 py-10 text-center text-[13px] text-zinc-400">Loading…</div>
-        )}
-        {!q.isLoading && rows.length === 0 && (
-          <div className="px-3 py-12 text-center text-[13px] text-zinc-500">
-            No {status} findings.
-          </div>
-        )}
-
-        <div>
-          {(grouped ?? [["all", rows] as const]).map(([key, items]) => {
-            const isGrouped = grouped !== null;
-            const isCollapsed = isGrouped && collapsed[key];
-            const sev = items[0]?.severity ?? "low";
-            const label = checkLabels[key] ?? key;
-            return (
-              <div key={key}>
+      {/* Grouped cards */}
+      <div className="space-y-3">
+        {(grouped ?? [["all", rows] as const]).map(([key, items]) => {
+          const isGrouped = grouped !== null;
+          const isCollapsed = isGrouped && collapsed[key];
+          const sev = items[0]?.severity ?? "low";
+          const label = checkLabels[key] ?? key;
+          return (
+              <div key={key} className="rounded-lg border border-zinc-200 bg-white shadow-sm overflow-hidden">
                 {isGrouped && (
                   <button
                     onClick={() => toggleGroup(key)}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 bg-zinc-50/60 border-y border-zinc-200 text-[13px] font-semibold text-zinc-800 hover:bg-zinc-100 transition-colors"
+                    className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-[13px] font-semibold text-zinc-800 hover:bg-zinc-50 transition-colors ${isCollapsed ? "" : "border-b border-zinc-200"}`}
                   >
                     <svg
                       className={`w-3 h-3 text-zinc-400 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
@@ -376,10 +378,9 @@ export default function Findings() {
                     ))}
                   </div>
                 )}
-              </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
 
       <FindingDrawer
