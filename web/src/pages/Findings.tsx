@@ -140,6 +140,20 @@ export default function Findings() {
     return arr;
   }, [findings, sortKey, sortDir]);
 
+  const grouped = useMemo(() => {
+    if (sortKey !== "severity") return null;
+    const order = ["critical", "high", "medium", "low"];
+    const map = new Map<string, Finding[]>();
+    for (const s of order) map.set(s, []);
+    for (const f of rows) (map.get(f.severity) ?? map.set(f.severity, []).get(f.severity)!).push(f);
+    return order.filter((s) => (map.get(s)?.length ?? 0) > 0).map((s) => [s, map.get(s)!] as const);
+  }, [rows, sortKey]);
+
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({ low: true });
+  function toggleGroup(s: string) {
+    setCollapsed((c) => ({ ...c, [s]: !c[s] }));
+  }
+
   const totals = useMemo(() => {
     const t = { open: 0, critical: 0, high: 0, medium: 0, low: 0 };
     for (const f of findings) {
@@ -294,46 +308,77 @@ export default function Findings() {
           </div>
         )}
 
-        <div className="divide-y divide-zinc-100">
-          {rows.map((f) => (
-            <div
-              key={f.id}
-              onClick={() => setSelected(f)}
-              className="grid grid-cols-[24px_140px_220px_minmax(0,1fr)_60px_70px_120px] items-center px-3 py-2 hover:bg-zinc-50 cursor-pointer text-[13px] group"
-            >
-              <span className={`w-1.5 h-1.5 rounded-full ${sevDot[f.severity] ?? sevDot.low}`} title={f.severity} />
-              <span className="capitalize text-zinc-700">{f.severity}</span>
-              <span className="text-zinc-600 truncate" title={f.check_id}>
-                {checkLabels[f.check_id] ?? f.check_id}
-              </span>
-              <span className="font-mono text-[12px] text-zinc-700 truncate" title={f.resource_arn}>
-                {shortArn(f.resource_arn)}
-              </span>
-              <span className="text-right tabular-nums font-medium text-zinc-700">{f.risk_score}</span>
-              <span className="text-right tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span>
-              <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    act.mutate({ id: f.id, action: "snooze" });
-                  }}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-900 px-1.5 py-0.5 rounded hover:bg-zinc-100"
-                  title="Snooze 30d"
-                >
-                  Snooze
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    act.mutate({ id: f.id, action: "resolve" });
-                  }}
-                  className="text-[11px] text-zinc-500 hover:text-zinc-900 px-1.5 py-0.5 rounded hover:bg-zinc-100"
-                >
-                  Resolve
-                </button>
+        <div>
+          {(grouped ?? [["all", rows] as const]).map(([sev, items]) => {
+            const isGrouped = grouped !== null;
+            const isCollapsed = isGrouped && collapsed[sev];
+            return (
+              <div key={sev}>
+                {isGrouped && (
+                  <button
+                    onClick={() => toggleGroup(sev)}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 bg-zinc-50/60 border-y border-zinc-200 text-[11px] font-semibold uppercase tracking-wide text-zinc-600 hover:bg-zinc-100 transition-colors"
+                  >
+                    <svg
+                      className={`w-3 h-3 transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth={2.5}
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+                    </svg>
+                    <span className={`w-1.5 h-1.5 rounded-full ${sevDot[sev] ?? sevDot.low}`} />
+                    <span>{sev}</span>
+                    <span className="text-zinc-400 font-normal normal-case">· {items.length}</span>
+                  </button>
+                )}
+                {!isCollapsed && (
+                  <div className="divide-y divide-zinc-100">
+                    {items.map((f) => (
+                      <div
+                        key={f.id}
+                        onClick={() => setSelected(f)}
+                        className="grid grid-cols-[24px_140px_220px_minmax(0,1fr)_60px_70px_120px] items-center px-3 py-2 hover:bg-zinc-50 cursor-pointer text-[13px] group"
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${sevDot[f.severity] ?? sevDot.low}`} title={f.severity} />
+                        <span className="capitalize text-zinc-700">{f.severity}</span>
+                        <span className="text-zinc-600 truncate" title={f.check_id}>
+                          {checkLabels[f.check_id] ?? f.check_id}
+                        </span>
+                        <span className="font-mono text-[12px] text-zinc-700 truncate" title={f.resource_arn}>
+                          {shortArn(f.resource_arn)}
+                        </span>
+                        <span className="text-right tabular-nums font-medium text-zinc-700">{f.risk_score}</span>
+                        <span className="text-right tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span>
+                        <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              act.mutate({ id: f.id, action: "snooze" });
+                            }}
+                            className="text-[11px] text-zinc-500 hover:text-zinc-900 px-1.5 py-0.5 rounded hover:bg-zinc-100"
+                            title="Snooze 30d"
+                          >
+                            Snooze
+                          </button>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              act.mutate({ id: f.id, action: "resolve" });
+                            }}
+                            className="text-[11px] text-zinc-500 hover:text-zinc-900 px-1.5 py-0.5 rounded hover:bg-zinc-100"
+                          >
+                            Resolve
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
