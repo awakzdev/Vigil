@@ -15,21 +15,37 @@ def run(db: Session, account_id) -> list[FindingDraft]:
     for r in roles:
         if "/aws-service-role/" in r.arn:
             continue
-        flagged = []
+        inline_flagged = []
         for pname, doc in (r.inline_policies or {}).items():
             if _has_wildcard_action(doc):
-                flagged.append(pname)
-        if flagged:
+                inline_flagged.append(pname)
+
+        attached_flagged = []
+        for pol in (r.attached_policies or []):
+            if pol.get("policy_type") == "aws_managed":
+                continue  # AWS managed wildcards are expected (e.g. AdministratorAccess)
+            stmts = pol.get("statements", [])
+            if _has_wildcard_action({"Statement": stmts}):
+                attached_flagged.append(pol["policy_name"])
+
+        if inline_flagged or attached_flagged:
+            sources = []
+            if inline_flagged:
+                sources.append(f"inline: {', '.join(inline_flagged)}")
+            if attached_flagged:
+                sources.append(f"customer managed: {', '.join(attached_flagged)}")
             out.append(
                 FindingDraft(
                     check_id=CHECK_ID,
                     resource_arn=r.arn,
-                    title=f"Role `{r.name}` has wildcard permissions in an inline policy",
+                    title=f"Role `{r.name}` has wildcard Action in a policy",
                     severity="high",
                     risk_score=score("high", admin=True),
                     evidence={
                         "role_arn": r.arn,
-                        "policies_with_wildcard": flagged,
+                        "inline_policies_with_wildcard": inline_flagged,
+                        "attached_policies_with_wildcard": attached_flagged,
+                        "sources": sources,
                     },
                 )
             )

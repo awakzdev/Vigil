@@ -390,7 +390,7 @@ export default function Findings() {
   const downloadCsv = useCallback(async () => {
     const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
     const t = token();
-    const res = await fetch(`${BASE}/v1/findings/export/csv?status=${status}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
+    const res = await fetch(`${BASE}/v1/exports/findings.csv?status=${status}`, { headers: t ? { Authorization: `Bearer ${t}` } : {} });
     if (!res.ok) return;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
@@ -520,12 +520,43 @@ export default function Findings() {
     { key: "low" as SeverityFilter, label: "Low", value: totals.low, tone: "text-zinc-500", hint: pctOf(totals.low), dot: "bg-zinc-300" },
   ];
 
+  if (!accounts.isLoading && accounts.data && !connectedId) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-8 py-20 text-center">
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-200 bg-white shadow-sm">
+          <svg className="h-7 w-7 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+          </svg>
+        </div>
+        <h2 className="mb-2 text-lg font-semibold text-zinc-900">No AWS account connected</h2>
+        <p className="mb-6 max-w-sm text-sm text-zinc-500 leading-relaxed">
+          Connect your AWS account to start scanning for security findings and generate compliance evidence.
+        </p>
+        <div className="mb-8 flex flex-col gap-3 text-left max-w-sm w-full">
+          {[
+            { step: "1", text: "Go to AWS Accounts and add your account" },
+            { step: "2", text: "Launch the pre-filled CloudFormation stack" },
+            { step: "3", text: "Paste the role ARN and verify — scan starts automatically" },
+          ].map(({ step, text }) => (
+            <div key={step} className="flex items-center gap-3 rounded-xl border border-zinc-100 bg-zinc-50 px-4 py-3">
+              <span className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-indigo-600 text-xs font-bold text-white">{step}</span>
+              <span className="text-sm text-zinc-700">{text}</span>
+            </div>
+          ))}
+        </div>
+        <a href="/accounts" className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
+          Connect AWS account
+        </a>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full px-8 py-7">
       <div className="mb-7 flex items-start justify-between gap-6">
         <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Findings</h1>
-          <p className="mt-1 text-sm text-zinc-500">IAM posture issues from the latest account scan.{scanRun.data?.finished_at && <> Last scan {lastScanLabel(scanRun.data.finished_at)}.</>}</p>
+          <p className="mt-1 text-sm text-zinc-500">Security posture issues from the latest account scan.{scanRun.data?.finished_at && <> Last scan {lastScanLabel(scanRun.data.finished_at)}.</>}</p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button onClick={downloadCsv} className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950">Export</button>

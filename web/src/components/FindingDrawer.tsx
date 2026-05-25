@@ -695,8 +695,11 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
                         ))}
                       </div>
                     )}
-                    {pol.unused_services.length === 0 && pol.active_services.length === 0 && (
-                      <span className="text-xs text-zinc-400">No service last-accessed data for this policy yet.</span>
+                    {pol.unused_services.length === 0 && pol.active_services.length === 0 && pol.granted_services.length > 0 && (
+                      <span className="text-xs text-zinc-400">No usage data yet — run a scan, then check back in a few minutes once service last-accessed data populates.</span>
+                    )}
+                    {pol.granted_services.length === 0 && (
+                      <span className="text-xs text-zinc-400">No parseable service grants found (may use conditions or resource-specific ARNs).</span>
                     )}
                   </div>
                 </div>
