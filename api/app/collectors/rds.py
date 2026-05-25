@@ -50,6 +50,7 @@ def collect_rds(db: Session, account: AwsAccount) -> int:
                         region=region,
                         publicly_accessible=inst.get("PubliclyAccessible", False),
                         storage_encrypted=inst.get("StorageEncrypted", False),
+                        backup_retention_period=inst.get("BackupRetentionPeriod", 0),
                         engine=inst.get("Engine"),
                         last_seen=_now(),
                     ).on_conflict_do_update(
@@ -57,6 +58,7 @@ def collect_rds(db: Session, account: AwsAccount) -> int:
                         set_={
                             "publicly_accessible": inst.get("PubliclyAccessible", False),
                             "storage_encrypted": inst.get("StorageEncrypted", False),
+                            "backup_retention_period": inst.get("BackupRetentionPeriod", 0),
                             "engine": inst.get("Engine"),
                             "last_seen": _now(),
                         },

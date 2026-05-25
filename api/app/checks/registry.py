@@ -16,6 +16,7 @@ from app.checks import (
     iam_user_no_mfa,
     kms_no_rotation,
     rds_no_encryption,
+    rds_no_automated_backup,
     rds_publicly_accessible,
     role_trust_wildcard,
     role_unassumed_90d,
@@ -79,4 +80,5 @@ ALL_CHECKS = [
     # RDS
     rds_publicly_accessible,
     rds_no_encryption,
+    rds_no_automated_backup,
 ]

@@ -377,6 +377,21 @@ aws rds restore-db-instance-from-db-snapshot \\
   --db-snapshot-identifier <encrypted-snapshot-id>`,
     risk: "Unencrypted storage means any physical disk access or snapshot leak exposes plaintext database contents.",
   },
+  "rds.instance.no_automated_backup": {
+    why: "Automated backups provide point-in-time recovery. Without them, accidental deletion, bad migrations, or data corruption can become permanent data loss.",
+    console: [
+      "Open RDS → Databases → select the instance",
+      'Click "Modify"',
+      "Set Backup retention period to at least 7 days",
+      "Choose a backup window that avoids peak traffic",
+      'Click "Continue" and apply during the next maintenance window unless urgent',
+    ],
+    cli: `aws rds modify-db-instance \\
+  --db-instance-identifier <instance-id> \\
+  --backup-retention-period 7 \\
+  --preferred-backup-window 03:00-04:00`,
+    risk: "No automated backups means no point-in-time recovery. Operational mistakes or corruption may require manual snapshot rollback, if any snapshot exists.",
+  },
   "iam.account.password_policy_weak": {
     why: "A weak account password policy means IAM users can set short, simple, or reused passwords. Attackers who obtain one password may rotate through accounts trivially.",
     console: [

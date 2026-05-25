@@ -328,6 +328,7 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
                 "region": r.region,
                 "publicly_accessible": r.publicly_accessible,
                 "storage_encrypted": r.storage_encrypted,
+                "backup_retention_period": r.backup_retention_period,
                 "engine": r.engine,
             },
         ))

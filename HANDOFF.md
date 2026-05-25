@@ -55,6 +55,7 @@ _Last updated: 2026-05-25 (session 4)_
 | `ec2.security_group.unrestricted_rdp` | high |
 | `rds.instance.publicly_accessible` | high |
 | `rds.instance.no_encryption` | high |
+| `rds.instance.no_automated_backup` | medium |
 
 ### Findings UI
 - Grouped by check type, sorted by severity

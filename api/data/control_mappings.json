@@ -234,5 +234,15 @@
     "checks": [
       "rds.instance.publicly_accessible"
     ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "2.3.3",
+    "title": "Ensure RDS automated backups are enabled",
+    "description": "RDS automated backups support point-in-time recovery and reduce the impact of accidental deletion, corruption, or failed migrations.",
+    "guidance": "Set a backup retention period greater than zero for every production RDS instance.",
+    "checks": [
+      "rds.instance.no_automated_backup"
+    ]
   }
 ]

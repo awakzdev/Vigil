@@ -196,5 +196,6 @@ class RdsInstance(Base):
     region: Mapped[str] = mapped_column(String(40))
     publicly_accessible: Mapped[bool] = mapped_column(Boolean, default=False)
     storage_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
+    backup_retention_period: Mapped[int] = mapped_column(Integer, default=0)
     engine: Mapped[str | None] = mapped_column(String(64), nullable=True)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

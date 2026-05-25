@@ -99,6 +99,7 @@ const checkLabels: Record<string, string> = {
   // RDS
   "rds.instance.publicly_accessible": "RDS publicly accessible",
   "rds.instance.no_encryption": "RDS storage not encrypted",
+  "rds.instance.no_automated_backup": "RDS backups disabled",
 };
 
 const checkDescriptions: Record<string, string> = {
@@ -133,6 +134,7 @@ const checkDescriptions: Record<string, string> = {
   "ec2.ebs.encryption_not_default": "Enable default EBS encryption so all new volumes are encrypted at creation.",
   "rds.instance.publicly_accessible": "Set Publicly Accessible to No and place RDS in a private subnet.",
   "rds.instance.no_encryption": "Encrypt RDS storage — snapshot → copy with encryption → restore to new instance.",
+  "rds.instance.no_automated_backup": "Enable automated backups with a retention period that matches your recovery objective.",
 };
 
 const statusTabs = ["open", "ignored", "resolved", "all"] as const;

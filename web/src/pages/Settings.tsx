@@ -59,6 +59,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // RDS
   { id: "rds.instance.publicly_accessible", label: "RDS publicly accessible", severity: "high", description: "Set Publicly Accessible to No and ensure RDS is in a private subnet." },
   { id: "rds.instance.no_encryption", label: "RDS storage not encrypted", severity: "high", description: "Encrypt RDS storage — requires snapshot copy to a new encrypted instance." },
+  { id: "rds.instance.no_automated_backup", label: "RDS backups disabled", severity: "medium", description: "Enable automated backups with a retention period." },
 ];
 
 const sevBadge: Record<string, string> = {
