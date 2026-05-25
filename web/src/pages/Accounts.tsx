@@ -50,13 +50,13 @@ export default function Accounts() {
 
   const findings = useQuery({
     queryKey: ["findings-snapshot", acc?.id],
-    queryFn: () => api<Finding[]>(`/v1/findings?status=open`),
+    queryFn: () => api<{ items: Finding[]; total: number; next_cursor: string | null }>(`/v1/findings?status=open&limit=500`),
     enabled: acc?.status === "connected",
   });
 
-  const critHigh = findings.data?.filter(f => f.severity === "critical" || f.severity === "high").length ?? 0;
-  const medium = findings.data?.filter(f => f.severity === "medium").length ?? 0;
-  const totalOpen = findings.data?.length ?? 0;
+  const critHigh = findings.data?.items.filter(f => f.severity === "critical" || f.severity === "high").length ?? 0;
+  const medium = findings.data?.items.filter(f => f.severity === "medium").length ?? 0;
+  const totalOpen = findings.data?.items.length ?? 0;
 
   return (
     <div className="space-y-6 max-w-5xl">

@@ -171,7 +171,7 @@ def _build_readme(
     failed = sum(1 for r in results if r["status"] == "fail")
     no_data = sum(1 for r in results if r["status"] == "no_data")
     lines = [
-        "VIGIL — COMPLIANCE EVIDENCE PACK",
+        "VIGIL - COMPLIANCE EVIDENCE PACK",
         "=" * 50,
         f"Account:     {acc.label} ({acc.account_id or 'unknown'})",
         f"Framework:   {framework.upper().replace('_', ' ')}",
@@ -187,12 +187,12 @@ def _build_readme(
         "",
         "CONTENTS",
         "-" * 30,
-        "INDEX.csv          — control ID, status, finding count",
-        "controls/[ID]/     — per-control folder",
-        "  summary.json     — control metadata and pass/fail status",
-        "  findings.json    — open findings mapped to this control",
-        "  snapshots.json   — raw collected evidence (last 50 entries)",
-        "report.pdf         — formatted summary report",
+        "INDEX.csv          - control ID, status, finding count",
+        "controls/[ID]/     - per-control folder",
+        "  summary.json     - control metadata and pass/fail status",
+        "  findings.json    - open findings mapped to this control",
+        "  snapshots.json   - raw collected evidence (last 50 entries)",
+        "report.pdf         - formatted summary report",
         "",
         "NOTE: Evidence in snapshots.json is raw API data collected by",
         "Vigil during scans. Each entry includes a taken_at timestamp.",

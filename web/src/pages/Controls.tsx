@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { api, token } from "../api";
 
 const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
@@ -65,6 +66,7 @@ function StatusIcon({ status }: { status: string }) {
 }
 
 export default function Controls() {
+  const navigate = useNavigate();
   const [framework, setFramework] = useState("soc2");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -288,15 +290,15 @@ export default function Controls() {
                         <div className="text-xs font-semibold text-zinc-400 uppercase tracking-wide mb-2">
                           Open findings ({ctrl.finding_count})
                         </div>
-                        <a
-                          href="/findings"
+                        <button
+                          onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
                           className="inline-flex items-center gap-1.5 text-sm text-red-600 hover:text-red-700 font-medium"
                         >
                           View in Findings
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                           </svg>
-                        </a>
+                        </button>
                       </div>
                     )}
 
