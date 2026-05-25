@@ -90,6 +90,30 @@ def _collect_roles(db: Session, sess, account: AwsAccount) -> int:
             except ClientError:
                 pass
 
+            attached_policies: list = []
+            try:
+                attached = iam.list_attached_role_policies(RoleName=r["RoleName"]).get("AttachedPolicies", [])
+                for pol in attached:
+                    pol_arn = pol["PolicyArn"]
+                    pol_name = pol["PolicyName"]
+                    pol_type = "aws_managed" if pol_arn.startswith("arn:aws:iam::aws:") else "customer_managed"
+                    statements = []
+                    try:
+                        version_id = iam.get_policy(PolicyArn=pol_arn)["Policy"]["DefaultVersionId"]
+                        doc = iam.get_policy_version(PolicyArn=pol_arn, VersionId=version_id)
+                        raw = doc["PolicyVersion"]["Document"].get("Statement", [])
+                        statements = raw if isinstance(raw, list) else [raw]
+                    except ClientError:
+                        pass
+                    attached_policies.append({
+                        "policy_arn": pol_arn,
+                        "policy_name": pol_name,
+                        "policy_type": pol_type,
+                        "statements": statements,
+                    })
+            except ClientError:
+                pass
+
             _upsert_role(
                 db,
                 account.id,
@@ -99,12 +123,13 @@ def _collect_roles(db: Session, sess, account: AwsAccount) -> int:
                 last_assumed=last_used,
                 trust_policy=r["AssumeRolePolicyDocument"],
                 inline_policies=inline_policies,
+                attached_policies=attached_policies,
             )
     log.info("collect_roles.done", roles=role_count)
     return role_count
 
 
-def _upsert_role(db: Session, account_id, *, arn, name, created, last_assumed, trust_policy, inline_policies):
+def _upsert_role(db: Session, account_id, *, arn, name, created, last_assumed, trust_policy, inline_policies, attached_policies):
     stmt = pg_insert(IamRole).values(
         id=uuid.uuid4(),
         account_id=account_id,
@@ -114,6 +139,7 @@ def _upsert_role(db: Session, account_id, *, arn, name, created, last_assumed, t
         last_assumed=last_assumed,
         trust_policy=trust_policy,
         inline_policies=inline_policies,
+        attached_policies=attached_policies,
     )
     stmt = stmt.on_conflict_do_update(
         index_elements=["account_id", "arn"],
@@ -122,6 +148,7 @@ def _upsert_role(db: Session, account_id, *, arn, name, created, last_assumed, t
             "last_assumed": stmt.excluded.last_assumed,
             "trust_policy": stmt.excluded.trust_policy,
             "inline_policies": stmt.excluded.inline_policies,
+            "attached_policies": stmt.excluded.attached_policies,
         },
     )
     db.execute(stmt)

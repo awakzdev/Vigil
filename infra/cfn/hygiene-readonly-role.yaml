@@ -56,6 +56,9 @@ Resources:
                   - iam:ListRoles
                   - iam:ListRolePolicies
                   - iam:GetRolePolicy
+                  - iam:ListAttachedRolePolicies
+                  - iam:GetPolicy
+                  - iam:GetPolicyVersion
                 Resource: "*"
 
               - Sid: IamServiceLastAccessed
@@ -84,6 +87,35 @@ Resources:
                   - kms:GetKeyRotationStatus
                   - kms:GetKeyPolicy
                   - kms:ListAliases
+                Resource: "*"
+
+              - Sid: CloudTrailConfiguration
+                Effect: Allow
+                Action:
+                  - cloudtrail:DescribeTrails
+                  - cloudtrail:GetTrailStatus
+                Resource: "*"
+
+              - Sid: GuardDutyConfiguration
+                Effect: Allow
+                Action:
+                  - guardduty:ListDetectors
+                  - guardduty:GetDetector
+                Resource: "*"
+
+              - Sid: VpcAndSecurityGroupEnumeration
+                Effect: Allow
+                Action:
+                  - ec2:DescribeRegions
+                  - ec2:DescribeVpcs
+                  - ec2:DescribeFlowLogs
+                  - ec2:DescribeSecurityGroups
+                Resource: "*"
+
+              - Sid: RdsConfiguration
+                Effect: Allow
+                Action:
+                  - rds:DescribeDBInstances
                 Resource: "*"
 
               - Sid: OrganizationsAccountLabel

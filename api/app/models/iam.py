@@ -50,6 +50,7 @@ class IamRole(Base):
     last_assumed: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     trust_policy: Mapped[dict] = mapped_column(JSON, default=dict)
     inline_policies: Mapped[dict] = mapped_column(JSON, default=dict)
+    attached_policies: Mapped[list] = mapped_column(JSON, default=list)
 
 
 class IamPolicy(Base):

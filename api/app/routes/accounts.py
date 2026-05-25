@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
+from app.models.iam import IamAccessKey, IamUser
 from app.models.org import Org
 
 router = APIRouter()
@@ -113,6 +114,10 @@ def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Se
     acc.status = "connected"
     acc.last_error = None
     db.commit()
+
+    from app.worker.tasks import run_scan
+    run_scan.delay(str(acc.id))
+
     return AccountOut(
         id=str(acc.id),
         label=acc.label,
@@ -258,3 +263,229 @@ def generate_role_policy(
         "original_policies": inline,
         "cleaned_policies": cleaned_policies,
     }
+
+
+@router.get("/{account_id}/blast-radius")
+def blast_radius(
+    account_id: str,
+    resource_arn: str,
+    check_id: str,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """What-if analysis: what depends on this resource, and how safe is remediation?"""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    now = datetime.now(timezone.utc)
+    threshold = now - timedelta(days=90)
+
+    # ── IAM Role ────────────────────────────────────────────────────────────
+    if check_id.startswith("iam.role."):
+        role = db.scalar(
+            select(IamRole).where(IamRole.account_id == acc.id, IamRole.arn == resource_arn)
+        )
+        if not role:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "role not found — run a scan first")
+
+        usages = db.scalars(
+            select(IamPermUsage).where(
+                IamPermUsage.account_id == acc.id,
+                IamPermUsage.principal_arn == resource_arn,
+            )
+        ).all()
+
+        days_since_assumed = (
+            int((now - role.last_assumed).total_seconds() / 86400)
+            if role.last_assumed else None
+        )
+
+        services = sorted(
+            [
+                {
+                    "name": u.service,
+                    "last_used": u.last_authenticated.isoformat() if u.last_authenticated else None,
+                    "days_ago": int((now - u.last_authenticated).total_seconds() / 86400) if u.last_authenticated else None,
+                    "active": u.last_authenticated is not None and u.last_authenticated >= threshold,
+                    "in_policy": any(
+                        u.service in str(doc)
+                        for doc in (role.inline_policies or {}).values()
+                    ),
+                }
+                for u in usages
+            ],
+            key=lambda s: (not s["active"], s["name"]),
+        )
+
+        active_services = [s for s in services if s["active"]]
+        unused_services = [s for s in services if not s["active"]]
+
+        # Extract trust principals from trust policy
+        trust_principals: list[str] = []
+        for stmt in (role.trust_policy or {}).get("Statement", []):
+            p_val = stmt.get("Principal", {})
+            if isinstance(p_val, str):
+                trust_principals.append(p_val)
+            elif isinstance(p_val, dict):
+                for v in p_val.values():
+                    if isinstance(v, list):
+                        trust_principals.extend(v)
+                    else:
+                        trust_principals.append(v)
+
+        # Confidence: high = safe to remove, low = risky
+        if active_services:
+            most_recent_days = min(s["days_ago"] for s in active_services if s["days_ago"] is not None)
+            confidence = "low" if most_recent_days < 30 else "medium"
+        elif days_since_assumed is not None and days_since_assumed < 90:
+            confidence = "medium"
+        else:
+            confidence = "high"
+
+        warnings = []
+        for s in active_services:
+            warnings.append(f"Service '{s['name']}' was last used {s['days_ago']} days ago — verify before removing")
+        if days_since_assumed is not None and days_since_assumed < 90:
+            warnings.append(f"Role was assumed {days_since_assumed} days ago — confirm it is no longer needed")
+
+        # Build per-policy unused service overlap
+        unused_service_names = {s["name"] for s in unused_services}
+        active_service_names = {s["name"] for s in active_services}
+
+        def _services_in_statements(statements: list) -> set[str]:
+            """Extract service prefixes (e.g. 's3', 'ec2') from policy statements."""
+            found = set()
+            for stmt in statements:
+                if stmt.get("Effect") != "Allow":
+                    continue
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                for action in actions:
+                    if action == "*":
+                        found.add("*")
+                    elif ":" in action:
+                        found.add(action.split(":")[0].lower())
+            return found
+
+        attached_policy_analysis = []
+        for pol in (role.attached_policies or []):
+            pol_services = _services_in_statements(pol.get("statements", []))
+            removable = sorted(pol_services & unused_service_names - {"*"})
+            active_in_pol = sorted(pol_services & active_service_names - {"*"})
+            has_wildcard = "*" in pol_services
+            attached_policy_analysis.append({
+                "policy_arn": pol["policy_arn"],
+                "policy_name": pol["policy_name"],
+                "policy_type": pol["policy_type"],
+                "granted_services": sorted(pol_services - {"*"}),
+                "unused_services": removable,
+                "active_services": active_in_pol,
+                "has_wildcard_action": has_wildcard,
+                "action": "detach_and_replace" if pol["policy_type"] == "aws_managed" else "edit",
+            })
+
+        return {
+            "resource_type": "iam_role",
+            "confidence": confidence,
+            "days_since_last_assumed": days_since_assumed,
+            "trust_principals": trust_principals,
+            "services": services,
+            "active_service_count": len(active_services),
+            "unused_service_count": len(unused_services),
+            "has_inline_policies": bool(role.inline_policies),
+            "attached_policies": attached_policy_analysis,
+            "warnings": warnings,
+        }
+
+    # ── IAM Access Key ───────────────────────────────────────────────────────
+    if check_id.startswith("iam.access_key."):
+        # resource_arn here is the user ARN; key_id is in the finding title/evidence
+        keys = db.scalars(
+            select(IamAccessKey).where(
+                IamAccessKey.account_id == acc.id,
+                IamAccessKey.user_arn == resource_arn,
+                IamAccessKey.status == "Active",
+            )
+        ).all()
+
+        key_data = []
+        for k in keys:
+            days_ago = int((now - k.last_used).total_seconds() / 86400) if k.last_used else None
+            key_data.append({
+                "key_id": k.key_id,
+                "last_used": k.last_used.isoformat() if k.last_used else None,
+                "days_ago": days_ago,
+                "last_used_service": k.last_used_service,
+                "last_used_region": k.last_used_region,
+                "active": days_ago is not None and days_ago < 90,
+            })
+
+        any_recent = any(k["days_ago"] is not None and k["days_ago"] < 30 for k in key_data)
+        any_used_90 = any(k["active"] for k in key_data)
+        confidence = "low" if any_recent else ("medium" if any_used_90 else "high")
+
+        warnings = []
+        for k in key_data:
+            if k["active"]:
+                warnings.append(f"Key {k['key_id']} last used {k['days_ago']} days ago via {k['last_used_service'] or 'unknown service'}")
+
+        return {
+            "resource_type": "iam_access_key",
+            "confidence": confidence,
+            "keys": key_data,
+            "warnings": warnings,
+        }
+
+    # ── IAM User ─────────────────────────────────────────────────────────────
+    if check_id.startswith("iam.user."):
+        user = db.scalar(
+            select(IamUser).where(IamUser.account_id == acc.id, IamUser.arn == resource_arn)
+        )
+        if not user:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found — run a scan first")
+
+        last_activity = user.password_last_used or user.last_seen_at
+        days_inactive = (
+            int((now - last_activity).total_seconds() / 86400)
+            if last_activity else None
+        )
+
+        active_keys = db.scalars(
+            select(IamAccessKey).where(
+                IamAccessKey.account_id == acc.id,
+                IamAccessKey.user_arn == resource_arn,
+                IamAccessKey.status == "Active",
+            )
+        ).all()
+
+        key_summary = [
+            {
+                "key_id": k.key_id,
+                "last_used": k.last_used.isoformat() if k.last_used else None,
+                "days_ago": int((now - k.last_used).total_seconds() / 86400) if k.last_used else None,
+                "last_used_service": k.last_used_service,
+            }
+            for k in active_keys
+        ]
+
+        recently_active_keys = [k for k in key_summary if k["days_ago"] is not None and k["days_ago"] < 90]
+        confidence = "low" if (days_inactive and days_inactive < 30) else ("medium" if recently_active_keys else "high")
+
+        warnings = []
+        if recently_active_keys:
+            for k in recently_active_keys:
+                warnings.append(f"Access key {k['key_id']} used {k['days_ago']} days ago via {k['last_used_service'] or 'unknown'} — deactivate keys before disabling user")
+
+        return {
+            "resource_type": "iam_user",
+            "confidence": confidence,
+            "has_console_password": user.has_console_password,
+            "days_inactive": days_inactive,
+            "active_key_count": len(active_keys),
+            "keys": key_summary,
+            "warnings": warnings,
+        }
+
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"blast radius not supported for check: {check_id}")

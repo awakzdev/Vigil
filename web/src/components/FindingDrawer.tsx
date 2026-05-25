@@ -253,6 +253,128 @@ aws kms enable-key-rotation --key-id <key-id>
 aws kms get-key-rotation-status --key-id <key-id>`,
     risk: "Keys that never rotate accumulate exposure over time. AWS retains old backing keys so existing ciphertexts remain decryptable after rotation.",
   },
+  "cloudtrail.trail.not_enabled": {
+    why: "Without CloudTrail, there is no record of API calls. Incidents cannot be investigated, compliance cannot be proven, and unauthorized access may go undetected.",
+    console: ["Open CloudTrail → Trails → Create trail", "Set a name, enable logging in all regions (multi-region trail)", "Select or create an S3 bucket for log delivery", 'Enable "Log file validation" and save'],
+    cli: `# Create a multi-region trail
+aws cloudtrail create-trail \\
+  --name vigil-audit \\
+  --s3-bucket-name <your-log-bucket> \\
+  --is-multi-region-trail \\
+  --enable-log-file-validation
+
+# Start logging
+aws cloudtrail start-logging --name vigil-audit`,
+    risk: "Without audit logs, compromise may go undetected and incident response is severely hampered.",
+  },
+  "cloudtrail.trail.no_log_validation": {
+    why: "Without log file validation, CloudTrail logs can be silently modified or deleted. Attackers who compromise log storage can erase evidence of their activity.",
+    console: ["Open CloudTrail → Trails → select the trail", 'Under "General details", click "Edit"', 'Enable "Log file validation"', "Save changes"],
+    cli: `# Enable log file integrity validation on an existing trail
+aws cloudtrail update-trail \\
+  --name <trail-name> \\
+  --enable-log-file-validation
+
+# Verify
+aws cloudtrail get-trail --name <trail-name>`,
+    risk: "Tampered logs are indistinguishable from authentic ones without validation enabled.",
+  },
+  "guardduty.detector.not_enabled": {
+    why: "GuardDuty is AWS's threat detection service. Without it, there is no automated detection of port scans, credential abuse, crypto-mining, or data exfiltration.",
+    console: ["Open GuardDuty", 'Click "Get Started" then "Enable GuardDuty"', "Repeat in all regions where workloads run"],
+    cli: `# Enable GuardDuty in the current region
+aws guardduty create-detector --enable
+
+# List detectors to verify
+aws guardduty list-detectors`,
+    risk: "Threats such as compromised credentials, unusual API calls, and lateral movement go undetected.",
+  },
+  "vpc.flow_logs.not_enabled": {
+    why: "VPC flow logs capture accepted and rejected network traffic. Without them, lateral movement, port scans, and data exfiltration are invisible at the network layer.",
+    console: ["Open VPC → Your VPCs → select the VPC", 'Click "Flow logs" tab → "Create flow log"', 'Set filter to "All", destination to CloudWatch Logs or S3', "Select or create an IAM role for delivery and save"],
+    cli: `# Create a flow log to CloudWatch Logs
+aws ec2 create-flow-logs \\
+  --resource-type VPC \\
+  --resource-ids <vpc-id> \\
+  --traffic-type ALL \\
+  --log-destination-type cloud-watch-logs \\
+  --log-group-name /aws/vpc/flowlogs \\
+  --deliver-logs-permission-arn <delivery-role-arn>`,
+    risk: "Network-level attacks and lateral movement are invisible without flow logs.",
+  },
+  "ec2.security_group.unrestricted_ssh": {
+    why: "SSH open to 0.0.0.0/0 exposes instances to brute-force and credential-stuffing attacks from the entire internet.",
+    console: ["Open EC2 → Security Groups → select the group", 'Click "Inbound rules" tab → "Edit inbound rules"', "Find the rule for port 22 with source 0.0.0.0/0 or ::/0", "Replace with a specific IP range, or remove and use Systems Manager Session Manager instead"],
+    cli: `# Remove the unrestricted SSH rule
+aws ec2 revoke-security-group-ingress \\
+  --group-id <sg-id> \\
+  --protocol tcp \\
+  --port 22 \\
+  --cidr 0.0.0.0/0
+
+# Optionally restrict to a known IP
+aws ec2 authorize-security-group-ingress \\
+  --group-id <sg-id> \\
+  --protocol tcp \\
+  --port 22 \\
+  --cidr <your-ip>/32`,
+    risk: "Open SSH is continuously probed. A single weak credential or leaked key is sufficient for full instance compromise.",
+  },
+  "ec2.security_group.unrestricted_rdp": {
+    why: "RDP open to 0.0.0.0/0 is a primary attack vector for Windows instances and is actively exploited by ransomware operators.",
+    console: ["Open EC2 → Security Groups → select the group", 'Click "Inbound rules" tab → "Edit inbound rules"', "Find the rule for port 3389 with source 0.0.0.0/0 or ::/0", "Replace with a specific IP range, or use AWS Fleet Manager for browser-based RDP"],
+    cli: `# Remove the unrestricted RDP rule
+aws ec2 revoke-security-group-ingress \\
+  --group-id <sg-id> \\
+  --protocol tcp \\
+  --port 3389 \\
+  --cidr 0.0.0.0/0
+
+# Optionally restrict to a known IP
+aws ec2 authorize-security-group-ingress \\
+  --group-id <sg-id> \\
+  --protocol tcp \\
+  --port 3389 \\
+  --cidr <your-ip>/32`,
+    risk: "Exposed RDP is a leading cause of ransomware incidents. The port is constantly scanned by automated attackers.",
+  },
+  "rds.instance.publicly_accessible": {
+    why: "A publicly accessible RDS instance can be reached directly from the internet. Combined with weak credentials or an unpatched vulnerability, this is a direct path to data exfiltration.",
+    console: ["Open RDS → Databases → select the instance", 'Click "Modify"', 'Under "Connectivity", set "Publicly accessible" to No', 'Click "Continue" and apply immediately or during the next maintenance window'],
+    cli: `# Disable public accessibility
+aws rds modify-db-instance \\
+  --db-instance-identifier <instance-id> \\
+  --no-publicly-accessible \\
+  --apply-immediately`,
+    risk: "Direct internet exposure combines with database credentials — one exposure is enough for a full data breach.",
+  },
+  "rds.instance.no_encryption": {
+    why: "RDS encryption cannot be enabled on a running instance. An unencrypted instance stores data as plaintext on disk — a snapshot or EBS volume leak exposes raw data.",
+    console: [
+      "Open RDS → Databases → select the instance",
+      'Click "Actions" → "Take snapshot" to create a backup',
+      "Open RDS → Snapshots → select the snapshot",
+      'Click "Actions" → "Copy snapshot", enable encryption, choose a KMS key',
+      'Restore the encrypted snapshot via "Actions" → "Restore snapshot"',
+      "Validate the new instance, update application connection strings, then delete the old instance",
+    ],
+    cli: `# Step 1: snapshot the current instance
+aws rds create-db-snapshot \\
+  --db-instance-identifier <instance-id> \\
+  --db-snapshot-identifier <snapshot-id>
+
+# Step 2: copy with encryption enabled
+aws rds copy-db-snapshot \\
+  --source-db-snapshot-identifier <snapshot-id> \\
+  --target-db-snapshot-identifier <encrypted-snapshot-id> \\
+  --kms-key-id <kms-key-arn>
+
+# Step 3: restore to a new encrypted instance
+aws rds restore-db-instance-from-db-snapshot \\
+  --db-instance-identifier <new-instance-id> \\
+  --db-snapshot-identifier <encrypted-snapshot-id>`,
+    risk: "Unencrypted storage means any physical disk access or snapshot leak exposes plaintext database contents.",
+  },
 };
 
 const fallbackRemediation: Remediation = {
@@ -273,12 +395,84 @@ function RemovableStatementsBlock({ statements }: { statements: RemovableStateme
   return <div><div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Removable statements<span className="ml-1.5 font-normal normal-case tracking-normal text-zinc-400">from inline policies</span></div><div className="space-y-2">{statements.map((stmt, i) => <div key={i} className="overflow-hidden rounded-lg border border-zinc-200 text-xs"><div className="flex items-center gap-2 border-b border-zinc-200 bg-zinc-50 px-3 py-2"><span className="font-mono font-medium text-zinc-800">{stmt.policy}</span>{stmt.sid && <span className="text-zinc-400">· {stmt.sid}</span>}</div><div className="space-y-2 px-3 py-2.5"><div className="flex flex-wrap gap-1">{stmt.actions.map((a) => <span key={a} className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 font-mono text-red-700">{a}</span>)}</div><div className="font-mono text-xs text-zinc-400">on: {stmt.resources.join(", ")}</div></div></div>)}</div></div>;
 }
 
+function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
+  if (!items.length) return null;
+  const cols = Object.keys(items[0]);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-zinc-200">
+      <table className="w-full text-xs">
+        <thead>
+          <tr className="bg-zinc-50 border-b border-zinc-200">
+            {cols.map((c) => (
+              <th key={c} className="px-3 py-2 text-left font-semibold text-zinc-500 whitespace-nowrap">
+                {c.replace(/_/g, " ")}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-zinc-100">
+          {items.map((row, i) => (
+            <tr key={i} className="bg-white">
+              {cols.map((c) => (
+                <td key={c} className="px-3 py-2 font-mono text-zinc-800 break-all max-w-[200px]">
+                  {row[c] == null ? "—" : String(row[c])}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unknown>; checkId: string }) {
   const skip = new Set(["removable_statements", "unused_services", "role_arn"]);
-  const scalar = Object.entries(evidence).filter(([k]) => !skip.has(k));
+  const entries = Object.entries(evidence).filter(([k]) => !skip.has(k));
+  const scalars = entries.filter(([, v]) => !Array.isArray(v) || typeof v[0] !== "object" || v[0] === null);
+  const objectLists = entries.filter(([, v]) => Array.isArray(v) && typeof v[0] === "object" && v[0] !== null) as [string, Record<string, unknown>[]][];
   const unusedServices = evidence.unused_services as string[] | undefined;
   const removable = evidence.removable_statements as RemovableStatement[] | undefined;
-  return <div className="space-y-4">{unusedServices && unusedServices.length > 0 && <div><div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">Unused services<span className="ml-1.5 font-normal normal-case tracking-normal text-zinc-400">{unusedServices.length} of {(evidence.total_granted_services as number) ?? "?"} granted</span></div><ServicePills services={unusedServices} /></div>}{scalar.length > 0 && <div className="overflow-hidden rounded-lg border border-zinc-200">{scalar.map(([k, v], i) => <div key={k} className={`flex gap-4 px-4 py-2.5 text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}><span className="w-32 flex-shrink-0 text-zinc-500">{k.replace(/_/g, " ")}</span><span className="break-all font-mono text-zinc-800">{String(v)}</span></div>)}</div>}{removable && <RemovableStatementsBlock statements={removable} />}</div>;
+  function renderScalar(k: string, v: unknown): string {
+    if (v === null || v === undefined) {
+      const isDateField = k.includes("last") || k.includes("date") || k.includes("used") || k.includes("inactive");
+      return isDateField ? "Never" : "—";
+    }
+    if (Array.isArray(v)) return v.join(", ");
+    return String(v);
+  }
+  return (
+    <div className="space-y-4">
+      {unusedServices && unusedServices.length > 0 && (
+        <div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+            Unused services
+            <span className="ml-1.5 font-normal normal-case tracking-normal text-zinc-400">
+              {unusedServices.length} of {(evidence.total_granted_services as number) ?? "?"} granted
+            </span>
+          </div>
+          <ServicePills services={unusedServices} />
+        </div>
+      )}
+      {scalars.length > 0 && (
+        <div className="overflow-hidden rounded-lg border border-zinc-200">
+          {scalars.map(([k, v], i) => (
+            <div key={k} className={`flex gap-4 px-4 py-2.5 text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}>
+              <span className="w-32 flex-shrink-0 text-zinc-500">{k.replace(/_/g, " ")}</span>
+              <span className="break-all font-mono text-zinc-800">{renderScalar(k, v)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {objectLists.map(([k, items]) => (
+        <div key={k}>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">{k.replace(/_/g, " ")}</div>
+          <ObjectListTable items={items} />
+        </div>
+      ))}
+      {removable && <RemovableStatementsBlock statements={removable} />}
+    </div>
+  );
 }
 
 function resolvedCli(finding: Finding): string {
@@ -317,7 +511,242 @@ aws accessanalyzer get-generated-policy --job-id <job-id>`;
     .replace(/<bucket-name>/g, bucketName);
 }
 
-type Tab = "console" | "cli";
+type AttachedPolicyAnalysis = {
+  policy_arn: string;
+  policy_name: string;
+  policy_type: "aws_managed" | "customer_managed";
+  granted_services: string[];
+  unused_services: string[];
+  active_services: string[];
+  has_wildcard_action: boolean;
+  action: "detach_and_replace" | "edit";
+};
+
+type BlastRadiusData = {
+  resource_type: string;
+  confidence: "high" | "medium" | "low";
+  // role fields
+  days_since_last_assumed?: number | null;
+  trust_principals?: string[];
+  services?: { name: string; last_used: string | null; days_ago: number | null; active: boolean; in_policy: boolean }[];
+  active_service_count?: number;
+  unused_service_count?: number;
+  has_inline_policies?: boolean;
+  attached_policies?: AttachedPolicyAnalysis[];
+  // key fields
+  keys?: { key_id: string; last_used: string | null; days_ago: number | null; last_used_service: string | null; last_used_region: string | null; active: boolean }[];
+  // user fields
+  has_console_password?: boolean;
+  days_inactive?: number | null;
+  active_key_count?: number;
+  warnings: string[];
+};
+
+const confidenceConfig = {
+  high: { label: "Safe to remediate", color: "bg-emerald-50 text-emerald-700 border-emerald-200", dot: "bg-emerald-500", desc: "No active usage detected in the past 90 days." },
+  medium: { label: "Review first", color: "bg-amber-50 text-amber-700 border-amber-200", dot: "bg-amber-400", desc: "Some recent activity detected — verify before making changes." },
+  low: { label: "Active — proceed with caution", color: "bg-red-50 text-red-700 border-red-200", dot: "bg-red-500", desc: "Resource was actively used in the last 30 days." },
+};
+
+function BlastRadiusSection({ accountId, finding }: { accountId: string; finding: Finding }) {
+  const [enabled, setEnabled] = useState(false);
+  const { data, isLoading, error } = useQuery<BlastRadiusData>({
+    queryKey: ["blast-radius", accountId, finding.resource_arn, finding.check_id],
+    queryFn: () => api(`/v1/accounts/${accountId}/blast-radius?resource_arn=${encodeURIComponent(finding.resource_arn)}&check_id=${encodeURIComponent(finding.check_id)}`),
+    enabled,
+    staleTime: Infinity,
+  });
+
+  if (!enabled) {
+    return (
+      <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <div className="text-sm font-semibold text-zinc-900">What If I fix this?</div>
+            <div className="text-xs text-zinc-400 mt-0.5">Analyse what currently depends on this resource before remediating.</div>
+          </div>
+          <button
+            onClick={() => setEnabled(true)}
+            className="rounded-lg border border-zinc-200 bg-zinc-50 px-5 py-2.5 text-xs font-semibold text-zinc-700 hover:bg-zinc-100 transition-colors"
+          >
+            Analyse
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLoading) return <div className="rounded-xl border border-zinc-200 bg-white p-4 text-xs text-zinc-400">Analysing blast radius…</div>;
+  if (error) return <div className="rounded-xl border border-red-100 bg-red-50 p-4 text-xs text-red-500">{String(error)}</div>;
+  if (!data) return null;
+
+  const conf = confidenceConfig[data.confidence];
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
+      <div className="px-4 py-3 border-b border-zinc-100 flex items-center justify-between">
+        <span className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Blast Radius</span>
+        <span className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold ${conf.color}`}>
+          <span className={`h-1.5 w-1.5 rounded-full ${conf.dot}`} />
+          {conf.label}
+        </span>
+      </div>
+
+      <div className="p-4 space-y-4">
+        <p className="text-xs text-zinc-500">{conf.desc}</p>
+
+        {/* Warnings */}
+        {data.warnings.length > 0 && (
+          <div className="space-y-1.5">
+            {data.warnings.map((w, i) => (
+              <div key={i} className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+                </svg>
+                {w}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Role: services */}
+        {data.resource_type === "iam_role" && data.services && data.services.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-zinc-500 mb-2">Granted services ({data.services.length})</div>
+            <div className="flex flex-wrap gap-1.5">
+              {data.services.map((s) => (
+                <span
+                  key={s.name}
+                  title={s.last_used ? `Last used ${s.days_ago}d ago` : "Never used"}
+                  className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs font-medium ${
+                    s.active
+                      ? "border-red-200 bg-red-50 text-red-700"
+                      : "border-zinc-200 bg-zinc-50 text-zinc-500"
+                  }`}
+                >
+                  <span className={`h-1.5 w-1.5 rounded-full ${s.active ? "bg-red-400" : "bg-zinc-300"}`} />
+                  {s.name}
+                  {s.days_ago !== null && <span className="opacity-60">{s.days_ago}d</span>}
+                </span>
+              ))}
+            </div>
+            <div className="mt-2 flex gap-3 text-xs text-zinc-400">
+              <span><span className="font-semibold text-red-600">{data.active_service_count}</span> active</span>
+              <span><span className="font-semibold text-zinc-600">{data.unused_service_count}</span> unused</span>
+            </div>
+          </div>
+        )}
+
+        {/* Role: trust principals */}
+        {data.resource_type === "iam_role" && data.trust_principals && data.trust_principals.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-zinc-500 mb-2">Trusted by</div>
+            <div className="space-y-1">
+              {data.trust_principals.map((p, i) => (
+                <div key={i} className="rounded-md bg-zinc-50 border border-zinc-200 px-2.5 py-1.5 font-mono text-xs text-zinc-600 break-all">{p}</div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Role: attached policies breakdown */}
+        {data.resource_type === "iam_role" && data.attached_policies && data.attached_policies.length > 0 && (
+          <div>
+            <div className="text-xs font-semibold text-zinc-500 mb-2">Attached policies ({data.attached_policies.length})</div>
+            <div className="space-y-2">
+              {data.attached_policies.map((pol) => (
+                <div key={pol.policy_arn} className="rounded-lg border border-zinc-200 bg-zinc-50 overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 border-b border-zinc-200 bg-white">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className="font-mono text-xs font-medium text-zinc-800 truncate">{pol.policy_name}</span>
+                      <span className={`flex-shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                        pol.policy_type === "aws_managed"
+                          ? "border-blue-200 bg-blue-50 text-blue-700"
+                          : "border-violet-200 bg-violet-50 text-violet-700"
+                      }`}>
+                        {pol.policy_type === "aws_managed" ? "AWS" : "Custom"}
+                      </span>
+                      {pol.has_wildcard_action && (
+                        <span className="flex-shrink-0 rounded border border-red-200 bg-red-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-700">
+                          wildcard
+                        </span>
+                      )}
+                    </div>
+                    <span className={`flex-shrink-0 text-[10px] font-semibold uppercase tracking-wide ${
+                      pol.action === "detach_and_replace" ? "text-amber-600" : "text-sky-600"
+                    }`}>
+                      {pol.action === "detach_and_replace" ? "Detach + replace" : "Edit policy"}
+                    </span>
+                  </div>
+                  <div className="px-3 py-2.5 space-y-1.5">
+                    {pol.unused_services.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 w-full mb-0.5">Removable</span>
+                        {pol.unused_services.map((s) => (
+                          <span key={s} className="rounded border border-zinc-200 bg-white px-1.5 py-0.5 font-mono text-[11px] text-zinc-500">{s}</span>
+                        ))}
+                      </div>
+                    )}
+                    {pol.active_services.length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400 w-full mb-0.5">Keep (active)</span>
+                        {pol.active_services.map((s) => (
+                          <span key={s} className="rounded border border-red-200 bg-red-50 px-1.5 py-0.5 font-mono text-[11px] text-red-600">{s}</span>
+                        ))}
+                      </div>
+                    )}
+                    {pol.unused_services.length === 0 && pol.active_services.length === 0 && pol.granted_services.length > 0 && (
+                      <span className="text-xs text-zinc-400">No usage data yet — run a scan, then check back in a few minutes once service last-accessed data populates.</span>
+                    )}
+                    {pol.granted_services.length === 0 && (
+                      <span className="text-xs text-zinc-400">No parseable service grants found (may use conditions or resource-specific ARNs).</span>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Role: last assumed */}
+        {data.resource_type === "iam_role" && (
+          <div className="text-xs text-zinc-400">
+            {data.days_since_last_assumed !== null && data.days_since_last_assumed !== undefined
+              ? `Last assumed ${data.days_since_last_assumed} days ago`
+              : "Never assumed"}
+          </div>
+        )}
+
+        {/* Access key: key list */}
+        {data.resource_type === "iam_access_key" && data.keys && data.keys.length > 0 && (
+          <div className="space-y-2">
+            {data.keys.map((k) => (
+              <div key={k.key_id} className={`rounded-lg border px-3 py-2.5 text-xs ${k.active ? "border-red-100 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
+                <div className="font-mono font-semibold text-zinc-700">{k.key_id}</div>
+                <div className="mt-1 text-zinc-500">
+                  {k.last_used
+                    ? `Last used ${k.days_ago}d ago · ${k.last_used_service ?? "unknown service"} · ${k.last_used_region ?? ""}`
+                    : "Never used"}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* User: summary */}
+        {data.resource_type === "iam_user" && (
+          <div className="space-y-1.5 text-xs text-zinc-500">
+            <div>{data.days_inactive !== null && data.days_inactive !== undefined ? `Inactive for ${data.days_inactive} days` : "No recorded activity"}</div>
+            <div>{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
+            {data.has_console_password && <div>Has console password</div>}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type Tab = "overview" | "remediation" | "whatif";
 type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; statements_removed?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
 
 function GeneratePolicySection({ accountId, finding }: { accountId: string; finding: Finding }) {
@@ -361,8 +790,11 @@ function CliBlock({ code }: { code: string }) {
 }
 
 export function FindingDrawer({ finding, accountId, onClose, onAction, resolved, verifying }: { finding: Finding | null; accountId: string | null; onClose: () => void; onAction: (id: string, action: "recheck" | "resolve" | "ignore") => void; resolved?: boolean; verifying?: boolean }) {
-  const [tab, setTab] = useState<Tab>("console");
+  const [tab, setTab] = useState<Tab>("overview");
+  const [remTab, setRemTab] = useState<"console" | "cli">("console");
   const [countdown, setCountdown] = useState(5);
+
+  useEffect(() => { setTab("overview"); setRemTab("console"); }, [finding?.id]);
 
   useEffect(() => {
     if (!resolved) { setCountdown(5); return; }
@@ -388,29 +820,64 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
   };
   const category = Object.entries(categoryLabel).find(([prefix]) => finding.check_id.startsWith(prefix))?.[1] ?? "Finding";
   const showPolicyGen = finding.check_id === "iam.role.unused_services_90d" && !!accountId;
+  const showBlastRadius = finding.check_id.startsWith("iam.") && !!accountId;
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "overview", label: "Overview" },
+    { id: "remediation", label: "Remediation" },
+    ...(showBlastRadius ? [{ id: "whatif" as Tab, label: "What If?" }] : []),
+  ];
 
   return <><div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" onClick={onClose} /><div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl">
-    <div className={`relative bg-gradient-to-b ${wash} px-7 pb-2 pt-5`}>
+    <div className={`relative bg-gradient-to-b ${wash} px-7 pb-0 pt-5`}>
       <button onClick={onClose} className="absolute right-5 top-5 rounded-md p-1 text-zinc-300 transition hover:bg-white/70 hover:text-zinc-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
       <div className="flex items-center gap-2.5 pr-10"><span className="text-xs font-semibold text-zinc-500">{category}</span><span className="text-zinc-300">·</span><span className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${headerBadge}`}>{finding.severity}</span></div>
       <h2 className="mt-2 pr-8 text-lg font-semibold leading-snug tracking-tight text-zinc-950">{finding.title}</h2>
-      <div className="mt-3 border-t border-zinc-200/70 pt-3"><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-400 mb-0.5">Resource</div><p className="break-all font-mono text-[13px] leading-relaxed text-zinc-800">{finding.resource_arn}</p></div>
-    </div>
-    <div className="flex-1 space-y-6 overflow-y-auto bg-stone-50 px-7 pb-6 pt-2">
-      <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm shadow-zinc-950/[0.025]"><div className="mb-2 text-sm font-semibold text-zinc-800">Finding Context</div><p className="text-sm leading-6 text-zinc-600">{rem.why}</p></div><div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm shadow-zinc-950/[0.025]"><div className="mb-2 text-sm font-semibold text-zinc-800">Risk</div><p className="text-sm leading-6 text-zinc-600">{rem.risk}</p></div></div>
-      {hasEvidence && <div><div className="mb-3 flex items-center justify-between"><div className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Scan Details</div><span className="text-xs text-zinc-400">Raw values used to produce this finding</span></div><EvidenceSection evidence={finding.evidence} checkId={finding.check_id} /></div>}
-      {showPolicyGen && <GeneratePolicySection accountId={accountId!} finding={finding} />}
-      <div className="rounded-xl border border-zinc-200 bg-zinc-50 overflow-hidden">
-        <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50 px-4 py-3">
-          <span className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Remediation</span>
-          <div className="flex gap-0.5 rounded-full border border-zinc-200 bg-white p-0.5">{(["console", "cli"] as Tab[]).map((t) => <button key={t} onClick={() => setTab(t)} className={`rounded-full px-3.5 py-1 text-[13px] font-medium transition-all ${tab === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-600"}`}>{t === "cli" ? "AWS CLI" : "Console"}</button>)}</div>
-        </div>
-        <div className="bg-zinc-100/60 p-4">
-          {tab === "console" && <ol className="space-y-2">{rem.console.map((item, i) => <li key={i} className="flex gap-3 text-sm leading-6 text-zinc-700"><span className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${step}`}>{i + 1}</span>{item}</li>)}</ol>}
-          {tab === "cli" && <CliBlock code={resolvedCli(finding)} />}
-        </div>
+      <div className="mt-3 border-t border-zinc-200/70 pt-3 pb-3"><div className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-400 mb-0.5">Resource</div><p className="break-all font-mono text-[13px] leading-relaxed text-zinc-800">{finding.resource_arn}</p></div>
+      {/* Tabs */}
+      <div className="flex gap-1 -mb-px">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            onClick={() => setTab(t.id)}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg border-t border-x transition-colors ${
+              tab === t.id
+                ? "border-zinc-200 bg-stone-50 text-zinc-900"
+                : "border-transparent text-zinc-400 hover:text-zinc-600"
+            } ${t.id === "whatif" ? "flex items-center gap-1.5" : ""}`}
+          >
+            {t.id === "whatif" && (
+              <svg className="h-3.5 w-3.5 text-amber-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z" />
+              </svg>
+            )}
+            {t.label}
+          </button>
+        ))}
       </div>
-      <div className="flex items-center gap-4 pb-2 text-sm text-zinc-500"><span>First seen {new Date(finding.first_seen).toLocaleDateString()}</span><span className="text-zinc-300">·</span><span>Last seen {new Date(finding.last_seen).toLocaleDateString()}</span><span className="text-zinc-300">·</span><span>Score <span className="font-semibold text-zinc-700">{finding.risk_score}</span></span></div>
+    </div>
+    <div className="flex-1 space-y-4 overflow-y-auto bg-stone-50 px-7 pb-6 pt-4">
+      {tab === "overview" && <>
+        <div className="grid grid-cols-2 gap-3"><div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm shadow-zinc-950/[0.025]"><div className="mb-2 text-sm font-semibold text-zinc-800">Finding Context</div><p className="text-sm leading-6 text-zinc-600">{rem.why}</p></div><div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm shadow-zinc-950/[0.025]"><div className="mb-2 text-sm font-semibold text-zinc-800">Risk</div><p className="text-sm leading-6 text-zinc-600">{rem.risk}</p></div></div>
+        {hasEvidence && <div><div className="mb-3 flex items-center justify-between pl-1"><div className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Scan Details</div><span className="text-xs text-zinc-400">Raw values used to produce this finding</span></div><EvidenceSection evidence={finding.evidence} checkId={finding.check_id} /></div>}
+        {showPolicyGen && <GeneratePolicySection accountId={accountId!} finding={finding} />}
+        <div className="flex items-center gap-4 pb-2 pl-1 text-sm text-zinc-500"><span>First seen {new Date(finding.first_seen).toLocaleDateString()}</span><span className="text-zinc-300">·</span><span>Last seen {new Date(finding.last_seen).toLocaleDateString()}</span><span className="text-zinc-300">·</span><span>Score <span className="font-semibold text-zinc-700">{finding.risk_score}</span></span></div>
+      </>}
+      {tab === "remediation" && (
+        <div className="rounded-xl border border-zinc-200 bg-zinc-50 overflow-hidden">
+          <div className="flex items-center justify-between border-b border-zinc-100 bg-zinc-50 px-4 py-3">
+            <span className="text-xs font-bold uppercase tracking-[0.14em] text-zinc-500">Remediation</span>
+            <div className="flex gap-0.5 rounded-full border border-zinc-200 bg-white p-0.5">{(["console", "cli"] as const).map((t) => <button key={t} onClick={() => setRemTab(t)} className={`rounded-full px-3.5 py-1 text-[13px] font-medium transition-all ${remTab === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-600"}`}>{t === "cli" ? "AWS CLI" : "Console"}</button>)}</div>
+          </div>
+          <div className="bg-zinc-100/60 p-6">
+            {remTab === "console" && <ol className="space-y-2">{rem.console.map((item, i) => <li key={i} className="flex gap-3 text-sm leading-6 text-zinc-700"><span className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${step}`}>{i + 1}</span>{item}</li>)}</ol>}
+            {remTab === "cli" && <CliBlock code={resolvedCli(finding)} />}
+          </div>
+        </div>
+      )}
+      {tab === "whatif" && showBlastRadius && (
+        <BlastRadiusSection accountId={accountId!} finding={finding} />
+      )}
     </div>
     <div className="flex gap-2 border-t border-stone-200 bg-stone-50 px-7 py-4">
       <button onClick={() => { onAction(finding.id, "resolve"); onClose(); }} className="flex-1 rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-zinc-700">Resolve</button>

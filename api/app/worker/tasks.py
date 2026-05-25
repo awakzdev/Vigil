@@ -12,6 +12,10 @@ from app.checks import role_unused_services
 from app.collectors.iam import collect_iam
 from app.collectors.last_accessed import collect_perm_usage
 from app.collectors.account import collect_s3, collect_kms
+from app.collectors.cloudtrail import collect_cloudtrail
+from app.collectors.guardduty import collect_guardduty
+from app.collectors.vpc import collect_vpc
+from app.collectors.rds import collect_rds
 from app.core.db import SessionLocal
 from app.models import AwsAccount, ScanRun, EvidenceSnapshot, Finding
 from app.models.iam import IamUser, IamAccessKey, IamRole
@@ -24,6 +28,11 @@ _COLLECTOR_FOR_CHECK = {
     "iam.": lambda db, acc: collect_iam(db, acc),
     "s3.": lambda db, acc: collect_s3(db, acc),
     "kms.": lambda db, acc: collect_kms(db, acc),
+    "cloudtrail.": lambda db, acc: collect_cloudtrail(db, acc),
+    "guardduty.": lambda db, acc: collect_guardduty(db, acc),
+    "vpc.": lambda db, acc: collect_vpc(db, acc),
+    "ec2.": lambda db, acc: collect_vpc(db, acc),
+    "rds.": lambda db, acc: collect_rds(db, acc),
 }
 
 _CHECK_BY_ID = {mod.CHECK_ID: mod for mod in ALL_CHECKS}
@@ -149,6 +158,12 @@ def run_scan(account_id: str) -> dict:
         stats = collect_iam(db, acc)
         stats["s3_buckets"] = collect_s3(db, acc)
         stats["kms_keys"] = collect_kms(db, acc)
+        stats["cloudtrail_trails"] = collect_cloudtrail(db, acc)
+        vpc_stats = collect_vpc(db, acc)
+        stats["vpcs"] = vpc_stats.get("vpcs", 0)
+        stats["security_groups"] = vpc_stats.get("security_groups", 0)
+        stats["guardduty_detectors"] = collect_guardduty(db, acc)
+        stats["rds_instances"] = collect_rds(db, acc)
 
         org_obj = db.get(Org, acc.org_id)
         check_cfg = (org_obj.settings or {}).get("checks", {}) if org_obj else {}

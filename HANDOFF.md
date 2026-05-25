@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-25_
+_Last updated: 2026-05-25 (session 3)_
 
 ---
 
@@ -19,8 +19,13 @@ _Last updated: 2026-05-25_
 - Trigger scan → Celery task
 
 ### Collectors
-- `collectors/iam.py` — IAM users, console password, MFA, access keys + last-used, roles + inline policies
+- `collectors/iam.py` — IAM users, console password, MFA, access keys + last-used, roles + inline policies + **attached policies** (statements fetched via `GetPolicyVersion`)
 - `collectors/last_accessed.py` — service last-accessed per role via AWS async job API (`generate_service_last_accessed_details`)
+- `collectors/account.py` — S3 buckets (encryption, versioning, logging, public access, HTTPS policy) + KMS keys (rotation, state, aliases)
+- `collectors/cloudtrail.py` — trails (multi-region, logging, log validation) — all enabled regions
+- `collectors/guardduty.py` — detectors per region; synthetic "DISABLED" record when none exists
+- `collectors/vpc.py` — VPCs (flow logs), security groups (SSH/RDP ingress rules) — all enabled regions
+- `collectors/rds.py` — RDS instances (encryption, public access, engine) — all enabled regions
 
 ### Checks
 | Check ID | Severity |
@@ -41,6 +46,14 @@ _Last updated: 2026-05-25_
 | `s3.bucket.no_kms` | medium |
 | `s3.bucket.no_logging` | low |
 | `kms.key.no_rotation` | medium |
+| `cloudtrail.trail.not_enabled` | high |
+| `cloudtrail.trail.no_log_validation` | medium |
+| `guardduty.detector.not_enabled` | high |
+| `vpc.flow_logs.not_enabled` | medium |
+| `ec2.security_group.unrestricted_ssh` | high |
+| `ec2.security_group.unrestricted_rdp` | high |
+| `rds.instance.publicly_accessible` | high |
+| `rds.instance.no_encryption` | high |
 
 ### Findings UI
 - Grouped by check type, sorted by severity
@@ -48,10 +61,15 @@ _Last updated: 2026-05-25_
 - Summary stat cards (total / critical+high / medium / max score)
 - Filter tabs: open / snoozed / resolved / all
 - Snooze / resolve / ignore actions
-- Finding detail drawer with evidence, remediation (Console + AWS CLI tabs), combined context block
-- `unused_services_90d` drawer: unused service pills, removable inline policy statements, **"Generate" button** — calls `GET /v1/accounts/:id/roles/generated-policy` and shows cleaned vs original policy JSON side-by-side
+- Multi-tag filter with autocomplete + URL-synced `?checks=` param
+- Finding detail drawer: 3 tabs — Overview (context + evidence), Remediation (Console + AWS CLI), What If?
+- Evidence section: scalars + object arrays rendered as tables (not raw JSON)
+- `unused_services_90d` drawer: unused service pills, removable inline policy statements, **"Generate" button** — shows cleaned vs original policy JSON
+- **What If? tab**: blast radius analysis for all IAM findings — confidence score, service usage pills (active=red/unused=gray), per-attached-policy breakdown (removable vs keep, AWS/Custom badge, detach+replace vs edit action)
 - CLI commands auto-interpolate actual role/user/key names from the finding ARN
 - Scan status polling (5s) + auto-refresh findings on completion; Re-scan unlocks after 5 min if stuck
+- Onboarding empty state when no account connected — 3-step guide + link to AWS Accounts
+- CSV export (`GET /v1/exports/findings.csv`)
 
 ### Notifications
 - Weekly email digest via Resend (Celery beat, Monday 9am UTC)
@@ -69,10 +87,17 @@ _Last updated: 2026-05-25_
 - Account settings page (password + GitHub)
 - Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Settings, Account, Sign out
 
+### Security
+- Rate limiting: signup 5/min, login 10/min (slowapi)
+- Password minimum 12 chars enforced at signup + change password
+- Fernet encryption for `role_arn` + `external_id` at rest
+- Auto-scan triggered on role verify (no manual trigger needed)
+
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
 - Hot reload: uvicorn --reload (api), watchfiles (worker), Vite HMR (web)
-- Migrations: 0001_init → 0002_iam_roles_inline_policies → 0003_user_mfa_github → 0004_iam_perm_usage
+- Migrations: 0001_init → … → 0010_phase2_checks → 0011_role_attached_policies
+- CFN role: exact actions enumerated (no wildcards), includes CloudTrail/GuardDuty/EC2/RDS read permissions
 
 ---
 
@@ -377,7 +402,7 @@ gap is the moat reinforcement.
 ## Revised phased roadmap
 
 ### Phase 0 — done
-Auth, OAuth, 6 IAM checks, finding UI, scan engine, drawer with remediation,
+Auth, OAuth, IAM checks, finding UI, scan engine, drawer with remediation,
 account settings, finding lifecycle (open/snooze/resolve/ignore/reopen).
 
 ### Phase 1 — Evidence layer — COMPLETE ✓
@@ -408,9 +433,13 @@ Built 2026-05-25. All 4 weeks delivered in one session.
 **Exit criteria of Phase 1:** product is sellable to first design partner
 even with only 6 checks. The evidence layer is the moat. ← ACHIEVED
 
-### Phase 2 — AWS CIS L1 catch-up (4 weeks)
+### Phase 2 — AWS CIS L1 catch-up — COMPLETE ✓
 
-Add ~15 priority checks in this order:
+Delivered session 3 (2026-05-25). 8 new checks, 5 new collectors, multi-region
+scanning, rate limiting, password policy, What If? blast radius with attached
+policy analysis, onboarding empty state.
+
+**Still open from Phase 2 original scope:**
 
 1. Root account: MFA enforced, no access keys, recent usage (CloudTrail)
 2. IAM password policy: length ≥14, reuse prevention, complexity
