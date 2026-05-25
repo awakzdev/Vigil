@@ -8,6 +8,23 @@ from fpdf import FPDF
 
 from app.models.aws_account import AwsAccount
 
+_REPLACEMENTS = {
+    "—": "-",   # em dash
+    "–": "-",   # en dash
+    "…": "...", # ellipsis
+    "·": ".",   # middle dot
+    "’": "'",   # right single quote
+    "‘": "'",   # left single quote
+    "“": '"',   # left double quote
+    "”": '"',   # right double quote
+}
+
+def _s(text: str) -> str:
+    """Sanitize string to Latin-1 safe for Helvetica."""
+    for ch, rep in _REPLACEMENTS.items():
+        text = text.replace(ch, rep)
+    return text.encode("latin-1", errors="replace").decode("latin-1")
+
 _STATUS_COLOR = {
     "pass": (22, 163, 74),    # green-600
     "fail": (220, 38, 38),    # red-600
@@ -17,7 +34,7 @@ _STATUS_COLOR = {
 
 _FRAMEWORK_LABELS = {
     "soc2": "SOC 2 Trust Services Criteria",
-    "cis_aws_l1": "CIS Amazon Web Services Foundations Benchmark — Level 1",
+    "cis_aws_l1": "CIS Amazon Web Services Foundations Benchmark - Level 1",
     "iso27001": "ISO 27001:2022 Annex A",
 }
 
@@ -36,19 +53,19 @@ def build_pdf(
     # Header
     pdf.set_font("Helvetica", "B", 20)
     pdf.set_text_color(24, 24, 27)
-    pdf.cell(0, 10, "Vigil — Compliance Evidence Report", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 10, "Vigil - Compliance Evidence Report", new_x="LMARGIN", new_y="NEXT")
 
     pdf.set_font("Helvetica", "", 11)
     pdf.set_text_color(82, 82, 91)
-    fw_label = _FRAMEWORK_LABELS.get(framework, framework.upper())
-    pdf.cell(0, 7, fw_label, new_x="LMARGIN", new_y="NEXT")
+    fw_label = _s(_FRAMEWORK_LABELS.get(framework, framework.upper()))
+    pdf.cell(pdf.epw, 7, fw_label, new_x="LMARGIN", new_y="NEXT")
     pdf.ln(2)
 
     # Meta table
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(63, 63, 70)
     meta = [
-        ("Account", f"{acc.label}  ({acc.account_id or 'unknown'})"),
+        ("Account", f"{_s(acc.label)}  ({acc.account_id or 'unknown'})"),
         ("Period", f"Last {period_days} days"),
         ("Generated", generated_at.strftime("%Y-%m-%d %H:%M UTC")),
     ]
@@ -66,18 +83,24 @@ def build_pdf(
     total = len(control_results)
     score_pct = round((passed / total) * 100) if total else 0
 
+    box_h = 14
+    rect_y = pdf.get_y()
     pdf.set_fill_color(244, 244, 245)
     pdf.set_draw_color(228, 228, 231)
-    pdf.rect(pdf.l_margin, pdf.get_y(), pdf.epw, 18, style="FD")
+    pdf.rect(pdf.l_margin, rect_y, pdf.epw, box_h, style="FD")
 
-    pdf.set_xy(pdf.l_margin + 4, pdf.get_y() + 3)
-    pdf.set_font("Helvetica", "B", 13)
+    text_y = rect_y + (box_h - 6) / 2
+    pdf.set_xy(pdf.l_margin + 4, text_y)
+    pdf.set_font("Helvetica", "B", 12)
     pdf.set_text_color(24, 24, 27)
-    pdf.cell(30, 6, f"{score_pct}%")
+    pdf.cell(26, 6, f"{score_pct}%")
+
+    pdf.set_xy(pdf.l_margin + 32, text_y)
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(82, 82, 91)
-    pdf.cell(0, 6, f"pass rate — {passed} pass  ·  {failed} fail  ·  {no_data} no data  ·  {total} total")
-    pdf.ln(20)
+    pdf.cell(pdf.epw - 32, 6, f"pass rate - {passed} pass  |  {failed} fail  |  {no_data} no data  |  {total} total")
+
+    pdf.set_y(rect_y + box_h + 6)
 
     # Control table header
     pdf.set_fill_color(39, 39, 42)
@@ -98,9 +121,9 @@ def build_pdf(
         pdf.set_text_color(24, 24, 27)
 
         row_y = pdf.get_y()
-        pdf.cell(col_w[0], 6, r["control_id"], border=0, fill=fill)
-        # Truncate long titles
-        title = r["title"][:52] + "…" if len(r["title"]) > 52 else r["title"]
+        pdf.cell(col_w[0], 6, _s(r["control_id"]), border=0, fill=fill)
+        title = _s(r["title"])
+        title = title[:52] + "..." if len(title) > 52 else title
         pdf.cell(col_w[1], 6, title, border=0, fill=fill)
 
         status = r["status"]
@@ -121,43 +144,49 @@ def build_pdf(
     if failed_controls:
         pdf.set_font("Helvetica", "B", 12)
         pdf.set_text_color(24, 24, 27)
-        pdf.cell(0, 8, "Failed Controls — Detail", new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 8, "Failed Controls - Detail", new_x="LMARGIN", new_y="NEXT")
         pdf.ln(1)
 
         for r in failed_controls:
             if pdf.get_y() > 250:
                 pdf.add_page()
+            pdf.set_x(pdf.l_margin)
             pdf.set_font("Helvetica", "B", 10)
             pdf.set_text_color(220, 38, 38)
-            pdf.cell(0, 6, f"{r['control_id']}  —  {r['title']}", new_x="LMARGIN", new_y="NEXT")
+            ctrl_title = _s(f"{r['control_id']}  -  {r['title']}")[:100]
+            pdf.cell(pdf.epw, 6, ctrl_title, new_x="LMARGIN", new_y="NEXT")
 
+            pdf.set_x(pdf.l_margin)
             pdf.set_font("Helvetica", "", 9)
             pdf.set_text_color(82, 82, 91)
-            # Wrap description
-            pdf.multi_cell(0, 5, r["description"][:300])
+            pdf.multi_cell(pdf.epw, 5, _s(r["description"][:300]))
             if r.get("guidance"):
+                pdf.set_x(pdf.l_margin)
                 pdf.set_font("Helvetica", "I", 9)
-                pdf.multi_cell(0, 5, "Guidance: " + r["guidance"][:200])
+                pdf.multi_cell(pdf.epw, 5, _s("Guidance: " + r["guidance"][:200]))
 
             if r["findings"]:
+                pdf.set_x(pdf.l_margin)
                 pdf.set_font("Helvetica", "B", 9)
                 pdf.set_text_color(24, 24, 27)
-                pdf.cell(0, 5, f"  Open findings ({len(r['findings'])}):", new_x="LMARGIN", new_y="NEXT")
+                pdf.cell(pdf.epw, 5, f"  Open findings ({len(r['findings'])}):", new_x="LMARGIN", new_y="NEXT")
                 pdf.set_font("Helvetica", "", 8)
                 pdf.set_text_color(63, 63, 70)
                 for f in r["findings"][:5]:
-                    arn_short = f["resource_arn"][-60:] if len(f["resource_arn"]) > 60 else f["resource_arn"]
-                    pdf.cell(6, 5, "")
-                    pdf.cell(0, 5, f"• [{f['severity'].upper()}] {f['title']} — {arn_short}", new_x="LMARGIN", new_y="NEXT")
+                    arn_short = f["resource_arn"][-45:] if len(f["resource_arn"]) > 45 else f["resource_arn"]
+                    line = _s(f"[{f['severity'].upper()}] {f['title']} - {arn_short}")
+                    pdf.set_x(pdf.l_margin + 4)
+                    pdf.multi_cell(pdf.epw - 4, 4.5, line, new_x="LMARGIN", new_y="NEXT")
                 if len(r["findings"]) > 5:
-                    pdf.cell(6, 5, "")
-                    pdf.cell(0, 5, f"  … and {len(r['findings']) - 5} more (see findings.json)", new_x="LMARGIN", new_y="NEXT")
-            pdf.ln(3)
+                    pdf.set_x(pdf.l_margin + 4)
+                    pdf.cell(pdf.epw - 4, 4.5, f"... and {len(r['findings']) - 5} more (see findings.json)", new_x="LMARGIN", new_y="NEXT")
+            pdf.set_x(pdf.l_margin)
+            pdf.ln(4)
 
     # Footer
     pdf.set_y(-20)
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(161, 161, 170)
-    pdf.cell(0, 5, f"Generated by Vigil  ·  {generated_at.strftime('%Y-%m-%d %H:%M UTC')}  ·  Read-only AWS evidence — not a guarantee of compliance.", align="C")
+    pdf.cell(0, 5, f"Generated by Vigil  |  {generated_at.strftime('%Y-%m-%d %H:%M UTC')}  |  Read-only AWS evidence - not a guarantee of compliance.", align="C")
 
     return bytes(pdf.output())

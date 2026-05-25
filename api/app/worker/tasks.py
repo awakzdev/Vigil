@@ -45,12 +45,12 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
             entity_type="iam_user",
             entity_id=u.arn,
             payload_json={
-                "username": u.username,
+                "username": u.name,
                 "arn": u.arn,
                 "has_console_password": u.has_console_password,
-                "mfa_active": u.mfa_active,
-                "last_used_at": u.last_used_at.isoformat() if u.last_used_at else None,
-                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "mfa_active": u.mfa_enabled,
+                "last_used_at": u.password_last_used.isoformat() if u.password_last_used else None,
+                "created_at": u.created.isoformat() if u.created else None,
             },
         ))
 
@@ -62,13 +62,13 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
             account_id=acc.id,
             org_id=acc.org_id,
             entity_type="iam_access_key",
-            entity_id=k.access_key_id,
+            entity_id=k.key_id,
             payload_json={
-                "access_key_id": k.access_key_id,
-                "username": k.username,
+                "access_key_id": k.key_id,
+                "user_arn": k.user_arn,
                 "status": k.status,
-                "created_at": k.created_at.isoformat() if k.created_at else None,
-                "last_used_at": k.last_used_at.isoformat() if k.last_used_at else None,
+                "created_at": k.created.isoformat() if k.created else None,
+                "last_used_at": k.last_used.isoformat() if k.last_used else None,
             },
         ))
 
@@ -82,10 +82,10 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
             entity_type="iam_role",
             entity_id=r.arn,
             payload_json={
-                "role_name": r.role_name,
+                "role_name": r.name,
                 "arn": r.arn,
-                "last_used_at": r.last_used_at.isoformat() if r.last_used_at else None,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "last_used_at": r.last_assumed.isoformat() if r.last_assumed else None,
+                "created_at": r.created.isoformat() if r.created else None,
                 "trust_policy": r.trust_policy,
             },
         ))

@@ -34,10 +34,13 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
       REDIS_URL: redis://redis:6379/0
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      # Pass-through only — boto3 ignores unset vars; empty strings break credential chain.
+      # Set these in .env for static IAM keys, or leave unset to fall through to ~/.aws SSO.
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_PROFILE: ${AWS_PROFILE}
     depends_on:
       db:
         condition: service_healthy
@@ -48,7 +51,7 @@ services:
     command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     volumes:
       - ./api:/app
-      # AWS SSO refreshes cached tokens during scans, so this cannot be read-only.
+      # Mounted for SSO token cache. Omit this volume if using static keys only.
       - ${HOME}/.aws:/root/.aws:rw
 
   worker:
@@ -58,10 +61,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
       REDIS_URL: redis://redis:6379/0
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_PROFILE: ${AWS_PROFILE}
     depends_on:
       db:
         condition: service_healthy
@@ -70,7 +74,6 @@ services:
     command: watchfiles --filter python "celery -A app.worker.celery_app worker --beat --loglevel=info" app
     volumes:
       - ./api:/app
-      # AWS SSO refreshes cached tokens during scans, so this cannot be read-only.
       - ${HOME}/.aws:/root/.aws:rw
 
   web:

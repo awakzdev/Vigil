@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
 import { FindingDrawer } from "../components/FindingDrawer";
 
@@ -136,19 +137,229 @@ function sortIcon(k: SortKey, active: SortKey, dir: "asc" | "desc"): string {
   return dir === "asc" ? "↑" : "↓";
 }
 
+const ALL_CHECK_IDS = Object.keys(checkLabels);
+
+function TagSearchInput({
+  tags,
+  onTagsChange,
+}: {
+  tags: string[];
+  onTagsChange: (t: string[]) => void;
+}) {
+  const [input, setInput] = useState("");
+  const [open, setOpen] = useState(false);
+  const [hi, setHi] = useState(0);
+  const [popover, setPopover] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [addingInPopover, setAddingInPopover] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const popoverInputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setPopover(false);
+        setAddingInPopover(false);
+        setOpen(false);
+        setInput("");
+        setAdding(false);
+      }
+    }
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  const VISIBLE = 2;
+  const visibleTags = tags.slice(0, VISIBLE);
+  const hiddenTags = tags.slice(VISIBLE);
+  const showInput = tags.length === 0 || adding;
+
+  const suggestions = useMemo(() => {
+    if (!input.trim()) return [];
+    const q = input.toLowerCase();
+    return ALL_CHECK_IDS.filter(
+      (s) => !tags.includes(s) && (s.includes(q) || (checkLabels[s] ?? "").toLowerCase().includes(q))
+    ).slice(0, 8);
+  }, [input, tags]);
+
+  function commit(value: string) {
+    const v = value.trim().replace(/,+$/, "");
+    if (v && !tags.includes(v)) onTagsChange([...tags, v]);
+    setInput("");
+    setOpen(false);
+    setHi(0);
+    setAdding(false);
+    setAddingInPopover(false);
+  }
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "," || e.key === "Enter" || e.key === "Tab") {
+      e.preventDefault();
+      commit(suggestions[hi] ?? input);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHi((h) => Math.min(h + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHi((h) => Math.max(h - 1, 0));
+    } else if (e.key === "Backspace" && input === "" && tags.length > 0) {
+      onTagsChange(tags.slice(0, -1));
+    } else if (e.key === "Escape") {
+      setOpen(false);
+      setAdding(false);
+      setAddingInPopover(false);
+    }
+  }
+
+  return (
+    <div className="relative" ref={containerRef}>
+      {/* Main bar — left: chips+input scrollable, right: actions pinned */}
+      <div className="flex items-center h-10 w-80 rounded-xl border border-zinc-200 bg-white shadow-sm transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-950/[0.06]">
+        {/* Scrollable chips + input */}
+        <div
+          className="flex items-center gap-1.5 flex-1 min-w-0 h-full pl-3 overflow-hidden cursor-text"
+          onClick={() => { setAdding(true); setTimeout(() => inputRef.current?.focus(), 0); }}
+        >
+          {visibleTags.map((tag) => (
+            <span key={tag} className="inline-flex shrink-0 items-center gap-0.5 rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-xs font-mono text-indigo-700 max-w-[110px]">
+              <span className="truncate">{tag}</span>
+              <button type="button" className="ml-0.5 text-indigo-400 hover:text-indigo-700 leading-none shrink-0"
+                onClick={(e) => { e.stopPropagation(); onTagsChange(tags.filter((t) => t !== tag)); }}>×</button>
+            </span>
+          ))}
+          {showInput && (
+            <input
+              ref={inputRef}
+              value={input}
+              onChange={(e) => { setInput(e.target.value); setOpen(true); setHi(0); }}
+              onKeyDown={handleKeyDown}
+              onFocus={() => setOpen(true)}
+              onBlur={() => { setTimeout(() => { setOpen(false); if (!input.trim()) setAdding(false); }, 150); }}
+              placeholder={tags.length === 0 ? "Search findings…" : "Add filter…"}
+              className="shrink-0 min-w-20 flex-1 text-sm text-zinc-800 outline-none bg-transparent placeholder:text-zinc-400"
+            />
+          )}
+        </div>
+
+        {/* Pinned right actions */}
+        <div className="flex items-center gap-1 pr-2 shrink-0">
+          {hiddenTags.length > 0 && (
+            <button type="button"
+              className="inline-flex items-center rounded-md bg-zinc-100 border border-zinc-200 px-2 py-0.5 text-xs font-semibold text-zinc-500 hover:bg-indigo-50 hover:border-indigo-200 hover:text-indigo-600 transition-colors"
+              onClick={(e) => { e.stopPropagation(); setPopover((p) => !p); }}>
+              +{hiddenTags.length}
+            </button>
+          )}
+          {tags.length > 0 && (
+            <button type="button"
+              className="text-zinc-300 hover:text-zinc-500 transition-colors text-base leading-none px-0.5"
+              onClick={(e) => { e.stopPropagation(); onTagsChange([]); setAdding(false); setPopover(false); }}>
+              ×
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Overflow popover */}
+      {popover && (
+        <div className="absolute z-20 mt-1 left-0 rounded-xl border border-zinc-200 bg-white shadow-lg p-2 w-80">
+          <div className="flex flex-wrap gap-1.5">
+            {hiddenTags.map((tag) => (
+              <span key={tag} className="inline-flex items-center gap-0.5 rounded-md bg-indigo-50 border border-indigo-200 px-2 py-0.5 text-xs font-mono text-indigo-700">
+                {tag}
+                <button type="button" className="ml-0.5 text-indigo-400 hover:text-indigo-700 leading-none"
+                  onClick={() => { onTagsChange(tags.filter((t) => t !== tag)); if (hiddenTags.length <= 1) { setPopover(false); setAddingInPopover(false); } }}>×</button>
+              </span>
+            ))}
+          </div>
+
+          <div className="border-t border-zinc-100 mt-2 pt-2 relative">
+            {addingInPopover ? (
+              <>
+                <input
+                  ref={popoverInputRef}
+                  value={input}
+                  onChange={(e) => { setInput(e.target.value); setOpen(true); setHi(0); }}
+                  onKeyDown={handleKeyDown}
+                  onFocus={() => setOpen(true)}
+                  onBlur={() => { setTimeout(() => { setOpen(false); if (!input.trim()) setAddingInPopover(false); }, 150); }}
+                  placeholder="Type to add filter…"
+                  className="w-full text-xs text-zinc-700 outline-none bg-transparent placeholder:text-zinc-400 pl-1"
+                />
+                {open && suggestions.length > 0 && (
+                  <div className="absolute z-30 top-full left-0 right-0 mt-1 rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
+                    {suggestions.map((s, i) => (
+                      <button key={s} type="button"
+                        className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${i === hi ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
+                        onMouseDown={() => commit(s)} onMouseEnter={() => setHi(i)}>
+                        <span className="text-xs font-mono font-semibold text-zinc-700 shrink-0">{s}</span>
+                        {checkLabels[s] && <span className="text-xs text-zinc-400 truncate">{checkLabels[s]}</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <button type="button"
+                className="text-xs text-zinc-400 hover:text-indigo-600 transition-colors pl-1"
+                onClick={() => { setAddingInPopover(true); setTimeout(() => popoverInputRef.current?.focus(), 0); }}>
+                + Add filter…
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {open && !addingInPopover && suggestions.length > 0 && (
+        <div className="absolute z-20 mt-1 w-full min-w-80 rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
+          {suggestions.map((s, i) => (
+            <button
+              key={s}
+              type="button"
+              className={`w-full text-left px-3 py-2 flex items-center gap-2 transition-colors ${i === hi ? "bg-zinc-100" : "hover:bg-zinc-50"}`}
+              onMouseDown={() => commit(s)}
+              onMouseEnter={() => setHi(i)}
+            >
+              <span className="text-xs font-mono font-semibold text-zinc-700 shrink-0">{s}</span>
+              {checkLabels[s] && <span className="text-xs text-zinc-400 truncate">{checkLabels[s]}</span>}
+            </button>
+          ))}
+          <div className="px-3 py-1.5 border-t border-zinc-100 text-[10px] text-zinc-400">
+            Tab / Enter / comma to add · Backspace to remove
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Findings() {
   const qc = useQueryClient();
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [scanTriggered, setScanTriggered] = useState(false);
   const [drawerResolved, setDrawerResolved] = useState(false);
   const [verifying, setVerifying] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState<StatusTab>("open");
   const [selected, setSelected] = useState<Finding | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("severity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
-  const [search, setSearch] = useState("");
+  const [searchTags, setSearchTags] = useState<string[]>(() => {
+    const raw = searchParams.get("checks");
+    return raw ? raw.split(",").filter(Boolean) : [];
+  });
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => loadCollapsedGroups());
+
+  function handleTagsChange(tags: string[]) {
+    setSearchTags(tags);
+    if (tags.length > 0) {
+      setSearchParams({ checks: tags.join(",") }, { replace: true });
+    } else {
+      setSearchParams({}, { replace: true });
+    }
+  }
   const prevScanStatus = useRef<string | null>(null);
 
   useEffect(() => {
@@ -240,11 +451,15 @@ export default function Findings() {
   }, [findings]);
 
   const rows = useMemo(() => {
-    const needle = search.trim().toLowerCase();
     const arr = findings.filter((f) => {
       if (!matchesSeverityFilter(f, severityFilter)) return false;
-      if (!needle) return true;
-      return [f.title, f.check_id, f.resource_arn, checkLabels[f.check_id] ?? "", checkDescriptions[f.check_id] ?? ""].join(" ").toLowerCase().includes(needle);
+      if (searchTags.length === 0) return true;
+      // OR logic: finding matches any tag (exact check_id or text search)
+      return searchTags.some((tag) => {
+        if (f.check_id === tag) return true;
+        const haystack = [f.title, f.check_id, f.resource_arn, checkLabels[f.check_id] ?? ""].join(" ").toLowerCase();
+        return haystack.includes(tag.toLowerCase());
+      });
     });
     arr.sort((a, b) => {
       let cmp = 0;
@@ -254,7 +469,7 @@ export default function Findings() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [findings, search, severityFilter, sortKey, sortDir]);
+  }, [findings, searchTags, severityFilter, sortKey, sortDir]);
 
   const grouped = useMemo(() => {
     if (sortKey !== "severity" || status !== "open") return null;
@@ -308,7 +523,7 @@ export default function Findings() {
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex w-fit items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">{statusTabs.map((s) => <button key={s} onClick={() => setStatus(s)} className={`rounded-lg px-4 py-2 text-sm font-semibold capitalize transition-all ${status === s ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"}`}>{s}</button>)}</div>
         <div className="flex items-center gap-2">
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search findings…" className="h-10 w-72 rounded-xl border border-zinc-200 bg-white px-4 text-sm text-zinc-800 shadow-sm outline-none transition placeholder:text-zinc-400 focus:border-zinc-400 focus:ring-2 focus:ring-zinc-950/[0.06]" />
+          <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} />
           <div className="flex h-10 items-center gap-0.5 rounded-xl border border-zinc-200 bg-white px-1.5 shadow-sm">{(["severity", "score", "first_seen"] as SortKey[]).map((k) => <button key={k} onClick={() => toggleSort(k)} className={`inline-flex h-7 items-center gap-1 rounded-lg px-3 text-sm font-medium transition-all ${sortKey === k ? "bg-zinc-100 text-zinc-950 font-semibold" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"}`}>{sortLabel(k)}{sortKey === k && <span className="text-xs text-zinc-500">{sortIcon(k, sortKey, sortDir)}</span>}</button>)}</div>
         </div>
       </div>

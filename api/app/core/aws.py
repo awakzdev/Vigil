@@ -1,8 +1,16 @@
+import os
+
 import boto3
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from app.core.config import get_settings
+
+# Docker Compose passes unset vars as empty strings, which breaks boto3's
+# credential chain (e.g. AWS_PROFILE="" → "profile () not found").
+for _var in ("AWS_PROFILE", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"):
+    if _var in os.environ and os.environ[_var] == "":
+        del os.environ[_var]
 
 settings = get_settings()
 _boto_cfg = Config(retries={"max_attempts": 8, "mode": "standard"}, user_agent_extra="vigil/0.1")
