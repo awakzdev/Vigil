@@ -6,6 +6,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
+from app.core.encryption import EncryptedString
 
 
 class AwsAccount(Base):
@@ -15,8 +16,8 @@ class AwsAccount(Base):
     org_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("orgs.id", ondelete="CASCADE"), index=True)
     label: Mapped[str] = mapped_column(String(120))
     account_id: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    role_arn: Mapped[str | None] = mapped_column(String(400), nullable=True)
-    external_id: Mapped[str] = mapped_column(String(64), unique=True)
+    role_arn: Mapped[str | None] = mapped_column(EncryptedString(700), nullable=True)
+    external_id: Mapped[str] = mapped_column(EncryptedString(200))
     status: Mapped[str] = mapped_column(String(40), default="pending")  # pending|connected|error
     last_error: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

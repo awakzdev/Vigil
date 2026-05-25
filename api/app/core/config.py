@@ -25,6 +25,10 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     DIGEST_FROM: str = "hygiene@example.com"
 
+    # Fernet key for encrypting role_arn + external_id at rest.
+    # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    ENCRYPTION_KEY: str = "IqebDQNnegvXTO6n5gdTpVcZGXXE35Fcdh2hwT7oQxM="
+
 
 @lru_cache
 def get_settings() -> Settings:
