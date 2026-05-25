@@ -1,12 +1,13 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.passwords import hash_password, verify_password
+from app.core.ratelimit import limiter
 from app.core.security import current_principal, issue_mfa_challenge_token, issue_token
 from app.models import Org, User
 
@@ -17,6 +18,13 @@ class SignupIn(BaseModel):
     email: EmailStr
     password: str
     org_name: str
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        if len(v) < 12:
+            raise ValueError("password must be at least 12 characters")
+        return v
 
 
 class LoginIn(BaseModel):
@@ -30,7 +38,8 @@ class TokenOut(BaseModel):
 
 
 @router.post("/signup", response_model=TokenOut)
-def signup(body: SignupIn, db: Session = Depends(get_db)):
+@limiter.limit("5/minute")
+def signup(request: Request, body: SignupIn, db: Session = Depends(get_db)):
     if db.scalar(select(User).where(User.email == body.email)):
         raise HTTPException(status.HTTP_409_CONFLICT, "email already registered")
     org = Org(id=uuid.uuid4(), name=body.org_name)
@@ -46,7 +55,8 @@ def signup(body: SignupIn, db: Session = Depends(get_db)):
 
 
 @router.post("/login", response_model=TokenOut)
-def login(body: LoginIn, db: Session = Depends(get_db)):
+@limiter.limit("10/minute")
+def login(request: Request, body: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email))
     if not user or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
@@ -93,7 +103,7 @@ def change_password(
         # existing password — must verify current
         if not body.current_password or not verify_password(body.current_password, user.password_hash):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "current password incorrect")
-    if len(body.new_password) < 8:
+    if len(body.new_password) < 12:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "password must be at least 8 characters")
     user.password_hash = hash_password(body.new_password)
     db.commit()

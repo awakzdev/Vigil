@@ -3,6 +3,10 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+
+from app.core.ratelimit import limiter
 
 from app.core.config import get_settings
 from app.core.db import SessionLocal
@@ -29,6 +33,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Vigil API", version="0.1.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,

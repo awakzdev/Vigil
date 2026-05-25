@@ -59,6 +59,19 @@ const checkLabels: Record<string, string> = {
   "s3.bucket.no_logging": "Access logging disabled",
   // KMS
   "kms.key.no_rotation": "Key rotation disabled",
+  // CloudTrail
+  "cloudtrail.trail.not_enabled": "CloudTrail not enabled",
+  "cloudtrail.trail.no_log_validation": "Log file validation disabled",
+  // GuardDuty
+  "guardduty.detector.not_enabled": "GuardDuty not enabled",
+  // VPC
+  "vpc.flow_logs.not_enabled": "VPC flow logs disabled",
+  // Security Groups
+  "ec2.security_group.unrestricted_ssh": "Unrestricted SSH",
+  "ec2.security_group.unrestricted_rdp": "Unrestricted RDP",
+  // RDS
+  "rds.instance.publicly_accessible": "RDS publicly accessible",
+  "rds.instance.no_encryption": "RDS storage not encrypted",
 };
 
 const checkDescriptions: Record<string, string> = {
@@ -78,6 +91,14 @@ const checkDescriptions: Record<string, string> = {
   "s3.bucket.no_kms": "Enable SSE-KMS to use customer-managed keys for encryption at rest.",
   "s3.bucket.no_logging": "Enable server access logging for audit and forensic visibility.",
   "kms.key.no_rotation": "Enable annual automatic rotation for customer-managed KMS keys.",
+  "cloudtrail.trail.not_enabled": "Enable CloudTrail with multi-region logging to capture all API activity.",
+  "cloudtrail.trail.no_log_validation": "Enable log file integrity validation to detect log tampering.",
+  "guardduty.detector.not_enabled": "Enable GuardDuty to detect threats, anomalies, and unauthorized activity.",
+  "vpc.flow_logs.not_enabled": "Enable VPC flow logs for network-level visibility and forensics.",
+  "ec2.security_group.unrestricted_ssh": "Remove 0.0.0.0/0 ingress on port 22 — use Systems Manager Session Manager instead.",
+  "ec2.security_group.unrestricted_rdp": "Remove 0.0.0.0/0 ingress on port 3389 — use Fleet Manager for RDP access.",
+  "rds.instance.publicly_accessible": "Set Publicly Accessible to No and place RDS in a private subnet.",
+  "rds.instance.no_encryption": "Encrypt RDS storage — snapshot → copy with encryption → restore to new instance.",
 };
 
 const statusTabs = ["open", "ignored", "resolved", "all"] as const;

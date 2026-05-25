@@ -34,6 +34,19 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   { id: "s3.bucket.no_logging", label: "Access logging disabled", severity: "low", description: "Enable server access logging for audit visibility." },
   // KMS
   { id: "kms.key.no_rotation", label: "Key rotation disabled", severity: "medium", description: "Enable annual automatic rotation for customer-managed keys." },
+  // CloudTrail
+  { id: "cloudtrail.trail.not_enabled", label: "CloudTrail not enabled", severity: "high", description: "Enable CloudTrail with multi-region logging in all accounts." },
+  { id: "cloudtrail.trail.no_log_validation", label: "Log file validation disabled", severity: "medium", description: "Enable log file integrity validation to detect tampering." },
+  // GuardDuty
+  { id: "guardduty.detector.not_enabled", label: "GuardDuty not enabled", severity: "high", description: "Enable GuardDuty to detect threats and anomalous behavior." },
+  // VPC
+  { id: "vpc.flow_logs.not_enabled", label: "VPC flow logs disabled", severity: "medium", description: "Enable flow logs on all VPCs for network visibility." },
+  // Security Groups
+  { id: "ec2.security_group.unrestricted_ssh", label: "Unrestricted SSH (port 22)", severity: "high", description: "Remove 0.0.0.0/0 ingress on port 22 — restrict to known IPs." },
+  { id: "ec2.security_group.unrestricted_rdp", label: "Unrestricted RDP (port 3389)", severity: "high", description: "Remove 0.0.0.0/0 ingress on port 3389 — restrict to known IPs." },
+  // RDS
+  { id: "rds.instance.publicly_accessible", label: "RDS publicly accessible", severity: "high", description: "Set Publicly Accessible to No and ensure RDS is in a private subnet." },
+  { id: "rds.instance.no_encryption", label: "RDS storage not encrypted", severity: "high", description: "Encrypt RDS storage — requires snapshot copy to a new encrypted instance." },
 ];
 
 const sevBadge: Record<string, string> = {
@@ -141,6 +154,11 @@ export default function Settings() {
     role: ALL_CHECKS.filter((c) => c.id.startsWith("iam.role.")),
     s3: ALL_CHECKS.filter((c) => c.id.startsWith("s3.")),
     kms: ALL_CHECKS.filter((c) => c.id.startsWith("kms.")),
+    cloudtrail: ALL_CHECKS.filter((c) => c.id.startsWith("cloudtrail.")),
+    guardduty: ALL_CHECKS.filter((c) => c.id.startsWith("guardduty.")),
+    vpc: ALL_CHECKS.filter((c) => c.id.startsWith("vpc.")),
+    ec2: ALL_CHECKS.filter((c) => c.id.startsWith("ec2.")),
+    rds: ALL_CHECKS.filter((c) => c.id.startsWith("rds.")),
   };
 
   return (
@@ -164,6 +182,11 @@ export default function Settings() {
             ["IAM Roles", grouped.role],
             ["S3 Buckets", grouped.s3],
             ["KMS Keys", grouped.kms],
+            ["CloudTrail", grouped.cloudtrail],
+            ["GuardDuty", grouped.guardduty],
+            ["VPC", grouped.vpc],
+            ["Security Groups", grouped.ec2],
+            ["RDS", grouped.rds],
           ] as [string, typeof ALL_CHECKS][]
         ).map(([groupLabel, items]) => (
           <div key={groupLabel} className="rounded-xl border border-zinc-200 bg-white overflow-hidden" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>
