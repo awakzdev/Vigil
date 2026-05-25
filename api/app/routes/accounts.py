@@ -349,6 +349,43 @@ def blast_radius(
         if days_since_assumed is not None and days_since_assumed < 90:
             warnings.append(f"Role was assumed {days_since_assumed} days ago — confirm it is no longer needed")
 
+        # Build per-policy unused service overlap
+        unused_service_names = {s["name"] for s in unused_services}
+        active_service_names = {s["name"] for s in active_services}
+
+        def _services_in_statements(statements: list) -> set[str]:
+            """Extract service prefixes (e.g. 's3', 'ec2') from policy statements."""
+            found = set()
+            for stmt in statements:
+                if stmt.get("Effect") != "Allow":
+                    continue
+                actions = stmt.get("Action", [])
+                if isinstance(actions, str):
+                    actions = [actions]
+                for action in actions:
+                    if action == "*":
+                        found.add("*")
+                    elif ":" in action:
+                        found.add(action.split(":")[0].lower())
+            return found
+
+        attached_policy_analysis = []
+        for pol in (role.attached_policies or []):
+            pol_services = _services_in_statements(pol.get("statements", []))
+            removable = sorted(pol_services & unused_service_names - {"*"})
+            active_in_pol = sorted(pol_services & active_service_names - {"*"})
+            has_wildcard = "*" in pol_services
+            attached_policy_analysis.append({
+                "policy_arn": pol["policy_arn"],
+                "policy_name": pol["policy_name"],
+                "policy_type": pol["policy_type"],
+                "granted_services": sorted(pol_services - {"*"}),
+                "unused_services": removable,
+                "active_services": active_in_pol,
+                "has_wildcard_action": has_wildcard,
+                "action": "detach_and_replace" if pol["policy_type"] == "aws_managed" else "edit",
+            })
+
         return {
             "resource_type": "iam_role",
             "confidence": confidence,
@@ -358,6 +395,7 @@ def blast_radius(
             "active_service_count": len(active_services),
             "unused_service_count": len(unused_services),
             "has_inline_policies": bool(role.inline_policies),
+            "attached_policies": attached_policy_analysis,
             "warnings": warnings,
         }
 
