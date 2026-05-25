@@ -31,6 +31,7 @@ def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
         home_region = t.get("HomeRegion", "us-east-1")
         is_multi_region = t.get("IsMultiRegionTrail", False)
         log_validation = t.get("LogFileValidationEnabled", False)
+        kms_key_id = t.get("KmsKeyId")
 
         try:
             status = ct.get_trail_status(Name=arn)
@@ -47,6 +48,7 @@ def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
             is_multi_region=is_multi_region,
             is_logging=is_logging,
             log_validation_enabled=log_validation,
+            kms_key_id=kms_key_id,
             last_seen=_now(),
         ).on_conflict_do_update(
             index_elements=["account_id", "arn"],
@@ -54,6 +56,7 @@ def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
                 "is_multi_region": is_multi_region,
                 "is_logging": is_logging,
                 "log_validation_enabled": log_validation,
+                "kms_key_id": kms_key_id,
                 "last_seen": _now(),
             },
         )

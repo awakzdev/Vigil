@@ -58,6 +58,7 @@ class CloudTrailTrail(Base):
     is_multi_region: Mapped[bool] = mapped_column(Boolean, default=False)
     is_logging: Mapped[bool] = mapped_column(Boolean, default=False)
     log_validation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    kms_key_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

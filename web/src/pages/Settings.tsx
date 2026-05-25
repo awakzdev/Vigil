@@ -39,6 +39,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // CloudTrail
   { id: "cloudtrail.trail.not_enabled", label: "CloudTrail not enabled", severity: "high", description: "Enable CloudTrail with multi-region logging in all accounts." },
   { id: "cloudtrail.trail.no_log_validation", label: "Log file validation disabled", severity: "medium", description: "Enable log file integrity validation to detect tampering." },
+  { id: "cloudtrail.trail.no_kms", label: "CloudTrail not encrypted with KMS", severity: "medium", description: "Encrypt CloudTrail logs with a customer-managed KMS key." },
   // GuardDuty
   { id: "guardduty.detector.not_enabled", label: "GuardDuty not enabled", severity: "high", description: "Enable GuardDuty to detect threats and anomalous behavior." },
   // Access Analyzer

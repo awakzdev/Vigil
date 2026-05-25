@@ -78,10 +78,11 @@
     "control_id": "CC7.1",
     "title": "System Operations — Configuration Change Detection",
     "description": "To meet its objectives, the entity uses detection and monitoring procedures to identify changes to configurations that result in the introduction of new vulnerabilities.",
-    "guidance": "Evidence: CloudTrail enabled with log file validation in all regions.",
+    "guidance": "Evidence: CloudTrail enabled with log file validation and KMS encryption in all regions.",
     "checks": [
       "cloudtrail.trail.not_enabled",
-      "cloudtrail.trail.no_log_validation"
+      "cloudtrail.trail.no_log_validation",
+      "cloudtrail.trail.no_kms"
     ]
   },
   {

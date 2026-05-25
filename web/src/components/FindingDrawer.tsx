@@ -279,6 +279,20 @@ aws cloudtrail update-trail \\
 aws cloudtrail get-trail --name <trail-name>`,
     risk: "Tampered logs are indistinguishable from authentic ones without validation enabled.",
   },
+  "cloudtrail.trail.no_kms": {
+    why: "CloudTrail log files should be encrypted with a customer-managed KMS key so access to audit history can be controlled, monitored, and revoked independently from the S3 bucket.",
+    console: [
+      "Open CloudTrail → Trails → select the trail",
+      'Under "General details", click "Edit"',
+      "Enable SSE-KMS encryption",
+      "Choose a customer-managed KMS key for log encryption",
+      "Save changes",
+    ],
+    cli: `aws cloudtrail update-trail \\
+  --name <trail-name> \\
+  --kms-key-id <kms-key-arn>`,
+    risk: "Unencrypted audit logs weaken evidence integrity and make it harder to prove tight access control over security history.",
+  },
   "guardduty.detector.not_enabled": {
     why: "GuardDuty is AWS's threat detection service. Without it, there is no automated detection of port scans, credential abuse, crypto-mining, or data exfiltration.",
     console: ["Open GuardDuty in each affected region listed in Scan details", 'Click "Get Started" then "Enable GuardDuty"', "Alternatively, use AWS Organizations to enable GuardDuty in all regions centrally"],

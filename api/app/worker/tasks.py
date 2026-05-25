@@ -198,6 +198,7 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
                 "is_multi_region": t.is_multi_region,
                 "is_logging": t.is_logging,
                 "log_validation_enabled": t.log_validation_enabled,
+                "kms_key_id": t.kms_key_id,
             },
         ))
 

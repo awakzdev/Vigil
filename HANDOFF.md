@@ -48,6 +48,7 @@ _Last updated: 2026-05-25 (session 4)_
 | `kms.key.no_rotation` | medium |
 | `cloudtrail.trail.not_enabled` | high |
 | `cloudtrail.trail.no_log_validation` | medium |
+| `cloudtrail.trail.no_kms` | medium |
 | `guardduty.detector.not_enabled` | high |
 | `aws.securityhub.not_enabled` | medium |
 | `vpc.flow_logs.not_enabled` | medium |

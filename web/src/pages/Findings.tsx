@@ -79,6 +79,7 @@ const checkLabels: Record<string, string> = {
   // CloudTrail
   "cloudtrail.trail.not_enabled": "CloudTrail not enabled",
   "cloudtrail.trail.no_log_validation": "Log file validation disabled",
+  "cloudtrail.trail.no_kms": "CloudTrail not encrypted with KMS",
   // GuardDuty
   "guardduty.detector.not_enabled": "GuardDuty not enabled",
   // Access Analyzer
@@ -122,6 +123,7 @@ const checkDescriptions: Record<string, string> = {
   "kms.key.no_rotation": "Enable annual automatic rotation for customer-managed KMS keys.",
   "cloudtrail.trail.not_enabled": "Enable CloudTrail with multi-region logging to capture all API activity.",
   "cloudtrail.trail.no_log_validation": "Enable log file integrity validation to detect log tampering.",
+  "cloudtrail.trail.no_kms": "Encrypt CloudTrail logs with a customer-managed KMS key.",
   "guardduty.detector.not_enabled": "Enable GuardDuty to detect threats, anomalies, and unauthorized activity.",
   "aws.access_analyzer.not_enabled": "Enable IAM Access Analyzer to surface over-permissive cross-account access.",
   "aws.config.not_enabled": "Enable AWS Config to maintain a continuous configuration change history.",

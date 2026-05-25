@@ -2,6 +2,7 @@ from app.checks import (
     access_analyzer_not_enabled,
     access_key_multiple_active,
     access_key_no_rotation,
+    cloudtrail_no_kms,
     cloudtrail_not_enabled,
     cloudtrail_no_log_validation,
     config_not_enabled,
@@ -60,6 +61,7 @@ ALL_CHECKS = [
     # CloudTrail
     cloudtrail_not_enabled,
     cloudtrail_no_log_validation,
+    cloudtrail_no_kms,
     # GuardDuty
     guardduty_not_enabled,
     # Access Analyzer
