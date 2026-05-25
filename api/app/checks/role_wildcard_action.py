@@ -13,7 +13,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
     roles = db.scalars(select(IamRole).where(IamRole.account_id == account_id)).all()
     out: list[FindingDraft] = []
     for r in roles:
-        if ":aws-service-role/" in r.arn:
+        if "/aws-service-role/" in r.arn:
             continue
         flagged = []
         for pname, doc in (r.inline_policies or {}).items():

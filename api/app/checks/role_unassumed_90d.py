@@ -17,7 +17,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
     roles = db.scalars(select(IamRole).where(IamRole.account_id == account_id)).all()
     out: list[FindingDraft] = []
     for r in roles:
-        if ":aws-service-role/" in r.arn:
+        if "/aws-service-role/" in r.arn:
             continue
         ref = r.last_assumed or r.created
         if ref and ref >= cutoff:
