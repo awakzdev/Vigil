@@ -253,7 +253,7 @@ def gitlab_callback(
         )
         provider.status = "connected"
         db.commit()
-        return RedirectResponse(f"{_frontend_url()}/integrations/gitlab?connected=1")
+        return RedirectResponse(f"{_frontend_url()}/integrations/gitlab/edit?connected=1")
     except Exception:
         db.rollback()
         return RedirectResponse(f"{_frontend_url()}/integrations/gitlab?error=server_error")

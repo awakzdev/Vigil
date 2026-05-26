@@ -234,7 +234,7 @@ export default function GitLabIntegration() {
                   </Link>
                   <button
                     onClick={() => sync.mutate()}
-                    disabled={sync.isPending || !syncTarget.trim()}
+                    disabled={sync.isPending || syncTargets.length === 0}
                     className="rounded-lg bg-[#e24329] px-5 py-2 text-sm font-medium text-white hover:bg-[#c93a22] disabled:opacity-60"
                   >
                     {sync.isPending ? "Syncing..." : "Sync"}

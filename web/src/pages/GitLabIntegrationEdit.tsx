@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api } from "../api";
 
 type GitLabProvider = {
@@ -33,6 +33,8 @@ function GitLabMark({ className = "h-5 w-5" }: { className?: string }) {
 export default function GitLabIntegrationEdit() {
   const qc = useQueryClient();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const justConnected = searchParams.get("connected") === "1";
   const [groupIds, setGroupIds] = useState<string[]>([]);
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
   const [repoFilter, setRepoFilter] = useState("");
@@ -164,6 +166,12 @@ export default function GitLabIntegrationEdit() {
           Choose which connected GitLab groups and repositories should feed compliance identity and change-management evidence.
         </p>
       </div>
+
+      {justConnected && (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+          GitLab connected. Select at least one group below, then save to start syncing evidence.
+        </div>
+      )}
 
       <div className="rounded-lg border border-zinc-200 bg-white p-6 shadow-sm">
         <div className="flex items-center gap-3">

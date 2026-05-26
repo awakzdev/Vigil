@@ -229,7 +229,7 @@ export default function GitHubIntegration() {
                   </Link>
                   <button
                     onClick={() => sync.mutate()}
-                    disabled={sync.isPending || !syncTarget.trim()}
+                    disabled={sync.isPending || syncTargets.length === 0}
                     className="rounded-lg bg-sky-600 px-5 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-60"
                   >
                     {sync.isPending ? "Syncing..." : "Sync"}
