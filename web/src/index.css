@@ -10,6 +10,7 @@
 
   html {
     background: #f7f7f8;
+    scrollbar-gutter: stable;
   }
 
   body {

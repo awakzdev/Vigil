@@ -161,6 +161,7 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
         elif cid.startswith("ec2.instance"):
             types.add("ec2_instance")
         elif cid.startswith("ec2.ebs"):
+            types.add("ebs_volume")
             types.add("ebs_encryption_default")
         elif cid.startswith("rds."):
             types.add("rds_instance")

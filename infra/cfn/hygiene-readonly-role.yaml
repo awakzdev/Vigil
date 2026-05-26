@@ -124,6 +124,7 @@ Resources:
                 Effect: Allow
                 Action:
                   - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
                   - ec2:GetEbsEncryptionByDefault
                 Resource: "*"
 

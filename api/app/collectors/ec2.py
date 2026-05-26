@@ -1,4 +1,4 @@
-"""Collect EC2 instances and per-region EBS encryption defaults."""
+"""Collect EC2 instances, EBS volumes, and per-region EBS encryption defaults."""
 from __future__ import annotations
 
 import uuid
@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.aws import assume_role
 from app.models import AwsAccount
-from app.models.resources import EbsEncryptionDefault, Ec2Instance
+from app.models.resources import EbsEncryptionDefault, EbsVolume, Ec2Instance
 
 log = structlog.get_logger()
 
@@ -33,7 +33,7 @@ def _get_regions(sess) -> list[str]:
 def collect_ec2(db: Session, account: AwsAccount) -> dict:
     sess = assume_role(account.role_arn, account.external_id, session_name="vigil-ec2")
     regions = _get_regions(sess)
-    instance_count = ebs_count = 0
+    instance_count = volume_count = ebs_count = 0
 
     for region in regions:
         try:
@@ -108,9 +108,48 @@ def collect_ec2(db: Session, account: AwsAccount) -> dict:
                         db.execute(stmt)
                         instance_count += 1
 
+            # EBS volumes (paginated)
+            volume_paginator = client.get_paginator("describe_volumes")
+            for page in volume_paginator.paginate():
+                for volume in page.get("Volumes", []):
+                    volume_id = volume["VolumeId"]
+                    attached_instance_ids = [
+                        attachment.get("InstanceId")
+                        for attachment in volume.get("Attachments", [])
+                        if attachment.get("InstanceId")
+                    ]
+                    arn = f"arn:aws:ec2:{region}:{account.account_id or 'unknown'}:volume/{volume_id}"
+
+                    stmt = pg_insert(EbsVolume).values(
+                        id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:{region}:{volume_id}"),
+                        account_id=account.id,
+                        region=region,
+                        volume_id=volume_id,
+                        arn=arn,
+                        encrypted=volume.get("Encrypted", False),
+                        state=volume.get("State", "unknown"),
+                        size_gib=volume.get("Size"),
+                        volume_type=volume.get("VolumeType"),
+                        attached_instance_ids=attached_instance_ids,
+                        last_seen=_now(),
+                    ).on_conflict_do_update(
+                        index_elements=["account_id", "region", "volume_id"],
+                        set_={
+                            "arn": arn,
+                            "encrypted": volume.get("Encrypted", False),
+                            "state": volume.get("State", "unknown"),
+                            "size_gib": volume.get("Size"),
+                            "volume_type": volume.get("VolumeType"),
+                            "attached_instance_ids": attached_instance_ids,
+                            "last_seen": _now(),
+                        },
+                    )
+                    db.execute(stmt)
+                    volume_count += 1
+
         except ClientError:
             continue
 
     db.commit()
-    log.info("collect_ec2.done", account_id=str(account.id), instances=instance_count, ebs_regions=ebs_count)
-    return {"instances": instance_count, "ebs_regions": ebs_count}
+    log.info("collect_ec2.done", account_id=str(account.id), instances=instance_count, volumes=volume_count, ebs_regions=ebs_count)
+    return {"instances": instance_count, "volumes": volume_count, "ebs_regions": ebs_count}

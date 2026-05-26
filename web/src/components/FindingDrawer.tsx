@@ -548,6 +548,26 @@ for region in $(aws ec2 describe-regions --query 'Regions[].RegionName' --output
 done`,
     risk: "This only affects new volumes — existing unencrypted volumes require a snapshot copy with encryption enabled to remediate.",
   },
+  "ec2.ebs.volume_unencrypted": {
+    why: "Existing unencrypted EBS volumes keep data at rest outside your encryption baseline. Enabling encryption by default does not retrofit current volumes.",
+    console: [
+      "Open EC2 → Volumes and select the affected volume",
+      'Click "Actions" → "Create snapshot"',
+      "Open Snapshots, select the new snapshot, then copy it with encryption enabled",
+      "Create a new volume from the encrypted snapshot",
+      "Detach the old volume and attach the encrypted replacement during a maintenance window",
+    ],
+    cli: `# Snapshot, copy encrypted, then create a replacement volume
+aws ec2 create-snapshot --volume-id <volume-id> --description "Encrypt <volume-id>"
+aws ec2 copy-snapshot \\
+  --source-region <region> \\
+  --source-snapshot-id <snapshot-id> \\
+  --encrypted
+aws ec2 create-volume \\
+  --snapshot-id <encrypted-snapshot-id> \\
+  --availability-zone <az>`,
+    risk: "Replacing an attached volume can require downtime. Confirm the attachment, mount point, filesystem, and backup plan before cutover.",
+  },
 };
 
 const fallbackRemediation: Remediation = {
@@ -712,6 +732,15 @@ type BlastRadiusData = {
   has_console_password?: boolean;
   days_inactive?: number | null;
   active_key_count?: number;
+  // security group fields
+  group_id?: string;
+  group_name?: string;
+  vpc_id?: string;
+  region?: string;
+  is_default?: boolean;
+  affected_instances?: { instance_id: string; instance_type: string | null; state: string; vpc_id: string | null; name: string }[];
+  running_count?: number;
+  total_count?: number;
   warnings: string[];
 };
 
@@ -917,6 +946,57 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             <div>{data.days_inactive !== null && data.days_inactive !== undefined ? `Inactive for ${data.days_inactive} days` : "No recorded activity"}</div>
             <div>{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
             {data.has_console_password && <div>Has console password</div>}
+          </div>
+        )}
+
+        {/* Security group: metadata + affected instances */}
+        {data.resource_type === "security_group" && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">Group</div>
+                <div className="font-mono text-zinc-700">{data.group_name ?? data.group_id}</div>
+              </div>
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">VPC · Region</div>
+                <div className="font-mono text-zinc-700 truncate">{data.vpc_id ?? "—"} · {data.region}</div>
+              </div>
+            </div>
+
+            {data.affected_instances && data.affected_instances.length > 0 ? (
+              <div>
+                <div className="text-sm font-semibold text-zinc-700 mb-2">
+                  Exposed instances ({data.total_count})
+                  {data.running_count !== undefined && data.running_count > 0 && (
+                    <span className="ml-2 text-xs font-medium text-red-500">{data.running_count} running</span>
+                  )}
+                </div>
+                <div className="space-y-1.5">
+                  {data.affected_instances.map((inst) => (
+                    <div
+                      key={inst.instance_id}
+                      className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs ${
+                        inst.state === "running"
+                          ? "border-red-100 bg-red-50"
+                          : "border-zinc-200 bg-zinc-50"
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${inst.state === "running" ? "bg-red-400" : "bg-zinc-300"}`} />
+                        <span className="font-mono text-zinc-700 truncate">{inst.name !== inst.instance_id ? inst.name : inst.instance_id}</span>
+                        {inst.name !== inst.instance_id && <span className="font-mono text-zinc-400 truncate">{inst.instance_id}</span>}
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0 pl-2">
+                        {inst.instance_type && <span className="text-zinc-400">{inst.instance_type}</span>}
+                        <span className={`font-medium ${inst.state === "running" ? "text-red-600" : "text-zinc-400"}`}>{inst.state}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-xs text-zinc-400">No instances currently attached to this security group.</div>
+            )}
           </div>
         )}
       </div>

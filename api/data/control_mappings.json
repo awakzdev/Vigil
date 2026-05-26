@@ -67,11 +67,12 @@
     "control_id": "CC6.8",
     "title": "Logical Access — Encryption at Rest",
     "description": "The entity implements controls to prevent unauthorized access to data at rest through encryption of storage resources.",
-    "guidance": "Evidence: S3 buckets encrypted with KMS. KMS keys have automatic annual rotation enabled. RDS instances have storage encryption enabled.",
+    "guidance": "Evidence: S3 buckets encrypted with KMS. KMS keys have automatic annual rotation enabled. RDS instances and EBS volumes have storage encryption enabled.",
     "checks": [
       "s3.bucket.no_kms",
       "kms.key.no_rotation",
-      "rds.instance.no_encryption"
+      "rds.instance.no_encryption",
+      "ec2.ebs.volume_unencrypted"
     ]
   },
   {
@@ -216,6 +217,16 @@
     "guidance": "Remove inbound rules that allow 0.0.0.0/0 or ::/0 on port 3389. Restrict RDP to known IP ranges or use AWS Systems Manager Fleet Manager instead.",
     "checks": [
       "ec2.security_group.unrestricted_rdp"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "2.2.1",
+    "title": "Ensure EBS volumes are encrypted",
+    "description": "EBS volume encryption protects data at rest using AWS KMS. Existing unencrypted volumes should be replaced with encrypted copies.",
+    "guidance": "Create a snapshot of each unencrypted volume, copy the snapshot with encryption enabled, create a new encrypted volume, and replace the original during a maintenance window.",
+    "checks": [
+      "ec2.ebs.volume_unencrypted"
     ]
   },
   {

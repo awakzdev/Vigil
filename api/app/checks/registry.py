@@ -7,6 +7,7 @@ from app.checks import (
     cloudtrail_no_log_validation,
     config_not_enabled,
     ec2_ebs_encryption_default,
+    ec2_ebs_volume_unencrypted,
     ec2_imdsv2_not_required,
     guardduty_not_enabled,
     iam_access_key_unused,
@@ -81,6 +82,7 @@ ALL_CHECKS = [
     # EC2 Instances
     ec2_imdsv2_not_required,
     ec2_ebs_encryption_default,
+    ec2_ebs_volume_unencrypted,
     # RDS
     rds_publicly_accessible,
     rds_no_encryption,

@@ -28,6 +28,7 @@ from app.models.resources import (
     CloudTrailTrail,
     ConfigRecorder,
     EbsEncryptionDefault,
+    EbsVolume,
     Ec2Instance,
     GuardDutyDetector,
     IamPasswordPolicy,
@@ -323,6 +324,26 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
             },
         ))
 
+    for v in db.scalars(select(EbsVolume).where(EbsVolume.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="ebs_volume",
+            entity_id=v.arn,
+            payload_json={
+                "volume_id": v.volume_id,
+                "arn": v.arn,
+                "region": v.region,
+                "encrypted": v.encrypted,
+                "state": v.state,
+                "size_gib": v.size_gib,
+                "volume_type": v.volume_type,
+                "attached_instance_ids": v.attached_instance_ids,
+            },
+        ))
+
     for e in db.scalars(select(EbsEncryptionDefault).where(EbsEncryptionDefault.account_id == acc.id)).all():
         snaps.append(EvidenceSnapshot(
             id=uuid.uuid4(),
@@ -381,6 +402,7 @@ def run_scan(account_id: str) -> dict:
         stats["rds_instances"] = collect_rds(db, acc)
         ec2_stats = collect_ec2(db, acc)
         stats["ec2_instances"] = ec2_stats.get("instances", 0)
+        stats["ebs_volumes"] = ec2_stats.get("volumes", 0)
         stats["ebs_regions"] = ec2_stats.get("ebs_regions", 0)
         stats["access_analyzers"] = collect_access_analyzer(db, acc)
         stats["config_regions"] = collect_config_service(db, acc)

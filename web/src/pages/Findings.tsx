@@ -98,6 +98,7 @@ const checkLabels: Record<string, string> = {
   // EC2
   "ec2.instance.imdsv2_not_required": "IMDSv2 not required",
   "ec2.ebs.encryption_not_default": "EBS encryption not default",
+  "ec2.ebs.volume_unencrypted": "EBS volume not encrypted",
   // RDS
   "rds.instance.publicly_accessible": "RDS publicly accessible",
   "rds.instance.no_encryption": "RDS storage not encrypted",
@@ -136,6 +137,7 @@ const checkDescriptions: Record<string, string> = {
   "ec2.security_group.default_allows_traffic": "Default security groups should have no rules — move traffic to named groups.",
   "ec2.instance.imdsv2_not_required": "Require IMDSv2 to prevent SSRF-based credential theft from instance metadata.",
   "ec2.ebs.encryption_not_default": "Enable default EBS encryption so all new volumes are encrypted at creation.",
+  "ec2.ebs.volume_unencrypted": "Encrypt existing EBS volumes by copying snapshots with encryption enabled.",
   "rds.instance.publicly_accessible": "Set Publicly Accessible to No and place RDS in a private subnet.",
   "rds.instance.no_encryption": "Encrypt RDS storage — snapshot → copy with encryption → restore to new instance.",
   "rds.instance.no_automated_backup": "Enable automated backups with a retention period that matches your recovery objective.",
@@ -219,6 +221,7 @@ function TagSearchInput({
   const [open, setOpen] = useState(false);
   const [hi, setHi] = useState(0);
   const [popover, setPopover] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addingInPopover, setAddingInPopover] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -229,6 +232,7 @@ function TagSearchInput({
     function onMouseDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
         setPopover(false);
+        setHelpOpen(false);
         setAddingInPopover(false);
         setOpen(false);
         setInput("");
@@ -243,6 +247,7 @@ function TagSearchInput({
   const visibleTags = tags.slice(0, VISIBLE);
   const hiddenTags = tags.slice(VISIBLE);
   const showInput = tags.length === 0 || adding;
+  const showSearchHelp = tags.length === 0 && input.trim() === "";
 
   const suggestions = useMemo(() => {
     if (!input.trim()) return [];
@@ -320,6 +325,16 @@ function TagSearchInput({
               +{hiddenTags.length}
             </button>
           )}
+          {showSearchHelp && (
+            <button
+              type="button"
+              aria-label="Search help"
+              className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-xs font-bold text-zinc-400 transition hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+              onClick={(e) => { e.stopPropagation(); setHelpOpen((p) => !p); setOpen(false); }}
+            >
+              ?
+            </button>
+          )}
           {tags.length > 0 && (
             <button type="button"
               className="text-zinc-300 hover:text-zinc-500 transition-colors text-base leading-none px-0.5"
@@ -329,6 +344,22 @@ function TagSearchInput({
           )}
         </div>
       </div>
+
+      {helpOpen && showSearchHelp && (
+        <div className="absolute right-0 z-20 mt-1 w-80 rounded-xl border border-zinc-200 bg-white p-3 text-left shadow-lg">
+          <div className="text-xs font-semibold text-zinc-700">Search lookup</div>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            Search by check, resource, ARN, or resource family. Examples: <span className="font-mono text-zinc-700">iam.root</span>,{" "}
+            <span className="font-mono text-zinc-700">s3.bucket</span>, <span className="font-mono text-zinc-700">ec2.instance</span>.
+          </p>
+          <a href="/reference" className="mt-3 inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+            Open search reference
+            <svg className="ml-1 h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+            </svg>
+          </a>
+        </div>
+      )}
 
       {/* Overflow popover */}
       {popover && (

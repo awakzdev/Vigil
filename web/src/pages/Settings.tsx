@@ -58,6 +58,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // EC2
   { id: "ec2.instance.imdsv2_not_required", label: "IMDSv2 not required", severity: "medium", description: "Require IMDSv2 to prevent SSRF-based credential theft from instance metadata." },
   { id: "ec2.ebs.encryption_not_default", label: "EBS encryption not default", severity: "medium", description: "Enable default EBS encryption so all new volumes are encrypted at creation." },
+  { id: "ec2.ebs.volume_unencrypted", label: "EBS volume not encrypted", severity: "high", description: "Encrypt existing EBS volumes by copying snapshots with encryption enabled." },
   // RDS
   { id: "rds.instance.publicly_accessible", label: "RDS publicly accessible", severity: "high", description: "Set Publicly Accessible to No and ensure RDS is in a private subnet." },
   { id: "rds.instance.no_encryption", label: "RDS storage not encrypted", severity: "high", description: "Encrypt RDS storage — requires snapshot copy to a new encrypted instance." },

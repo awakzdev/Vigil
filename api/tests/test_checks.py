@@ -178,3 +178,280 @@ class TestWildcardAction:
         mock_db.scalars.return_value.all.return_value = []
         drafts = role_wildcard_action.run(mock_db, uuid.uuid4())
         assert drafts == []
+
+
+# helpers for new checks
+
+def _rds(*, db_instance_id="db-1", arn="arn:aws:rds:us-east-1:123:db:db-1",
+         region="us-east-1", engine="mysql", backup_retention_period=0, account_id=None):
+    r = MagicMock()
+    r.account_id = account_id or uuid.uuid4()
+    r.db_instance_id = db_instance_id
+    r.arn = arn
+    r.region = region
+    r.engine = engine
+    r.backup_retention_period = backup_retention_period
+    return r
+
+
+def _trail(*, name="mgmt-trail", arn="arn:aws:cloudtrail:us-east-1:123:trail/mgmt-trail",
+           home_region="us-east-1", is_logging=True, kms_key_id=None, account_id=None):
+    t = MagicMock()
+    t.account_id = account_id or uuid.uuid4()
+    t.name = name
+    t.arn = arn
+    t.home_region = home_region
+    t.is_logging = is_logging
+    t.kms_key_id = kms_key_id
+    return t
+
+
+def _ebs_volume(*, volume_id="vol-0abc", arn="arn:aws:ec2:us-east-1:123:volume/vol-0abc",
+                region="us-east-1", encrypted=False, state="in-use", account_id=None):
+    v = MagicMock()
+    v.account_id = account_id or uuid.uuid4()
+    v.volume_id = volume_id
+    v.arn = arn
+    v.region = region
+    v.encrypted = encrypted
+    v.state = state
+    v.size_gib = 20
+    v.volume_type = "gp3"
+    v.attached_instance_ids = []
+    return v
+
+
+def _ebs_default(*, region="us-east-1", enabled=False, account_id=None):
+    d = MagicMock()
+    d.account_id = account_id or uuid.uuid4()
+    d.region = region
+    d.enabled = enabled
+    return d
+
+
+def _instance(*, instance_id="i-0abc", region="us-east-1", imdsv2_required=False,
+              state="running", instance_type="t3.micro", account_id=None):
+    i = MagicMock()
+    i.account_id = account_id or uuid.uuid4()
+    i.instance_id = instance_id
+    i.region = region
+    i.imdsv2_required = imdsv2_required
+    i.state = state
+    i.instance_type = instance_type
+    return i
+
+
+def _hub_status(*, region="us-east-1", enabled=False, account_id=None):
+    s = MagicMock()
+    s.account_id = account_id or uuid.uuid4()
+    s.region = region
+    s.enabled = enabled
+    return s
+
+
+# --- rds.instance.no_automated_backup ---
+
+class TestRdsNoAutomatedBackup:
+    def test_flags_instance_with_no_backup(self, mock_db):
+        from app.checks import rds_no_automated_backup
+        acc_id = uuid.uuid4()
+        mock_db.scalars.return_value.all.return_value = [_rds(account_id=acc_id, backup_retention_period=0)]
+        drafts = rds_no_automated_backup.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "rds.instance.no_automated_backup"
+        assert drafts[0].severity == "medium"
+
+    def test_skips_instance_with_backup(self, mock_db):
+        from app.checks import rds_no_automated_backup
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = rds_no_automated_backup.run(mock_db, uuid.uuid4())
+        assert drafts == []
+
+
+# --- cloudtrail.trail.no_kms ---
+
+class TestCloudtrailNoKms:
+    def test_flags_logging_trail_without_kms(self, mock_db):
+        from app.checks import cloudtrail_no_kms
+        acc_id = uuid.uuid4()
+        mock_db.scalars.return_value.all.return_value = [_trail(account_id=acc_id, is_logging=True, kms_key_id=None)]
+        drafts = cloudtrail_no_kms.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "cloudtrail.trail.no_kms"
+
+    def test_skips_trail_with_kms(self, mock_db):
+        from app.checks import cloudtrail_no_kms
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = cloudtrail_no_kms.run(mock_db, uuid.uuid4())
+        assert drafts == []
+
+
+# --- ec2.ebs.volume_unencrypted ---
+
+class TestEbsVolumeUnencrypted:
+    def test_flags_unencrypted_volume(self, mock_db):
+        from app.checks import ec2_ebs_volume_unencrypted
+        acc_id = uuid.uuid4()
+        mock_db.scalars.return_value.all.return_value = [_ebs_volume(account_id=acc_id, encrypted=False)]
+        drafts = ec2_ebs_volume_unencrypted.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "ec2.ebs.volume_unencrypted"
+        assert drafts[0].severity == "high"
+
+    def test_skips_encrypted_volume(self, mock_db):
+        from app.checks import ec2_ebs_volume_unencrypted
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = ec2_ebs_volume_unencrypted.run(mock_db, uuid.uuid4())
+        assert drafts == []
+
+
+# --- ec2.ebs.encryption_not_default ---
+
+class TestEbsEncryptionNotDefault:
+    def test_flags_regions_without_default_encryption(self, mock_db):
+        from app.checks import ec2_ebs_encryption_default
+        from tests.conftest import make_account
+        acc = make_account()
+        acc_id = acc.id
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = [
+            _ebs_default(region="us-east-1", enabled=False, account_id=acc_id),
+            _ebs_default(region="eu-west-1", enabled=False, account_id=acc_id),
+        ]
+        drafts = ec2_ebs_encryption_default.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "ec2.ebs.encryption_not_default"
+        assert "us-east-1" in drafts[0].evidence["disabled_regions"]
+
+    def test_skips_when_all_regions_enabled(self, mock_db):
+        from app.checks import ec2_ebs_encryption_default
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = ec2_ebs_encryption_default.run(mock_db, acc.id)
+        assert drafts == []
+
+    def test_skips_when_no_account(self, mock_db):
+        from app.checks import ec2_ebs_encryption_default
+        mock_db.get.return_value = None
+        drafts = ec2_ebs_encryption_default.run(mock_db, uuid.uuid4())
+        assert drafts == []
+
+
+# --- ec2.instance.imdsv2_not_required ---
+
+class TestImdsv2NotRequired:
+    def test_flags_running_instance_without_imdsv2(self, mock_db):
+        from app.checks import ec2_imdsv2_not_required
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = [
+            _instance(account_id=acc.id, imdsv2_required=False, state="running")
+        ]
+        drafts = ec2_imdsv2_not_required.run(mock_db, acc.id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "ec2.instance.imdsv2_not_required"
+
+    def test_skips_instance_with_imdsv2(self, mock_db):
+        from app.checks import ec2_imdsv2_not_required
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = ec2_imdsv2_not_required.run(mock_db, acc.id)
+        assert drafts == []
+
+
+# --- aws.securityhub.not_enabled ---
+
+class TestSecurityHubNotEnabled:
+    def test_flags_disabled_regions(self, mock_db):
+        from app.checks import securityhub_not_enabled
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = [
+            _hub_status(region="us-east-1", enabled=False),
+            _hub_status(region="eu-west-1", enabled=False),
+        ]
+        drafts = securityhub_not_enabled.run(mock_db, acc.id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "aws.securityhub.not_enabled"
+        assert drafts[0].evidence["region_count"] == 2
+
+    def test_skips_when_all_regions_enabled(self, mock_db):
+        from app.checks import securityhub_not_enabled
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = securityhub_not_enabled.run(mock_db, acc.id)
+        assert drafts == []
+
+
+# --- ec2.security_group checks ---
+
+def _sg(*, group_id="sg-0abc", group_name="default", region="us-east-1", vpc_id="vpc-0abc",
+        is_default=False, unrestricted_ssh=False, unrestricted_rdp=False,
+        has_any_inbound_rules=False, has_any_outbound_rules=False, account_id=None):
+    sg = MagicMock()
+    sg.account_id = account_id or uuid.uuid4()
+    sg.group_id = group_id
+    sg.group_name = group_name
+    sg.region = region
+    sg.vpc_id = vpc_id
+    sg.is_default = is_default
+    sg.unrestricted_ssh = unrestricted_ssh
+    sg.unrestricted_rdp = unrestricted_rdp
+    sg.has_any_inbound_rules = has_any_inbound_rules
+    sg.has_any_outbound_rules = has_any_outbound_rules
+    return sg
+
+
+class TestSgUnrestrictedSsh:
+    def test_flags_sg_with_unrestricted_ssh(self, mock_db):
+        from app.checks import sg_unrestricted_ssh
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = [
+            _sg(account_id=acc.id, unrestricted_ssh=True)
+        ]
+        drafts = sg_unrestricted_ssh.run(mock_db, acc.id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "ec2.security_group.unrestricted_ssh"
+        assert drafts[0].severity == "high"
+
+    def test_skips_sg_without_open_ssh(self, mock_db):
+        from app.checks import sg_unrestricted_ssh
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = sg_unrestricted_ssh.run(mock_db, acc.id)
+        assert drafts == []
+
+
+class TestSgDefaultAllowsTraffic:
+    def test_flags_default_sg_with_inbound_rules(self, mock_db):
+        from app.checks import sg_default_allows_traffic
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = [
+            _sg(account_id=acc.id, is_default=True, has_any_inbound_rules=True)
+        ]
+        drafts = sg_default_allows_traffic.run(mock_db, acc.id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "ec2.security_group.default_allows_traffic"
+
+    def test_skips_default_sg_with_no_rules(self, mock_db):
+        from app.checks import sg_default_allows_traffic
+        from tests.conftest import make_account
+        acc = make_account()
+        mock_db.get.return_value = acc
+        mock_db.scalars.return_value.all.return_value = []
+        drafts = sg_default_allows_traffic.run(mock_db, acc.id)
+        assert drafts == []

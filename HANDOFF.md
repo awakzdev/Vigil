@@ -472,28 +472,17 @@ policy analysis, onboarding empty state.
 - GuardDuty finding consolidated to 1 per account (was 1 per region = 18 findings for a fresh account); `disabled_regions` list in evidence
 - Policy name tooltip in What If attached policy rows
 - Blast radius: overlap fix for Custom badge + action label
+- Search help + `/reference` page added for supported finding/resource lookup terms
+- Individual EBS volume encryption added: `ec2.ebs.volume_unencrypted`, `ebs_volumes` table, `DescribeVolumes` collector, evidence snapshots, SOC2/CIS mappings, Settings/Findings/Drawer copy
+- Daily scan schedule already exists via Celery beat: `scan_all_accounts` at 06:00 UTC
 
-**Still open from Phase 2 original scope:**
+**Remaining gaps after current code:**
 
-1. Root account: MFA enforced, no access keys, recent usage (CloudTrail)
-2. IAM password policy: length ≥14, reuse prevention, complexity
-3. CloudTrail: enabled, multi-region, log file validation, KMS encrypted
-4. AWS Config: enabled in all in-use regions
-5. GuardDuty: enabled
-6. Security Hub: enabled
-7. S3: account-level Block Public Access, default encryption, HTTPS-only
-   bucket policy
-8. EBS: encryption by default, individual volume encryption
-9. RDS: PubliclyAccessible=false, StorageEncrypted=true, AutomatedBackup
-10. VPC Flow Logs: enabled at VPC level
-11. Default Security Group: no inbound/outbound rules
-12. Security Groups: no 0.0.0.0/0 on 22/3389/all
-13. EC2: IMDSv2 required (HttpTokens=required)
-14. Access Analyzer: enabled
-
-Each ~1–2 days with existing scaffold. New collectors required:
-EC2 / RDS / S3 bucket-config / CloudTrail-config / Config / GuardDuty /
-SecurityHub services.
+1. Root recent usage via CloudTrail events (`iam.root.usage`)
+2. S3 default encryption posture, if we want this separate from current SSE-KMS bucket checks
+3. End-to-end AWS sandbox validation: signup → CFN → verify → scan → evidence pack
+4. Stripe/export gating for Free vs paid plans
+5. GitHub integration for identity and change-management evidence
 
 ### Phase 3 — GitHub integration (3 weeks)
 
