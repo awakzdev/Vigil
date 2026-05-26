@@ -79,11 +79,11 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
           </div>
           <div>
             <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">Repos</div>
-            <div className="mt-1 font-medium text-zinc-700 text-center">{provider.repos}</div>
+            <div className="mt-1 pl-1 font-medium text-zinc-700">{provider.repos}</div>
           </div>
           <div>
             <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">MRs / PRs</div>
-            <div className="mt-1 font-medium text-zinc-700 text-center">{provider.pull_requests}</div>
+            <div className="mt-1 pl-1 font-medium text-zinc-700">{provider.pull_requests}</div>
           </div>
         </div>
       )}
