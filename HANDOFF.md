@@ -630,6 +630,20 @@ policy analysis, onboarding empty state.
 8. TOTP MFA (deferred to Phase 1.5)
 9. GitHub Actions deployments/workflow runs (Phase 3 last item)
 
+**Session 12 additions (2026-05-26):**
+- **Nav reorder**: Compliance now above Findings in sidebar — controls are the product surface, findings are supporting detail
+- **Audit period selector**: 30d / 90d / 180d / 365d toggle on Compliance page, wired to evidence pack download URL; was hardcoded 90d; SOC2 Type 2 requires period-based evidence
+- **Control narrative text**: `api/app/data/control_narratives.py` — pre-written audit response paragraph for 28 controls across SOC2 CC6/CC7/CC8, CIS, ISO 27001; exposed as `narrative` field on `ControlOut`; shown in expanded control row with one-click copy-to-clipboard for questionnaire responses; `NarrativeBlock` component (violet, matches exception/exception palette)
+
+**Remaining gaps after session 12:**
+
+1. `alembic upgrade head` — migrations 0019–0022 (run on next deploy)
+2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
+3. Hetzner deploy (deferred)
+4. Stripe (deferred)
+5. TOTP MFA (deferred to Phase 1.5)
+6. GitHub Actions deployments/workflow runs (Phase 3 last item — tracks workflow runs to environments for CC8.1)
+
 ### Phase 3 — GitHub integration (3 weeks)
 
 Single highest-leverage integration. Covers both identity (CC6) and change
