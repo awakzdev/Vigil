@@ -10,7 +10,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
+from app.models.github import CiPipeline, IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
 
 GITLAB_COM = "https://gitlab.com"
 
@@ -21,6 +21,7 @@ class GitLabSyncStats:
     repos: int = 0
     repo_protections: int = 0
     pull_requests: int = 0
+    ci_pipelines: int = 0
 
 
 def provider_config(provider: IdentityProvider) -> dict[str, Any]:
@@ -152,6 +153,52 @@ def _upsert_mr(
     row.snapshot_taken_at = now
 
 
+def _upsert_ci_pipeline(
+    db: Session,
+    repo_id: uuid.UUID,
+    pipeline: dict[str, Any],
+    now: datetime,
+) -> None:
+    pid = pipeline["id"]
+    row = db.scalar(select(CiPipeline).where(CiPipeline.repo_id == repo_id, CiPipeline.pipeline_id == pid))
+    if not row:
+        row = CiPipeline(id=uuid.uuid4(), repo_id=repo_id, pipeline_id=pid)
+        db.add(row)
+    row.ref = pipeline.get("ref")
+    row.status = pipeline.get("status", "unknown")
+    row.source = pipeline.get("source")
+    row.actor = (pipeline.get("user") or {}).get("username")
+    row.created_at = _parse_dt(pipeline.get("created_at"))
+    row.finished_at = _parse_dt(pipeline.get("finished_at") or pipeline.get("updated_at"))
+    row.duration = pipeline.get("duration")
+    row.snapshot_taken_at = now
+
+
+def _collect_ci_pipelines(
+    client: httpx.Client,
+    db: Session,
+    repo_id: uuid.UUID,
+    api_base: str,
+    project_id: int,
+    default_branch: str | None,
+    now: datetime,
+) -> int:
+    params: dict[str, Any] = {"per_page": 50, "order_by": "id", "sort": "desc"}
+    if default_branch:
+        params["ref"] = default_branch
+
+    resp = client.get(f"{api_base}/projects/{project_id}/pipelines", params=params)
+    if resp.status_code in (403, 404):
+        return 0
+    if not resp.is_success:
+        return 0
+
+    pipelines = resp.json()
+    for p in pipelines:
+        _upsert_ci_pipeline(db, repo_id, p, now)
+    return len(pipelines)
+
+
 def sync_gitlab_provider(
     db: Session,
     provider: IdentityProvider,
@@ -235,6 +282,11 @@ def sync_gitlab_provider(
                         approval_count = len(ap_resp.json().get("approved_by") or [])
                     _upsert_mr(db, repo.id, mr, required_reviews, approval_count, now)
                     stats.pull_requests += 1
+
+                # GitLab CI/CD pipelines (CC8.1 change management evidence)
+                stats.ci_pipelines += _collect_ci_pipelines(
+                    client, db, repo.id, api, project_id, default_branch, now
+                )
 
     config["group_id"] = groups[0]
     config["group_ids"] = groups

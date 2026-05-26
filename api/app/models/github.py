@@ -83,3 +83,44 @@ class PullRequest(Base):
     snapshot_taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (UniqueConstraint("repo_id", "number", name="uq_pull_request_repo_number"),)
+
+
+class WorkflowRun(Base):
+    """GitHub Actions workflow run — evidence for CC8.1 change management."""
+    __tablename__ = "workflow_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), index=True)
+    run_id: Mapped[int] = mapped_column(Integer(), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    workflow_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    event: Mapped[str] = mapped_column(String(60), nullable=False)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    conclusion: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    branch: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    environment: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    run_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    snapshot_taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("repo_id", "run_id", name="uq_workflow_run_repo_run"),)
+
+
+class CiPipeline(Base):
+    """GitLab CI/CD pipeline — evidence for CC8.1 change management."""
+    __tablename__ = "ci_pipelines"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), index=True)
+    pipeline_id: Mapped[int] = mapped_column(Integer(), nullable=False)
+    ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
+    source: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    actor: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    duration: Mapped[int | None] = mapped_column(Integer(), nullable=True)
+    snapshot_taken_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("repo_id", "pipeline_id", name="uq_ci_pipeline_repo_pipeline"),)

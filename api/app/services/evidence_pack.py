@@ -16,7 +16,7 @@ from app.models import Finding, EvidenceSnapshot
 from app.models.cloudtrail import CloudTrailEvent
 from app.models.control import Control, CheckControl
 from app.models.aws_account import AwsAccount
-from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
+from app.models.github import CiPipeline, IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection, WorkflowRun
 from app.services.pdf_report import build_pdf
 
 
@@ -85,6 +85,11 @@ def build_evidence_pack(
 
     # CloudTrail change events — used for CC8.1 change management evidence
     snap_by_type["cloudtrail_event"] = _build_cloudtrail_event_snapshots(db, account_id, since)
+
+    # CI/CD pipeline evidence (GitHub Actions workflow runs + GitLab CI pipelines)
+    cicd_snaps = _build_cicd_snapshots(db, acc.org_id, since)
+    snap_by_type.update(cicd_snaps)
+
     control_results: list[dict[str, Any]] = []
     for ctrl in controls:
         status, hits = _control_status(open_findings, check_map[ctrl.id])
@@ -191,9 +196,11 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
         elif cid.startswith("github."):
             types.add("github_identity")
             types.add("cloudtrail_event")
+            types.add("workflow_run")
         elif cid.startswith("gitlab."):
             types.add("gitlab_identity")
             types.add("cloudtrail_event")
+            types.add("ci_pipeline")
     return list(types)
 
 
@@ -308,6 +315,86 @@ def _build_cloudtrail_event_snapshots(
         }
         for evt in events
     ]
+
+
+def _build_cicd_snapshots(
+    db: Session,
+    org_id: uuid.UUID,
+    since: datetime,
+) -> dict[str, list[dict[str, Any]]]:
+    """Return workflow_run and ci_pipeline evidence snapshots keyed by type."""
+    workflow_snaps: list[dict[str, Any]] = []
+    pipeline_snaps: list[dict[str, Any]] = []
+
+    providers = db.scalars(
+        select(IdentityProvider).where(IdentityProvider.org_id == org_id)
+    ).all()
+
+    for provider in providers:
+        repos = db.scalars(select(Repo).where(Repo.provider_id == provider.id)).all()
+        repo_ids = [r.id for r in repos]
+        repo_name_by_id = {r.id: r.name for r in repos}
+        if not repo_ids:
+            continue
+
+        if provider.type == "github":
+            runs = db.scalars(
+                select(WorkflowRun)
+                .where(
+                    WorkflowRun.repo_id.in_(repo_ids),
+                    WorkflowRun.run_started_at >= since,
+                )
+                .order_by(WorkflowRun.run_started_at.desc())
+                .limit(200)
+            ).all()
+            for r in runs:
+                workflow_snaps.append({
+                    "entity_id": str(r.run_id),
+                    "taken_at": r.snapshot_taken_at.isoformat(),
+                    "data": {
+                        "type": "workflow_run",
+                        "repo": repo_name_by_id.get(r.repo_id, str(r.repo_id)),
+                        "name": r.name,
+                        "workflow_path": r.workflow_path,
+                        "event": r.event,
+                        "status": r.status,
+                        "conclusion": r.conclusion,
+                        "branch": r.branch,
+                        "actor": r.actor,
+                        "environment": r.environment,
+                        "run_started_at": r.run_started_at.isoformat() if r.run_started_at else None,
+                        "run_completed_at": r.run_completed_at.isoformat() if r.run_completed_at else None,
+                    },
+                })
+
+        elif provider.type == "gitlab":
+            pipelines = db.scalars(
+                select(CiPipeline)
+                .where(
+                    CiPipeline.repo_id.in_(repo_ids),
+                    CiPipeline.created_at >= since,
+                )
+                .order_by(CiPipeline.created_at.desc())
+                .limit(200)
+            ).all()
+            for p in pipelines:
+                pipeline_snaps.append({
+                    "entity_id": str(p.pipeline_id),
+                    "taken_at": p.snapshot_taken_at.isoformat(),
+                    "data": {
+                        "type": "ci_pipeline",
+                        "repo": repo_name_by_id.get(p.repo_id, str(p.repo_id)),
+                        "ref": p.ref,
+                        "status": p.status,
+                        "source": p.source,
+                        "actor": p.actor,
+                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                        "finished_at": p.finished_at.isoformat() if p.finished_at else None,
+                        "duration_seconds": p.duration,
+                    },
+                })
+
+    return {"workflow_run": workflow_snaps, "ci_pipeline": pipeline_snaps}
 
 
 def _finding_dict(f: Finding) -> dict[str, Any]:

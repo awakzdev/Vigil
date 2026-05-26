@@ -11,7 +11,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
+from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection, WorkflowRun
 
 
 GITHUB_API = "https://api.github.com"
@@ -23,6 +23,7 @@ class GitHubSyncStats:
     repos: int = 0
     repo_protections: int = 0
     pull_requests: int = 0
+    workflow_runs: int = 0
 
 
 def provider_config(provider: IdentityProvider) -> dict[str, Any]:
@@ -216,6 +217,90 @@ def _upsert_pr(
     row.snapshot_taken_at = now
 
 
+def _upsert_workflow_run(
+    db: Session,
+    repo_id: uuid.UUID,
+    run: dict[str, Any],
+    now: datetime,
+) -> None:
+    run_id = run["id"]
+    row = db.scalar(select(WorkflowRun).where(WorkflowRun.repo_id == repo_id, WorkflowRun.run_id == run_id))
+    if not row:
+        row = WorkflowRun(id=uuid.uuid4(), repo_id=repo_id, run_id=run_id)
+        db.add(row)
+    row.name = run.get("name") or run.get("display_title") or "unknown"
+    row.workflow_path = run.get("path") or run.get("workflow_id")
+    row.event = run.get("event", "unknown")
+    row.status = run.get("status", "unknown")
+    row.conclusion = run.get("conclusion")
+    row.branch = run.get("head_branch")
+    row.actor = (run.get("actor") or {}).get("login") or (run.get("triggering_actor") or {}).get("login")
+    # environment: check deployment via run's jobs if present; fallback None
+    row.environment = run.get("_environment")
+    row.run_started_at = _parse_dt(run.get("run_started_at") or run.get("created_at"))
+    row.run_completed_at = _parse_dt(run.get("updated_at")) if run.get("status") == "completed" else None
+    row.snapshot_taken_at = now
+
+
+def _collect_workflow_runs(
+    client: httpx.Client,
+    db: Session,
+    repo_id: uuid.UUID,
+    owner: str,
+    repo_name: str,
+    default_branch: str | None,
+    now: datetime,
+) -> int:
+    """Collect last 50 workflow runs on the default branch + any deployment runs."""
+    collected = 0
+    params: dict[str, Any] = {"per_page": 50}
+    if default_branch:
+        params["branch"] = default_branch
+
+    resp = client.get(f"{GITHUB_API}/repos/{owner}/{repo_name}/actions/runs", params=params)
+    if resp.status_code in (403, 404):
+        return 0
+    if not resp.is_success:
+        return 0
+
+    runs = resp.json().get("workflow_runs", [])
+
+    # Also fetch deployment-event runs (no branch filter — deploy can be on any ref)
+    deploy_resp = client.get(
+        f"{GITHUB_API}/repos/{owner}/{repo_name}/actions/runs",
+        params={"event": "deployment", "per_page": 20},
+    )
+    if deploy_resp.is_success:
+        deploy_runs = deploy_resp.json().get("workflow_runs", [])
+        seen_ids = {r["id"] for r in runs}
+        for r in deploy_runs:
+            if r["id"] not in seen_ids:
+                runs.append(r)
+
+    # Collect deployment environment info for runs with deployment event
+    deployments_resp = client.get(
+        f"{GITHUB_API}/repos/{owner}/{repo_name}/deployments",
+        params={"per_page": 50},
+    )
+    deploy_env_by_sha: dict[str, str] = {}
+    if deployments_resp.is_success:
+        for d in deployments_resp.json():
+            sha = d.get("sha", "")
+            env = d.get("environment", "")
+            if sha and env and sha not in deploy_env_by_sha:
+                deploy_env_by_sha[sha] = env
+
+    for run in runs:
+        if deploy_env_by_sha:
+            sha = run.get("head_sha", "")
+            if sha in deploy_env_by_sha:
+                run["_environment"] = deploy_env_by_sha[sha]
+        _upsert_workflow_run(db, repo_id, run, now)
+        collected += 1
+
+    return collected
+
+
 def sync_github_provider(db: Session, provider: IdentityProvider, org_login: str | None = None) -> GitHubSyncStats:
     """Sync the configured GitHub evidence scope."""
     config = provider_config(provider)
@@ -313,6 +398,11 @@ def sync_github_provider(db: Session, provider: IdentityProvider, org_login: str
                     }
                     _upsert_pr(db, repo.id, pr, required_reviews, len(approvers), now)
                     stats.pull_requests += 1
+
+                # GitHub Actions workflow runs (CC8.1 change management evidence)
+                stats.workflow_runs += _collect_workflow_runs(
+                    client, db, repo.id, owner_name, repo_name, branch, now
+                )
 
     config["outside_collaborators"] = outside_collaborators
     config["org_login"] = owners[0]

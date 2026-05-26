@@ -174,8 +174,8 @@ export default function Controls() {
           </p>
         </div>
 
-        {/* Framework toggle + download */}
-        <div className="flex items-center gap-3 flex-shrink-0">
+        {/* Framework toggle */}
+        <div className="flex-shrink-0">
           <div className="flex items-center gap-1 rounded-full border border-zinc-200 bg-white p-1 shadow-sm">
             {FRAMEWORKS.map((fw) => (
               <button
@@ -191,39 +191,6 @@ export default function Controls() {
               </button>
             ))}
           </div>
-
-          <div className="flex items-center gap-1 rounded-xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
-            {([30, 90, 180, 365] as const).map((d) => (
-              <button
-                key={d}
-                onClick={() => setPeriod(d)}
-                className={`px-3 py-2 text-sm font-medium transition-colors ${
-                  period === d ? "bg-zinc-900 text-white" : "text-zinc-500 hover:bg-zinc-50"
-                }`}
-                title={`Evidence period: last ${d} days`}
-              >
-                {d}d
-              </button>
-            ))}
-          </div>
-
-          <button
-            onClick={downloadPack}
-            disabled={downloading || !connectedAccount}
-            className="flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 shadow-sm transition-all hover:bg-zinc-50 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {downloading ? (
-              <svg className="w-4 h-4 animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
-              </svg>
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-              </svg>
-            )}
-            {downloading ? "Generating…" : "Evidence Pack"}
-          </button>
         </div>
       </div>
 
@@ -263,6 +230,48 @@ export default function Controls() {
           </div>
         </div>
       )}
+
+      {/* Evidence pack download */}
+      <div className="flex items-center justify-between rounded-xl border border-zinc-200 bg-white px-4 py-3 shadow-sm">
+        <div>
+          <span className="text-sm font-medium text-zinc-700">Evidence Pack</span>
+          <span className="ml-2 text-xs text-zinc-400">Select the audit window then download a ZIP with findings, snapshots, and a PDF report.</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-lg border border-zinc-200 overflow-hidden">
+            {([30, 90, 180, 365] as const).map((d) => (
+              <button
+                key={d}
+                onClick={() => setPeriod(d)}
+                className={`px-3 py-1.5 text-xs font-medium transition-colors ${
+                  period === d
+                    ? "bg-zinc-900 text-white"
+                    : "text-zinc-500 hover:bg-zinc-50 border-l border-zinc-200 first:border-l-0"
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+          <button
+            onClick={downloadPack}
+            disabled={downloading || !connectedAccount}
+            className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-all hover:bg-zinc-100 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {downloading ? (
+              <svg className="w-3.5 h-3.5 animate-spin text-zinc-400" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            ) : (
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg>
+            )}
+            {downloading ? "Generating…" : "Download"}
+          </button>
+        </div>
+      </div>
 
       {/* Control list */}
       <div className="rounded-2xl border border-zinc-200 bg-white shadow-sm overflow-hidden">
