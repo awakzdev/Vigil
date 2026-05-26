@@ -325,7 +325,7 @@ export default function Controls() {
   }
 
   return (
-    <div className="w-full space-y-6 px-8 py-7">
+    <div className="w-full space-y-4 px-8 py-5">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Compliance</h1>
@@ -356,65 +356,65 @@ export default function Controls() {
 
       <section className="overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm">
         <div className="grid lg:grid-cols-[minmax(0,2fr)_minmax(340px,1fr)]">
-          <div className="p-5">
+          <div className="p-4">
             <div className="flex items-start justify-between gap-4">
             <div>
-              <h2 className="text-base font-semibold tracking-tight text-zinc-950">{selectedFramework.postureLabel}</h2>
-              <p className="mt-1 text-sm text-zinc-500">{selectedFramework.fullLabel} controls evaluated from current evidence.</p>
+              <h2 className="text-sm font-semibold tracking-tight text-zinc-950">{selectedFramework.postureLabel}</h2>
+              <p className="mt-0.5 text-xs text-zinc-500">{selectedFramework.fullLabel} controls evaluated from current evidence.</p>
             </div>
           </div>
 
-            <div className="mt-5 flex flex-col gap-4">
-              <div className="flex items-end gap-3">
-                <div className="text-5xl font-semibold leading-none tracking-tight text-zinc-950 tabular-nums">
+            <div className="mt-3 flex flex-col gap-3">
+              <div className="flex items-end gap-2">
+                <div className="text-3xl font-semibold leading-none tracking-tight text-zinc-950 tabular-nums">
                   {controls.isLoading ? "..." : `${passRate}%`}
                 </div>
-                <div className="pb-1 text-sm font-medium text-zinc-500">pass rate</div>
+                <div className="pb-0.5 text-xs font-medium text-zinc-500">pass rate</div>
               </div>
 
-              <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
+              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100">
                 <div
                   className="h-full rounded-full bg-emerald-500 transition-all duration-700"
                   style={{ width: controls.isLoading ? "0%" : `${passRate}%` }}
                 />
               </div>
 
-              <div className="grid grid-cols-2 border-t border-zinc-100 pt-3 sm:grid-cols-4 sm:divide-x sm:divide-zinc-100">
+              <div className="grid grid-cols-2 border-t border-zinc-100 pt-2 sm:grid-cols-4 sm:divide-x sm:divide-zinc-100">
                 {[
                   { value: failed, label: "failing controls", valueClass: "text-red-600" },
                   { value: passed, label: "passing controls", valueClass: "text-emerald-700" },
                   { value: noData, label: "no-data controls", valueClass: "text-zinc-600" },
                   { value: total, label: "total controls", valueClass: "text-zinc-900" },
                 ].map((item) => (
-                  <div key={item.label} className="border-t border-zinc-100 px-4 py-1 first:border-t-0 first:pl-0 sm:border-t-0">
-                    <div className={`text-xl font-semibold tabular-nums ${controls.isLoading ? "text-zinc-300" : item.valueClass}`}>
+                  <div key={item.label} className="border-t border-zinc-100 px-3 py-0.5 first:border-t-0 first:pl-0 sm:border-t-0">
+                    <div className={`text-base font-semibold tabular-nums ${controls.isLoading ? "text-zinc-300" : item.valueClass}`}>
                       {controls.isLoading ? "..." : item.value}
                     </div>
-                    <div className="mt-0.5 text-xs font-medium text-zinc-500">{item.label}</div>
+                    <div className="text-[11px] font-medium text-zinc-500">{item.label}</div>
                   </div>
                 ))}
               </div>
             </div>
           </div>
 
-          <div className="border-t border-zinc-100 bg-zinc-50/50 p-5 lg:border-l lg:border-t-0">
+          <div className="border-t border-zinc-100 bg-zinc-50/50 p-4 lg:border-l lg:border-t-0">
             <div>
-              <h2 className="text-base font-semibold text-zinc-950">Audit export</h2>
-              <p className="mt-2 text-sm leading-6 text-zinc-500">
+              <h2 className="text-sm font-semibold text-zinc-950">Audit export</h2>
+              <p className="mt-1 text-xs leading-5 text-zinc-500">
                 Download an evidence package for the selected audit window. Includes findings, snapshots, and PDF report.
               </p>
             </div>
 
-            <div className="pt-4">
-              <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-400" htmlFor="audit-window">
+            <div className="pt-3">
+              <label className="block text-[11px] font-semibold uppercase tracking-wide text-zinc-400" htmlFor="audit-window">
                 Audit window
               </label>
-              <div className="relative mt-2">
+              <div className="relative mt-1.5">
                 <select
                   id="audit-window"
                   value={period}
                   onChange={(e) => setPeriod(Number(e.target.value))}
-                  className="h-10 w-full appearance-none rounded-lg border border-zinc-200 bg-white px-3 pr-9 text-sm font-medium text-zinc-800 shadow-sm outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-950/[0.06]"
+                  className="h-8 w-full appearance-none rounded-lg border border-zinc-200 bg-white px-3 pr-9 text-sm font-medium text-zinc-800 shadow-sm outline-none transition focus:border-zinc-400 focus:ring-2 focus:ring-zinc-950/[0.06]"
                 >
                   {AUDIT_WINDOWS.map((window) => (
                     <option key={window.value} value={window.value}>
@@ -430,7 +430,7 @@ export default function Controls() {
               <button
                 onClick={downloadPack}
                 disabled={downloading || !connectedAccount}
-                className="mt-4 inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-zinc-900 bg-zinc-900 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400"
+                className="mt-3 inline-flex h-8 w-full items-center justify-center gap-2 rounded-lg border border-zinc-900 bg-zinc-900 px-4 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-100 disabled:text-zinc-400"
               >
                 {downloading ? (
                   <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">

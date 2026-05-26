@@ -5,7 +5,7 @@ Description: >
   permissions. No AWS-managed SecurityAudit or ViewOnlyAccess attached.
 
 Parameters:
-  HygieneAccountPrincipal:
+  VigilAccountPrincipal:
     Type: String
     Description: ARN of the Vigil control plane principal (provided during onboarding).
   ExternalId:
@@ -28,7 +28,7 @@ Resources:
         Statement:
           - Effect: Allow
             Principal:
-              AWS: !Ref HygieneAccountPrincipal
+              AWS: !Ref VigilAccountPrincipal
             Action: sts:AssumeRole
             Condition:
               StringEquals:
