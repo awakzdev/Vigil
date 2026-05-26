@@ -1480,10 +1480,30 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 
         {/* User: summary */}
         {data.resource_type === "iam_user" && (
-          <div className="space-y-1.5 text-xs text-zinc-500">
-            <div>{data.days_inactive !== null && data.days_inactive !== undefined ? `Inactive for ${data.days_inactive} days` : "No recorded activity"}</div>
-            <div>{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
-            {data.has_console_password && <div>Has console password</div>}
+          <div className="space-y-2">
+            <div className="text-xs text-zinc-500">
+              {data.days_inactive != null && data.days_inactive > 0
+                ? `Inactive for ${data.days_inactive} days`
+                : finding.check_id === "iam.user.inactive_90d"
+                  ? "Inactive for 90+ days"
+                  : "No recorded activity"}
+            </div>
+            <div className="text-xs text-zinc-500">{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
+            {data.has_console_password && <div className="text-xs text-zinc-500">Has console password</div>}
+            {data.keys && data.keys.length > 0 && (
+              <div className="space-y-2 pt-1">
+                {data.keys.map((k) => (
+                  <div key={k.key_id} className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs">
+                    <div className="font-mono font-semibold text-zinc-700">{k.key_id}</div>
+                    <div className="mt-1 text-zinc-500">
+                      {k.last_used
+                        ? `Last used ${k.days_ago}d ago · ${k.last_used_service ?? "unknown service"} · ${k.last_used_region ?? ""}`
+                        : "Never used"}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
