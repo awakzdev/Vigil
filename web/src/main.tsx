@@ -16,6 +16,7 @@ import GitHubIntegrationEdit from "./pages/GitHubIntegrationEdit";
 import GitLabIntegration from "./pages/GitLabIntegration";
 import GitLabIntegrationEdit from "./pages/GitLabIntegrationEdit";
 import Integrations from "./pages/Integrations";
+import Security from "./pages/Security";
 import Layout from "./Layout";
 
 const qc = new QueryClient();
@@ -26,6 +27,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
+          <Route path="/security" element={<Security />} />
           <Route path="/auth/callback" element={<AuthCallback />} />
           <Route element={<Layout />}>
             <Route path="/" element={<Navigate to="/findings" replace />} />

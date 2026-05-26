@@ -181,21 +181,21 @@ AWS control-plane APIs, reachable via public HTTPS.
 - [x] Weekly digest email (Resend) — Monday 9am UTC, configurable recipient, test button
 - [ ] Stripe billing — Checkout + portal + webhook → `orgs.plan`
 - [x] Finding detail drawer — evidence, Console/CLI remediation, auto-interpolated resource names
-- [ ] **Generate Least-Privilege Policy** — `GET /v1/accounts/:id/roles/generated-policy` strips unused service statements from inline policies and returns cleaned JSON; Access Analyzer CloudTrail-based generation is future work (requires `accessRole` setup)
+- [x] **Generate Least-Privilege Policy** — `GET /v1/accounts/:id/roles/generated-policy` strips unused service statements from inline policies and returns cleaned JSON; Access Analyzer CloudTrail-based generation is future work (requires `accessRole` setup)
 - [x] PDF compliance report (fpdf2, bundled in evidence pack ZIP)
 - [x] Slack webhook (settings + `POST /v1/settings/test-slack` + weekly digest integration)
 - [ ] TOTP MFA (pyotp already in requirements) — deferred to Phase 1.5
 - [x] Refresh tokens (30-day JWT, auto-retry on 401, OAuth callbacks updated)
-- [ ] Account deletion + role re-verify button
+- [x] Account deletion + role re-verify button
 
 ---
 
 ## P1 — security hardening
 
-- [ ] Encrypt `aws_accounts.role_arn` + `external_id` at rest
+- [x] Encrypt `aws_accounts.role_arn` + `external_id` at rest (Fernet, migration 0008)
 - [ ] CSP + secure cookie flags + HSTS on Caddy
-- [ ] Password complexity + breach-check (have-i-been-pwned k-anonymity)
-- [ ] Public `/security` page documenting permissions + retention
+- [x] Password complexity + breach-check (have-i-been-pwned k-anonymity)
+- [x] Public `/security` page documenting permissions + retention
 
 ---
 

@@ -6,7 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
-from app.core.passwords import hash_password, verify_password
+from app.core.passwords import hash_password, pwned_count, verify_password
 from app.core.ratelimit import limiter
 from app.core.security import current_principal, decode_refresh_token, issue_mfa_challenge_token, issue_refresh_token, issue_token
 from app.models import Org, User
@@ -24,6 +24,9 @@ class SignupIn(BaseModel):
     def password_strength(cls, v: str) -> str:
         if len(v) < 12:
             raise ValueError("password must be at least 12 characters")
+        count = pwned_count(v)
+        if count > 0:
+            raise ValueError(f"password has appeared in {count:,} data breaches — choose a different password")
         return v
 
 
@@ -125,7 +128,13 @@ def change_password(
         if not body.current_password or not verify_password(body.current_password, user.password_hash):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "current password incorrect")
     if len(body.new_password) < 12:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "password must be at least 8 characters")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "password must be at least 12 characters")
+    count = pwned_count(body.new_password)
+    if count > 0:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"password has appeared in {count:,} data breaches — choose a different password",
+        )
     user.password_hash = hash_password(body.new_password)
     db.commit()
 
