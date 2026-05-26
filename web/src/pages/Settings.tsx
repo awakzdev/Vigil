@@ -64,6 +64,18 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   { id: "rds.instance.publicly_accessible", label: "RDS publicly accessible", severity: "high", description: "Set Publicly Accessible to No and ensure RDS is in a private subnet." },
   { id: "rds.instance.no_encryption", label: "RDS storage not encrypted", severity: "high", description: "Encrypt RDS storage — requires snapshot copy to a new encrypted instance." },
   { id: "rds.instance.no_automated_backup", label: "RDS backups disabled", severity: "medium", description: "Enable automated backups with a retention period." },
+  // GitHub
+  { id: "github.org.mfa_not_enforced", label: "GitHub MFA not enforced", severity: "high", description: "Require two-factor authentication for all organization members." },
+  { id: "github.org.dormant_members", label: "GitHub dormant members", severity: "medium", description: "Remove or deactivate members with no activity in the last 90 days." },
+  { id: "github.repo.no_branch_protection", label: "No branch protection", severity: "high", description: "Enable branch protection on the default branch to require reviews and block direct pushes." },
+  { id: "github.repo.self_merge_allowed", label: "Self-merge allowed", severity: "high", description: "Require at least one reviewer other than the PR author before merging." },
+  { id: "github.repo.insufficient_reviews", label: "Insufficient PR reviews", severity: "high", description: "Increase required approvals so changes are reviewed by at least one peer." },
+  // GitLab
+  { id: "gitlab.org.mfa_not_enforced", label: "GitLab MFA not enforced", severity: "high", description: "Require two-factor authentication for all group members." },
+  { id: "gitlab.org.dormant_members", label: "GitLab dormant members", severity: "medium", description: "Remove or deactivate members with no activity in the last 90 days." },
+  { id: "gitlab.repo.no_branch_protection", label: "No branch protection", severity: "high", description: "Enable protected branches on the default branch to require reviews and block direct pushes." },
+  { id: "gitlab.repo.self_merge_allowed", label: "Self-merge allowed", severity: "high", description: "Require at least one reviewer other than the MR author before merging." },
+  { id: "gitlab.repo.insufficient_reviews", label: "Insufficient MR reviews", severity: "high", description: "Increase required approvals so changes are reviewed by at least one peer." },
 ];
 
 const sevBadge: Record<string, string> = {
@@ -180,6 +192,8 @@ export default function Settings() {
     vpc: ALL_CHECKS.filter((c) => c.id.startsWith("vpc.")),
     ec2: ALL_CHECKS.filter((c) => c.id.startsWith("ec2.")),
     rds: ALL_CHECKS.filter((c) => c.id.startsWith("rds.")),
+    github: ALL_CHECKS.filter((c) => c.id.startsWith("github.")),
+    gitlab: ALL_CHECKS.filter((c) => c.id.startsWith("gitlab.")),
   };
 
   return (
@@ -212,6 +226,8 @@ export default function Settings() {
             ["VPC", grouped.vpc],
             ["Security Groups & EC2", grouped.ec2],
             ["RDS", grouped.rds],
+            ["GitHub", grouped.github],
+            ["GitLab", grouped.gitlab],
           ] as [string, typeof ALL_CHECKS][]
         ).map(([groupLabel, items]) => (
           <div key={groupLabel} className="rounded-xl border border-zinc-200 bg-white overflow-hidden" style={{ boxShadow: "0 1px 4px 0 rgba(0,0,0,0.06), 0 0 0 1px rgba(0,0,0,0.03)" }}>

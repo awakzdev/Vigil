@@ -582,6 +582,126 @@ aws ec2 create-volume \\
   },
 };
 
+const identityRemediations: Record<string, Remediation> = {
+  "github.org.mfa_not_enforced": {
+    why: "Without MFA enforcement, any compromised GitHub account password gives an attacker full write access to your repositories. A single phished developer can push malicious code or delete branches with no second factor stopping them.",
+    console: [
+      "Go to your GitHub organization page",
+      'Click "Settings" → "Authentication security"',
+      'Enable "Require two-factor authentication for everyone in your organization"',
+      "Members without MFA will be removed and must re-enroll to rejoin",
+    ],
+    cli: "",
+    risk: "Without org-level MFA enforcement, individual members can disable their own MFA and retain full access.",
+  },
+  "github.org.dormant_members": {
+    why: "Dormant members hold valid tokens and SSH keys even when they've left the project or company. Attackers who obtain stale credentials can act as a legitimate insider with no unusual login pattern to detect.",
+    console: [
+      "Go to your GitHub organization → People",
+      'Filter by "Dormant members" or sort by last activity',
+      "Review each member and confirm whether they still need access",
+      'Remove members who are no longer active via "Remove from organization"',
+    ],
+    cli: "",
+    risk: "Stale memberships are a common vector in insider-threat and ex-employee compromise scenarios.",
+  },
+  "github.repo.no_branch_protection": {
+    why: "Without branch protection, any contributor can push directly to the default branch — bypassing code review, CI checks, and deployment gates. This makes it trivial to introduce unauthorized changes or backdoors.",
+    console: [
+      "Go to the repository → Settings → Branches",
+      'Click "Add rule" under "Branch protection rules"',
+      'Enter the default branch name (e.g. "main")',
+      'Enable "Require a pull request before merging" and "Require approvals"',
+      'Optionally enable "Require status checks" and "Restrict who can push"',
+    ],
+    cli: "",
+    risk: "Unprotected branches allow unauthorized commits to reach production without review or audit trail.",
+  },
+  "github.repo.self_merge_allowed": {
+    why: "Allowing authors to merge their own pull requests removes the peer review step that catches bugs, backdoors, and security regressions. It is the single most common change-management gap flagged in SOC2 CC8.1 audits.",
+    console: [
+      "Go to the repository → Settings → Branches",
+      "Edit the branch protection rule for your default branch",
+      'Enable "Require approvals" and set minimum reviewers to at least 1',
+      'Enable "Dismiss stale pull request approvals when new commits are pushed"',
+      "Confirm the PR author cannot satisfy the approval requirement",
+    ],
+    cli: "",
+    risk: "Self-merged code bypasses the peer review control required by SOC2 CC8.1 and most change management policies.",
+  },
+  "github.repo.insufficient_reviews": {
+    why: "Merging with fewer approvals than required means the review policy is either misconfigured or being bypassed. Each approval gap is a break in the change-management evidence chain auditors will sample.",
+    console: [
+      "Go to the repository → Settings → Branches",
+      "Edit the branch protection rule for your default branch",
+      'Increase "Required approving reviews" to at least 1 (ideally 2)',
+      'Enable "Dismiss stale pull request approvals when new commits are pushed"',
+      "Review recent merges that bypassed the policy and document exceptions",
+    ],
+    cli: "",
+    risk: "Each under-reviewed merge is a gap in change-management evidence and an opportunity for unauthorized code to reach production.",
+  },
+  "gitlab.org.mfa_not_enforced": {
+    why: "Without group-level MFA enforcement, any compromised GitLab account password gives full write access to your projects. A single phished developer can push malicious code or bypass protected branch rules.",
+    console: [
+      "Go to your GitLab group → Settings → General",
+      'Expand "Permissions and group features"',
+      'Enable "Require all users in this group to set up two-factor authentication"',
+      "Set a grace period, then enforce — non-compliant members will be locked out until they enroll",
+    ],
+    cli: "",
+    risk: "Without group-level MFA, individual members can remove their own 2FA and retain full repository access.",
+  },
+  "gitlab.org.dormant_members": {
+    why: "Dormant group members retain valid tokens and SSH keys even after leaving the project. Stale access tokens have no expiry by default in GitLab and can be used by an attacker indefinitely.",
+    console: [
+      "Go to your GitLab group → Members",
+      "Sort by 'Last activity' to identify inactive members",
+      "Review each dormant member and confirm whether they still need access",
+      'Remove inactive members via "Remove member"',
+      "Consider enabling token expiration policies for personal access tokens",
+    ],
+    cli: "",
+    risk: "Dormant accounts with persistent tokens are a high-value target for credential-stuffing and ex-employee access.",
+  },
+  "gitlab.repo.no_branch_protection": {
+    why: "Without protected branches, any developer with Maintainer or Owner access can push directly to the default branch, bypassing code review and CI pipelines. This breaks the change-management control chain.",
+    console: [
+      "Go to the project → Settings → Repository → Protected branches",
+      'Click "Protect a branch"',
+      'Enter the default branch name (e.g. "main")',
+      'Set "Allowed to merge" to "Maintainers" and "Allowed to push" to "No one"',
+      'Enable "Code owner approval" if CODEOWNERS is configured',
+    ],
+    cli: "",
+    risk: "Unprotected branches allow direct pushes to production branches without review or audit evidence.",
+  },
+  "gitlab.repo.self_merge_allowed": {
+    why: "When MR authors can merge their own requests, the peer review step that catches bugs and unauthorized changes is eliminated. GitLab's approval rules must explicitly prevent author self-approval to satisfy SOC2 CC8.1.",
+    console: [
+      "Go to the project → Settings → Merge requests",
+      'Enable "Merge request approvals" and set "Required approvals" to at least 1',
+      'Enable "Prevent approval by the author" under approval settings',
+      'Enable "Prevent approvals by users who add commits"',
+      "Save the settings and re-review any pending MRs",
+    ],
+    cli: "",
+    risk: "Author self-approval bypasses the segregation-of-duties control and will fail a SOC2 CC8.1 evidence review.",
+  },
+  "gitlab.repo.insufficient_reviews": {
+    why: "MRs merged below the required approval threshold mean the policy is being bypassed or is misconfigured. Each under-approved merge is a gap in the change-management evidence chain.",
+    console: [
+      "Go to the project → Settings → Merge requests",
+      'Set "Required approvals" to at least 1 (ideally 2 for critical branches)',
+      'Enable "Reset approvals on push" to prevent stale approvals',
+      "Review the approval rules to ensure they cannot be overridden by project members",
+      "Audit recent MRs and document any approved exceptions",
+    ],
+    cli: "",
+    risk: "Under-reviewed merges are evidence gaps that auditors will flag during SOC2 CC8.1 sampling.",
+  },
+};
+
 const fallbackRemediation: Remediation = {
   why: "Review this finding and take corrective action based on your security policy.",
   console: ["Open the AWS Console", "Navigate to IAM", "Locate the affected resource and review its configuration"],
@@ -1643,7 +1763,8 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
   }, [resolved]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!finding) return null;
-  const rem = remediations[finding.check_id] ?? fallbackRemediation;
+  const rem = identityRemediations[finding.check_id] ?? remediations[finding.check_id] ?? fallbackRemediation;
+  const isIdentityCheck = finding.check_id.startsWith("github.") || finding.check_id.startsWith("gitlab.");
   const headerBadge = sevHeaderBadge[finding.severity] ?? sevHeaderBadge.low;
   const wash = sevWash[finding.severity] ?? sevWash.low;
   const step = sevStep[finding.severity] ?? sevStep.low;
@@ -1758,11 +1879,13 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
         <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden shadow-sm">
           <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
             <span className="text-sm font-semibold text-zinc-700">Steps</span>
-            <div className="flex gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5">{(["console", "cli"] as const).map((t) => <button key={t} onClick={() => setRemTab(t)} className={`rounded-full px-3.5 py-1 text-[13px] font-medium transition-all ${remTab === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-600"}`}>{t === "cli" ? "AWS CLI" : "Console"}</button>)}</div>
+            {!isIdentityCheck && (
+              <div className="flex gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5">{(["console", "cli"] as const).map((t) => <button key={t} onClick={() => setRemTab(t)} className={`rounded-full px-3.5 py-1 text-[13px] font-medium transition-all ${remTab === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-600"}`}>{t === "cli" ? "AWS CLI" : "Console"}</button>)}</div>
+            )}
           </div>
           <div className="bg-zinc-50/70 p-5">
-            {remTab === "console" && <ol className="space-y-3">{rem.console.map((item, i) => <li key={i} className="flex gap-3 text-sm leading-6 text-zinc-700"><span className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${step}`}>{i + 1}</span>{item}</li>)}</ol>}
-            {remTab === "cli" && <CliBlock code={resolvedCli(finding)} />}
+            {(isIdentityCheck || remTab === "console") && <ol className="space-y-3">{rem.console.map((item, i) => <li key={i} className="flex gap-3 text-sm leading-6 text-zinc-700"><span className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${step}`}>{i + 1}</span>{item}</li>)}</ol>}
+            {!isIdentityCheck && remTab === "cli" && <CliBlock code={resolvedCli(finding)} />}
           </div>
         </div>
       )}

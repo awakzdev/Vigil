@@ -105,6 +105,18 @@ const checkLabels: Record<string, string> = {
   "rds.instance.publicly_accessible": "RDS publicly accessible",
   "rds.instance.no_encryption": "RDS storage not encrypted",
   "rds.instance.no_automated_backup": "RDS backups disabled",
+  // GitHub
+  "github.org.mfa_not_enforced": "GitHub MFA not enforced",
+  "github.org.dormant_members": "GitHub dormant members",
+  "github.repo.no_branch_protection": "No branch protection",
+  "github.repo.self_merge_allowed": "Self-merge allowed",
+  "github.repo.insufficient_reviews": "Insufficient PR reviews",
+  // GitLab
+  "gitlab.org.mfa_not_enforced": "GitLab MFA not enforced",
+  "gitlab.org.dormant_members": "GitLab dormant members",
+  "gitlab.repo.no_branch_protection": "No branch protection",
+  "gitlab.repo.self_merge_allowed": "Self-merge allowed",
+  "gitlab.repo.insufficient_reviews": "Insufficient MR reviews",
 };
 
 const checkDescriptions: Record<string, string> = {
@@ -144,6 +156,18 @@ const checkDescriptions: Record<string, string> = {
   "rds.instance.publicly_accessible": "Set Publicly Accessible to No and place RDS in a private subnet.",
   "rds.instance.no_encryption": "Encrypt RDS storage — snapshot → copy with encryption → restore to new instance.",
   "rds.instance.no_automated_backup": "Enable automated backups with a retention period that matches your recovery objective.",
+  // GitHub
+  "github.org.mfa_not_enforced": "GitHub organization does not require MFA for all members.",
+  "github.org.dormant_members": "Organization members with no activity in the last 90 days.",
+  "github.repo.no_branch_protection": "Default branch has no protection rules — anyone can push directly.",
+  "github.repo.self_merge_allowed": "Pull requests merged by their own author with no peer review.",
+  "github.repo.insufficient_reviews": "Pull requests merged with fewer approvals than required.",
+  // GitLab
+  "gitlab.org.mfa_not_enforced": "GitLab group does not require two-factor authentication.",
+  "gitlab.org.dormant_members": "Group members with no activity in the last 90 days.",
+  "gitlab.repo.no_branch_protection": "Default branch has no protection rules — direct pushes are allowed.",
+  "gitlab.repo.self_merge_allowed": "Merge requests merged by their own author without peer review.",
+  "gitlab.repo.insufficient_reviews": "Merge requests merged with fewer approvals than required.",
 };
 
 const statusTabs = ["open", "ignored", "resolved", "all"] as const;
