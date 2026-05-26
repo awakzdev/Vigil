@@ -93,8 +93,10 @@ def list_controls(
             ctrl_status = "no_data"
         elif hits:
             ctrl_status = "fail"
+        elif acc_id and acc and acc.last_scan_at:
+            ctrl_status = "pass"
         else:
-            ctrl_status = "pass" if acc_id else "no_data"
+            ctrl_status = "no_data"
 
         result.append(
             ControlOut(
