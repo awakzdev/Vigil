@@ -27,11 +27,12 @@
     "control_id": "CC6.3",
     "title": "Logical Access — Access Removal",
     "description": "The entity removes access to protected information assets when appropriate (e.g., the individual is no longer associated with the entity).",
-    "guidance": "Evidence: No IAM users inactive beyond threshold. No access keys unused beyond threshold. No roles unassumed beyond threshold.",
+    "guidance": "Evidence: No IAM users inactive beyond threshold. No access keys unused beyond threshold. No roles unassumed beyond threshold. Root account not used for routine operations.",
     "checks": [
       "iam.user.inactive_90d",
       "iam.access_key.unused_90d",
-      "iam.role.unassumed_90d"
+      "iam.role.unassumed_90d",
+      "iam.root.usage"
     ]
   },
   {
@@ -117,6 +118,16 @@
     "guidance": "Enable hardware MFA or virtual MFA on the root account. Hardware MFA is preferred for root.",
     "checks": [
       "iam.root.no_mfa"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.7",
+    "title": "Eliminate use of the root user for administrative and daily tasks",
+    "description": "With the creation of an AWS account, a root user is created that cannot be restricted in any way. Use of this account should be limited to only a small number of tasks that require root user credentials.",
+    "guidance": "Verify no API calls were made using root credentials in the past 90 days via CloudTrail. Use IAM users or roles for all routine operations.",
+    "checks": [
+      "iam.root.usage"
     ]
   },
   {
@@ -301,10 +312,11 @@
     "control_id": "A.9.4.2",
     "title": "Secure Log-on Procedures",
     "description": "Where required by the access control policy, access to systems and applications shall be controlled by a secure log-on procedure.",
-    "guidance": "Evidence: No root access keys exist. MFA is enforced for root and all console users. Only one active access key per user.",
+    "guidance": "Evidence: No root access keys exist. MFA is enforced for root and all console users. Only one active access key per user. Root account not used for routine operations.",
     "checks": [
       "iam.root.has_access_keys",
       "iam.root.no_mfa",
+      "iam.root.usage",
       "iam.user.no_mfa",
       "iam.access_key.multiple_active"
     ]

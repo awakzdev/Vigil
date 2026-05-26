@@ -96,6 +96,7 @@ Resources:
                 Action:
                   - cloudtrail:DescribeTrails
                   - cloudtrail:GetTrailStatus
+                  - cloudtrail:LookupEvents
                 Resource: "*"
 
               - Sid: GuardDutyConfiguration

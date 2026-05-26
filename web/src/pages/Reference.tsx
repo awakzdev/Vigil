@@ -8,7 +8,7 @@ type ReferenceRow = {
 };
 
 const rows: ReferenceRow[] = [
-  { key: "iam.root", value: "AWS account root identity findings, including MFA and root access key checks.", examples: ["iam.root.no_mfa", "iam.root.has_access_keys"], group: "IAM" },
+  { key: "iam.root", value: "AWS account root identity findings, including MFA, root access key, and root usage checks.", examples: ["iam.root.no_mfa", "iam.root.has_access_keys", "iam.root.usage"], group: "IAM" },
   { key: "iam.user", value: "IAM users collected from the account.", examples: ["iam.user.no_mfa", "iam.user.inactive_90d"], group: "IAM" },
   { key: "iam.role", value: "IAM roles, trust policies, attached policies, and role activity.", examples: ["iam.role.unassumed_90d", "iam.role.trust_wildcard"], group: "IAM" },
   { key: "iam.policy", value: "Customer-managed IAM policies and attachment count.", examples: ["iam.policy", "PolicyName"], group: "IAM" },

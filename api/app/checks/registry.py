@@ -14,6 +14,7 @@ from app.checks import (
     iam_password_policy_weak,
     iam_root_access_keys,
     iam_root_no_mfa,
+    iam_root_usage,
     iam_user_inactive,
     iam_user_no_mfa,
     kms_no_rotation,
@@ -40,6 +41,7 @@ ALL_CHECKS = [
     # root (critical — run first)
     iam_root_access_keys,
     iam_root_no_mfa,
+    iam_root_usage,
     # IAM account
     iam_password_policy_weak,
     # IAM users

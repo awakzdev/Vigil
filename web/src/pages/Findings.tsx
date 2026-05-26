@@ -55,6 +55,7 @@ const checkLabels: Record<string, string> = {
   // IAM root
   "iam.root.has_access_keys": "Root has access keys",
   "iam.root.no_mfa": "Root MFA not enabled",
+  "iam.root.usage": "Root account used recently",
   // IAM account
   "iam.account.password_policy_weak": "Weak password policy",
   // IAM users
@@ -108,6 +109,7 @@ const checkLabels: Record<string, string> = {
 const checkDescriptions: Record<string, string> = {
   "iam.root.has_access_keys": "Root account access keys are permanent credentials — delete them.",
   "iam.root.no_mfa": "Root account without MFA can be compromised with credentials alone.",
+  "iam.root.usage": "Root account should not be used for regular operations — use IAM users or roles instead.",
   "iam.account.password_policy_weak": "Strengthen the account password policy to enforce complexity and rotation.",
   "iam.user.no_mfa": "Require MFA for interactive IAM users.",
   "iam.user.inactive_90d": "Disable or remove dormant IAM users.",

@@ -159,6 +159,18 @@ aws iam delete-access-key --access-key-id <key-id>`,
     risk: "Root without MFA is the highest-severity finding possible. Prioritise this above everything else.",
   },
 
+  "iam.root.usage": {
+    why: "Root is the most privileged identity in AWS — all IAM policies and SCPs are bypassed. Any API call using root credentials is a red flag. Engineers should never use root for day-to-day work.",
+    console: ["Sign in as root → open CloudTrail → Event history", "Identify the event(s) that triggered this finding — review the event name, source IP, and user agent", "Determine whether the action required root or could have been done with an IAM user/role", "Create an IAM admin user or role for those operations and use root only for tasks that explicitly require it (e.g. closing the account, managing root MFA, changing account plan)"],
+    cli: `# View recent root-initiated CloudTrail events
+aws cloudtrail lookup-events \\
+  --lookup-attributes AttributeKey=Username,AttributeValue=root \\
+  --start-time $(date -u -d "90 days ago" +%Y-%m-%dT%H:%M:%SZ) \\
+  --query 'Events[*].{Time:EventTime,Event:EventName,IP:CloudTrailEvent}' \\
+  --output table`,
+    risk: "Root activity should be extremely rare. Recurring root use indicates a process gap — automate those tasks with scoped IAM roles instead.",
+  },
+
   "s3.bucket.public_access_not_blocked": {
     why: "S3 Block Public Access is an account and bucket-level guard against accidentally making objects public via ACLs or bucket policies. One or more of the four settings is currently off.",
     console: ["Open S3 → select the bucket", 'Click "Permissions" tab', 'Under "Block public access", click "Edit"', "Enable all four settings and save"],

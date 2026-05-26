@@ -15,6 +15,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // Root
   { id: "iam.root.has_access_keys", label: "Root has access keys", severity: "critical", description: "Root account access keys are permanent credentials — delete them." },
   { id: "iam.root.no_mfa", label: "Root MFA not enabled", severity: "critical", description: "Root account without MFA can be compromised with credentials alone." },
+  { id: "iam.root.usage", label: "Root account used recently", severity: "high", description: "Root account should not be used for regular operations — use IAM users or roles instead." },
   // IAM account
   { id: "iam.account.password_policy_weak", label: "Weak password policy", severity: "medium", description: "Strengthen the account password policy to enforce complexity and rotation." },
   // Users
