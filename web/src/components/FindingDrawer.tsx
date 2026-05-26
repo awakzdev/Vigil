@@ -812,6 +812,25 @@ function RemovableStatementsBlock({ statements }: { statements: RemovableStateme
 function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
   if (!items.length) return null;
   const cols = Object.keys(items[0]);
+  function renderCell(column: string, value: unknown) {
+    if (value == null) return "—";
+    const text = String(value);
+    if (column === "dangerous_actions" || column === "actions") {
+      const actions = text.split(",").map((part) => part.trim()).filter(Boolean);
+      if (actions.length > 0) {
+        return (
+          <div className="max-w-[26rem] space-y-1">
+            {actions.map((action) => (
+              <div key={action} className="font-mono text-xs leading-snug text-zinc-700 break-all">
+                {action}
+              </div>
+            ))}
+          </div>
+        );
+      }
+    }
+    return <span className="whitespace-pre-wrap break-words">{text}</span>;
+  }
   return (
     <div className="overflow-x-auto rounded-lg border border-zinc-200">
       <table className="w-full text-xs">
@@ -828,14 +847,100 @@ function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
           {items.map((row, i) => (
             <tr key={i} className="bg-white">
               {cols.map((c) => (
-                <td key={c} className="px-3 py-2 font-mono text-zinc-800 break-all max-w-[200px]">
-                  {row[c] == null ? "—" : String(row[c])}
+                <td key={c} className="max-w-[300px] px-3 py-2 font-mono leading-relaxed text-zinc-800 align-middle">
+                  {renderCell(c, row[c])}
                 </td>
               ))}
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
+  function serviceLabel(raw: string) {
+    const normalized = raw.toLowerCase();
+    if (normalized === "iam") return "IAM";
+    if (normalized === "ec2") return "EC2";
+    if (normalized === "shield") return "Shield";
+    if (normalized === "elasticloadbalancing") return "ELB";
+    if (normalized === "wafv2") return "WAFv2";
+    if (normalized === "waf-regional") return "WAF Regional";
+    return raw.length <= 3 ? raw.toUpperCase() : raw.charAt(0).toUpperCase() + raw.slice(1);
+  }
+
+  return (
+    <div className="space-y-2.5">
+      {items.map((row, i) => {
+        const policyName = String(row.policy ?? row.policy_name ?? "Unnamed policy");
+        const policyType = String(row.type ?? row.policy_type ?? "policy");
+        const raw = String(row.dangerous_actions ?? row.actions ?? "");
+        const actions = raw.split(",").map((a) => a.trim()).filter(Boolean);
+        const serviceCounts = new Map<string, number>();
+        actions.forEach((action) => {
+          const service = action.split(":")[0] || "other";
+          serviceCounts.set(service, (serviceCounts.get(service) ?? 0) + 1);
+        });
+        return (
+          <details key={`${policyName}-${i}`} className="group rounded-lg border border-zinc-200 bg-white open:bg-zinc-50/40">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-zinc-900">{policyName}</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+                  <span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 uppercase tracking-wide">{policyType.replace("_", " ")}</span>
+                  <span>{actions.length} dangerous action{actions.length === 1 ? "" : "s"}</span>
+                </div>
+              </div>
+              <svg className="h-4 w-4 flex-shrink-0 text-zinc-400 transition group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <div className="border-t border-zinc-200 px-3.5 py-3.5">
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                Grouped dangerous actions
+              </div>
+              <div className="mb-3 flex flex-wrap gap-1.5">
+                {Array.from(serviceCounts.entries()).map(([service, count]) => (
+                  <span key={service} className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+                    {serviceLabel(service)} · {count} action{count === 1 ? "" : "s"}
+                  </span>
+                ))}
+              </div>
+              <div className="max-h-40 space-y-1.5 overflow-auto rounded-md border border-zinc-200 bg-zinc-50/70 p-2.5">
+                {actions.map((action) => (
+                  <div key={action} className="font-mono text-xs leading-5 text-zinc-500 break-all">{action}</div>
+                ))}
+              </div>
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
+function KeyActivityCard({ keyData }: { keyData: { key_id: string; last_used: string | null; days_ago: number | null; last_used_service: string | null; last_used_region: string | null; active: boolean } }) {
+  const service = keyData.last_used_service ?? "unknown service";
+  const region = keyData.last_used_region ?? "unknown region";
+  const age = keyData.days_ago != null ? `${keyData.days_ago}d ago` : "recently";
+
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 text-xs ${keyData.active ? "border-red-100 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
+      <div className="font-mono font-semibold text-zinc-700">{keyData.key_id}</div>
+      {keyData.last_used ? (
+        <>
+          <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Last API activity</div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-600">{service}</span>
+            <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-600">{region}</span>
+            <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-600">{age}</span>
+          </div>
+        </>
+      ) : (
+        <div className="mt-1 text-zinc-500">No recorded API activity</div>
+      )}
     </div>
   );
 }
@@ -847,13 +952,24 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
   const objectLists = entries.filter(([, v]) => Array.isArray(v) && typeof v[0] === "object" && v[0] !== null) as [string, Record<string, unknown>[]][];
   const unusedServices = evidence.unused_services as string[] | undefined;
   const removable = evidence.removable_statements as RemovableStatement[] | undefined;
+  function isIsoDateString(value: string) {
+    return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
+  }
+  function formatMaybeDate(value: string) {
+    if (!isIsoDateString(value)) return value;
+    const d = new Date(value);
+    if (Number.isNaN(d.getTime())) return value;
+    const datePart = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(d);
+    const timePart = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(d);
+    return `${datePart} at ${timePart} UTC`;
+  }
   function renderScalar(k: string, v: unknown): string {
     if (v === null || v === undefined) {
       const isDateField = k.includes("last") || k.includes("date") || k.includes("used") || k.includes("inactive");
       return isDateField ? "Never" : "—";
     }
     if (Array.isArray(v)) return v.join(", ");
-    return String(v);
+    return formatMaybeDate(String(v));
   }
   return (
     <div className="space-y-4">
@@ -871,9 +987,11 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
       {scalars.length > 0 && (
         <div className="overflow-hidden rounded-lg border border-zinc-200">
           {scalars.map(([k, v], i) => (
-            <div key={k} className={`flex gap-4 px-4 py-2.5 text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}>
-              <span className="w-36 flex-shrink-0 text-sm text-zinc-500">{k.replace(/_/g, " ")}</span>
-              <span className="break-all font-mono text-sm text-zinc-700">{renderScalar(k, v)}</span>
+            <div key={k} className={`flex gap-4 px-4 py-3 text-sm ${i % 2 === 0 ? "bg-white" : "bg-zinc-50"}`}>
+              <span className="w-36 flex-shrink-0 text-xs font-medium uppercase tracking-wide text-zinc-500">{k.replace(/_/g, " ")}</span>
+              <span className={`break-all text-sm leading-6 text-zinc-600 ${/arn|_id$|(^|_)id$|key_id/i.test(k) ? "font-mono text-zinc-700" : "font-normal"}`}>
+                {renderScalar(k, v)}
+              </span>
             </div>
           ))}
         </div>
@@ -881,7 +999,7 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
       {objectLists.map(([k, items]) => (
         <div key={k}>
           <div className="mb-2 text-sm font-semibold text-zinc-700">{k.replace(/_/g, " ")}</div>
-          <ObjectListTable items={items} />
+          {k === "policies" ? <PolicyEvidenceList items={items} /> : <ObjectListTable items={items} />}
         </div>
       ))}
       {removable && <RemovableStatementsBlock statements={removable} />}
@@ -1214,6 +1332,36 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 
   const conf = confidenceConfig[data.confidence];
 
+  const verdict = buildVerdict(data);
+  const vs = verdictStyle[verdict.type];
+  const normalizedVerdict = verdict.text.toLowerCase().replace(/\s+/g, " ").trim();
+  function warningKey(text: string) {
+    const n = text.toLowerCase().replace(/\s+/g, " ").trim();
+    if ((n.includes("scoping down resource: *") || n.includes("scoping resource: *")) && (n.includes("specific arn") || n.includes("specific resource"))) {
+      return "scope-resource-star";
+    }
+    return n;
+  }
+  const verdictKey = warningKey(normalizedVerdict);
+  const seen = new Set<string>();
+  const baseWarnings = (data.resource_type === "iam_access_key" ? [] : data.warnings).filter((warning) => {
+    if (data.resource_type !== "iam_user") return true;
+    const normalized = warning.toLowerCase();
+    return !(normalized.startsWith("access key ") && normalized.includes(" used ") && normalized.includes(" deactivate keys before disabling user"));
+  });
+  const keyUsageWarnings = data.resource_type === "iam_user" && data.keys
+    ? data.keys
+        .filter((k) => k.last_used && k.days_ago != null)
+        .map((k) => `Access key ${k.key_id} shows API activity ${k.days_ago} days ago via ${k.last_used_service ?? "unknown service"}${k.last_used_region ? ` (${k.last_used_region})` : ""} — deactivate keys before disabling user`)
+    : [];
+  const warningRows = [...baseWarnings, ...keyUsageWarnings].filter((warning) => {
+    const key = warningKey(warning);
+    if (key === verdictKey) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+
   return (
     <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden">
       <div className="px-4 py-3.5 border-b border-zinc-100 flex items-center justify-between">
@@ -1225,21 +1373,15 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
       </div>
 
       <div className="p-4 space-y-4">
-        {(() => {
-          const verdict = buildVerdict(data);
-          const vs = verdictStyle[verdict.type];
-          return (
-            <div className={`flex items-start gap-2.5 rounded-lg border px-3.5 py-3 ${vs.card}`}>
-              <span className={vs.icon}><VerdictIcon type={verdict.type} /></span>
-              <p className={`text-sm font-medium leading-snug ${vs.text}`}>{verdict.text}</p>
-            </div>
-          );
-        })()}
+        <div className={`flex items-start gap-2.5 rounded-lg border px-3.5 py-3 ${vs.card}`}>
+          <span className={vs.icon}><VerdictIcon type={verdict.type} /></span>
+          <p className={`text-sm font-medium leading-snug ${vs.text}`}>{verdict.text}</p>
+        </div>
 
         {/* Warnings */}
-        {data.warnings.length > 0 && (
+        {warningRows.length > 0 && (
           <div className="space-y-1.5">
-            {data.warnings.map((w, i) => (
+            {warningRows.map((w, i) => (
               <div key={i} className="flex items-start gap-2 rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 <svg className="mt-0.5 h-3.5 w-3.5 flex-shrink-0 text-amber-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
@@ -1371,24 +1513,22 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         {data.resource_type === "iam_access_key" && data.keys && data.keys.length > 0 && (
           <div className="space-y-2">
             {data.keys.map((k) => (
-              <div key={k.key_id} className={`rounded-lg border px-3 py-2.5 text-xs ${k.active ? "border-red-100 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
-                <div className="font-mono font-semibold text-zinc-700">{k.key_id}</div>
-                <div className="mt-1 text-zinc-500">
-                  {k.last_used
-                    ? `Last used ${k.days_ago}d ago · ${k.last_used_service ?? "unknown service"} · ${k.last_used_region ?? ""}`
-                    : "Never used"}
-                </div>
-              </div>
+              <KeyActivityCard key={k.key_id} keyData={k} />
             ))}
           </div>
         )}
 
         {/* User: summary */}
         {data.resource_type === "iam_user" && (
-          <div className="space-y-1.5 text-xs text-zinc-500">
-            <div>{data.days_inactive !== null && data.days_inactive !== undefined ? `Inactive for ${data.days_inactive} days` : "No recorded activity"}</div>
-            <div>{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
-            {data.has_console_password && <div>Has console password</div>}
+          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
+            <div className="px-3 py-2 text-xs text-zinc-600">
+              {data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}
+            </div>
+            {data.has_console_password && (
+              <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-600">
+                Has console password
+              </div>
+            )}
           </div>
         )}
 
@@ -1834,7 +1974,7 @@ function SnoozeButton({ findingId, onDone }: { findingId: string; onDone: () => 
         onClick={() => setOpen((o) => !o)}
         className={`w-full rounded-lg border px-4 py-2.5 text-sm font-semibold transition ${snoozed ? "border-amber-200 bg-amber-50 text-amber-700" : "border-zinc-300 bg-white text-zinc-700 hover:bg-zinc-100"}`}
       >
-        {snoozed ? "Snoozed" : "Snooze"}
+        {snoozed ? "Ignored" : "Ignore"}
       </button>
       {open && (
         <div className="absolute bottom-full mb-1.5 right-0 z-10 min-w-[140px] rounded-xl border border-zinc-200 bg-white shadow-lg overflow-hidden">
