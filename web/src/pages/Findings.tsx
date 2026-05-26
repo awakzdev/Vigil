@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
 import { FindingDrawer } from "../components/FindingDrawer";
+import { SearchReferenceModal } from "../components/SearchReferenceModal";
 
 type Finding = {
   id: string;
@@ -224,6 +225,7 @@ function TagSearchInput({
   const [hi, setHi] = useState(0);
   const [popover, setPopover] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [refOpen, setRefOpen] = useState(false);
   const [adding, setAdding] = useState(false);
   const [addingInPopover, setAddingInPopover] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -354,14 +356,16 @@ function TagSearchInput({
             Search by check, resource, ARN, or resource family. Examples: <span className="font-mono text-zinc-700">iam.root</span>,{" "}
             <span className="font-mono text-zinc-700">s3.bucket</span>, <span className="font-mono text-zinc-700">ec2.instance</span>.
           </p>
-          <a href="/reference" className="mt-3 inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
+          <button type="button" onClick={() => { setHelpOpen(false); setRefOpen(true); }} className="mt-3 inline-flex items-center text-xs font-semibold text-indigo-600 hover:text-indigo-700">
             Open search reference
             <svg className="ml-1 h-3 w-3" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
             </svg>
-          </a>
+          </button>
         </div>
       )}
+
+      {refOpen && <SearchReferenceModal onClose={() => setRefOpen(false)} />}
 
       {/* Overflow popover */}
       {popover && (
@@ -694,28 +698,28 @@ export default function Findings() {
                   <button
                     type="button"
                     onClick={() => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))}
-                    className="grid w-full grid-cols-[auto_auto_minmax(0,1fr)_56px_56px] items-center gap-3 bg-gradient-to-r from-zinc-50/80 to-white px-5 py-3.5 text-left transition-colors hover:from-zinc-100/60"
+                    className="grid w-full grid-cols-[auto_auto_minmax(0,1fr)_44px_44px] items-center gap-3 bg-gradient-to-r from-zinc-50/80 to-white pl-5 pr-3 py-3.5 text-left transition-colors hover:from-zinc-100/60"
                   >
                     <svg
-                      className={`h-3.5 w-3.5 text-zinc-400 transition-transform duration-150 ${isCollapsed ? "-rotate-90" : ""}`}
+                      className={`h-3.5 w-3.5 transition-transform duration-150 ${isCollapsed ? "-rotate-90 text-zinc-600" : "text-zinc-500"}`}
                       fill="none"
                       stroke="currentColor"
                       viewBox="0 0 24 24"
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                     </svg>
-                    <span className={`rounded border px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.12em] ${sevBadge[sev] ?? sevBadge.low}`}>
+                    <span className={`inline-block w-[72px] text-center rounded border py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${sevBadge[sev] ?? sevBadge.low}`}>
                       {sev}
                     </span>
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-zinc-900">{label}</span>
+                        <span className="text-[15px] font-semibold text-zinc-900">{label}</span>
                         <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-zinc-500">
                           {items.length}
                         </span>
                       </div>
                       {description && (
-                        <p className="mt-0.5 truncate text-xs text-zinc-400">{description}</p>
+                        <p className="mt-0.5 text-xs font-medium text-zinc-600 leading-normal">{description}</p>
                       )}
                     </div>
                     <span className="hidden text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 md:block">Score</span>
@@ -734,10 +738,10 @@ export default function Findings() {
                         <div
                           key={f.id}
                           onClick={() => setSelected(f)}
-                          className={`group grid cursor-pointer grid-cols-[minmax(0,1fr)_56px_56px] items-center gap-3 py-2.5 pr-5 transition-colors hover:bg-white ${isGrouped ? "pl-10" : "pl-5"}`}
+                          className={`group grid cursor-pointer grid-cols-[minmax(0,1fr)_44px_44px] items-center gap-3 py-2.5 pr-3 transition-colors duration-[120ms] hover:bg-zinc-100/50 ${isGrouped ? "pl-10" : "pl-5"}`}
                         >
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-zinc-600 transition-colors group-hover:text-zinc-900">
+                            <div className="truncate text-sm font-medium text-zinc-700 transition-colors group-hover:text-zinc-900">
                               {resourceName(f.resource_arn)}
                             </div>
                             {!isGrouped && description && (
@@ -745,12 +749,12 @@ export default function Findings() {
                             )}
                           </div>
                           <div className="flex justify-center">
-                            <span className="text-xs font-semibold tabular-nums text-zinc-700 transition-colors group-hover:text-zinc-900">
+                            <span className="text-xs font-medium tabular-nums text-zinc-500">
                               {f.risk_score}
                             </span>
                           </div>
                           <div className="text-center">
-                            <span className="text-xs tabular-nums text-zinc-600">{daysAgo(f.first_seen)}</span>
+                            <span className="text-xs font-medium tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span>
                           </div>
                         </div>
                       ))}

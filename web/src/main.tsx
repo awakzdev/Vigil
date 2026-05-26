@@ -11,7 +11,6 @@ import Account from "./pages/Account";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import Controls from "./pages/Controls";
-import Reference from "./pages/Reference";
 import Layout from "./Layout";
 
 const qc = new QueryClient();
@@ -27,8 +26,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="/" element={<Navigate to="/findings" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/findings" element={<Findings />} />
-            <Route path="/reference" element={<Reference />} />
-            <Route path="/resources" element={<Navigate to="/reference" replace />} />
+            <Route path="/reference" element={<Navigate to="/findings" replace />} />
+            <Route path="/resources" element={<Navigate to="/findings" replace />} />
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/account" element={<Account />} />
             <Route path="/settings" element={<Settings />} />

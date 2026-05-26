@@ -45,20 +45,6 @@ function scoreColor(pct: number | null | undefined): string {
   return "bg-emerald-400";
 }
 
-function ScoreBar({ pct }: { pct: number | null | undefined }) {
-  const color = scoreColor(pct);
-  return (
-    <div className="flex items-center gap-2">
-      <div className="h-1.5 flex-1 overflow-hidden bg-emerald-100">
-        <div className={`h-full transition-all duration-500 ${color}`} style={{ width: `${pct ?? 0}%` }} />
-      </div>
-      <span className="text-xs font-semibold tabular-nums text-zinc-700 w-8 text-right shrink-0">
-        {pct == null ? "—" : `${pct}%`}
-      </span>
-    </div>
-  );
-}
-
 function AccountCard({ acc, findingsData, onRemoved }: {
   acc: Account;
   findingsData: { items: Finding[] } | undefined;
@@ -90,7 +76,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
   const iso = useComplianceScore("iso27001", acc.status === "connected");
 
   return (
-    <div className="grid grid-cols-[1fr_280px] gap-4 items-start">
+    <div className="grid grid-cols-[1fr_280px] gap-4 items-stretch">
       {/* Main card */}
       <div className="bg-white rounded-xl border border-zinc-200 shadow-sm overflow-hidden">
         {/* Account header */}
@@ -273,43 +259,48 @@ function AccountCard({ acc, findingsData, onRemoved }: {
       </div>
 
       {/* Posture snapshot sidebar */}
-      <div className="min-h-[188px] bg-white rounded-xl border border-zinc-200 shadow-sm px-5 py-6">
-        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-4">Posture Snapshot</div>
+      <div className="bg-white rounded-xl border border-zinc-200 shadow-sm px-5 py-5 flex flex-col">
+        <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-3">Posture Snapshot</div>
         {acc.status === "connected" ? (
           <>
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-2.5 text-center">
-                <div className="text-2xl font-bold text-red-600 tabular-nums">{findingsData ? critHigh : "…"}</div>
-                <div className="text-xs text-red-500 font-medium mt-0.5">critical · high</div>
+            <div className="flex-1 grid grid-cols-2 gap-2.5 mb-3">
+              <div className="rounded-lg border border-red-100 bg-red-50 px-3 flex flex-col items-center justify-center text-center">
+                <div className="text-4xl font-bold text-red-600 tabular-nums">{findingsData ? critHigh : "…"}</div>
+                <div className="text-xs text-red-500 font-medium mt-1">critical · high</div>
               </div>
-              <div className="rounded-lg border border-amber-100 bg-amber-50 px-4 py-2.5 text-center">
-                <div className="text-2xl font-bold text-amber-600 tabular-nums">{findingsData ? medium : "…"}</div>
-                <div className="text-xs text-amber-500 font-medium mt-0.5">medium</div>
+              <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 flex flex-col items-center justify-center text-center">
+                <div className="text-4xl font-bold text-amber-600 tabular-nums">{findingsData ? medium : "…"}</div>
+                <div className="text-xs text-amber-500 font-medium mt-1">medium</div>
               </div>
             </div>
-            <div className="space-y-3.5 mt-2">
+            <div className="mt-auto space-y-3 pt-2">
               {[
                 { label: "SOC 2", pct: soc2.data },
                 { label: "CIS AWS L1", pct: cis.data },
                 { label: "ISO 27001", pct: iso.data },
               ].map(({ label, pct }) => (
-                <div key={label}>
-                  <span className="text-xs font-medium text-zinc-600 block mb-1">{label}</span>
-                  <ScoreBar pct={pct} />
+                <div key={label} className="flex items-center gap-2.5">
+                  <span className="text-xs font-medium text-zinc-600 w-[72px] shrink-0">{label}</span>
+                  <div className="flex-1 h-2 rounded-full overflow-hidden bg-emerald-100">
+                    <div className={`h-full rounded-full transition-all duration-500 ${scoreColor(pct)}`} style={{ width: `${pct ?? 0}%` }} />
+                  </div>
+                  <span className="text-xs font-semibold tabular-nums text-zinc-700 w-8 text-right shrink-0">
+                    {pct == null ? "—" : `${pct}%`}
+                  </span>
                 </div>
               ))}
             </div>
           </>
         ) : (
-          <div className="flex flex-col gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-3 text-center">
-                <div className="text-2xl font-bold text-zinc-300 tabular-nums">—</div>
-                <div className="text-xs text-zinc-300 font-medium mt-0.5">critical · high</div>
+          <div className="flex flex-col gap-2.5">
+            <div className="grid grid-cols-2 gap-2.5">
+              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
+                <div className="text-xl font-bold text-zinc-300 tabular-nums">—</div>
+                <div className="text-[11px] text-zinc-300 font-medium mt-0.5">critical · high</div>
               </div>
-              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-3 text-center">
-                <div className="text-2xl font-bold text-zinc-300 tabular-nums">—</div>
-                <div className="text-xs text-zinc-300 font-medium mt-0.5">medium</div>
+              <div className="rounded-lg border border-dashed border-zinc-200 bg-zinc-50/60 px-3 py-2 text-center">
+                <div className="text-xl font-bold text-zinc-300 tabular-nums">—</div>
+                <div className="text-[11px] text-zinc-300 font-medium mt-0.5">medium</div>
               </div>
             </div>
             <p className="text-[12px] text-zinc-400 leading-relaxed">
