@@ -768,6 +768,25 @@ type BlastRadiusData = {
   public_access_blocked?: boolean;
   https_only?: boolean;
   logging_enabled?: boolean;
+  // rds instance fields
+  db_instance_id?: string;
+  engine?: string | null;
+  storage_encrypted?: boolean;
+  publicly_accessible?: boolean;
+  backup_retention_period?: number;
+  // ec2 instance fields
+  instance_id?: string;
+  instance_type?: string | null;
+  state?: string;
+  imdsv2_required?: boolean;
+  // ebs volume fields
+  volume_id?: string;
+  size_gib?: number | null;
+  volume_type?: string | null;
+  attached_instances?: { instance_id: string; state: string; name: string; instance_type: string | null }[];
+  // ebs encryption default fields
+  existing_unencrypted_count?: number;
+  // disabled_regions already in evidence; no extra field needed
   warnings: string[];
 };
 
@@ -836,6 +855,30 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
     if (confidence === "high") return { text: "Safe to enable — enabling S3 access logging has no impact on bucket access or application behaviour.", type: "safe" };
     if (confidence === "low") return { text: "Review before applying — bucket may have public access patterns that depend on current settings.", type: "warning" };
     return { text: "Verify before applying — this change may affect applications accessing the bucket. See warnings below.", type: "caution" };
+  }
+
+  if (resource_type === "rds_instance") {
+    if (confidence === "low") return { text: "High blast radius — encrypting an RDS instance requires creating a new instance from an encrypted snapshot. Plan a maintenance window.", type: "warning" };
+    if (confidence === "high") return { text: "Safe to enable — automated backups have no impact on application availability and can be enabled at any time.", type: "safe" };
+    return { text: "Verify connectivity before applying — disabling public access removes the external endpoint. Ensure your app connects via VPC.", type: "caution" };
+  }
+
+  if (resource_type === "ec2_instance") {
+    return { text: "Verify application compatibility first — apps using IMDSv1 without a session token will fail. Test in non-prod before applying.", type: "caution" };
+  }
+
+  if (resource_type === "ebs_volume") {
+    const running = data.running_count ?? 0;
+    if (running > 0) return { text: `High blast radius — ${running} running instance(s) attached. Replacing the volume requires downtime unless it is a non-root, remountable volume.`, type: "warning" };
+    if (confidence === "high") return { text: "No instances attached — safe to encrypt via snapshot copy with no downtime risk.", type: "safe" };
+    return { text: "Instances attached but not running — plan volume replacement during maintenance.", type: "caution" };
+  }
+
+  if (resource_type === "ebs_encryption_default") {
+    const count = data.existing_unencrypted_count ?? 0;
+    return count > 0
+      ? { text: `Safe to enable — only affects new volumes. ${count} existing unencrypted volume(s) must be migrated separately.`, type: "caution" }
+      : { text: "Safe to enable — only affects volumes created after this change. No existing volumes are impacted.", type: "safe" };
   }
 
   if (confidence === "high") return { text: "No active usage detected — safe to remediate.", type: "safe" };
@@ -1076,6 +1119,96 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             <div>{data.days_inactive !== null && data.days_inactive !== undefined ? `Inactive for ${data.days_inactive} days` : "No recorded activity"}</div>
             <div>{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
             {data.has_console_password && <div>Has console password</div>}
+          </div>
+        )}
+
+        {/* RDS instance: metadata grid */}
+        {data.resource_type === "rds_instance" && (
+          <div className="grid grid-cols-3 gap-2 text-xs">
+            {([
+              ["Instance", data.db_instance_id ?? "—", null],
+              ["Engine", data.engine ?? "—", null],
+              ["Region", data.region ?? "—", null],
+              ["Encrypted", data.storage_encrypted ? "Yes" : "No", data.storage_encrypted],
+              ["Public access", data.publicly_accessible ? "Enabled" : "Disabled", !data.publicly_accessible],
+              ["Backup retention", data.backup_retention_period != null ? `${data.backup_retention_period}d` : "—", (data.backup_retention_period ?? 0) > 0],
+            ] as [string, string, boolean | null][]).map(([label, val, ok]) => (
+              <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">{label}</div>
+                <div className={`font-mono font-medium truncate ${ok === true ? "text-emerald-700" : ok === false ? "text-red-600" : "text-zinc-700"}`}>{val}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* EC2 instance: metadata grid */}
+        {data.resource_type === "ec2_instance" && (
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            {([
+              ["Instance", data.instance_id ?? "—", null],
+              ["Type", data.instance_type ?? "—", null],
+              ["State", data.state ?? "—", data.state === "running"],
+              ["Region", data.region ?? "—", null],
+            ] as [string, string, boolean | null][]).map(([label, val, ok]) => (
+              <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">{label}</div>
+                <div className={`font-mono font-medium ${ok === true ? "text-emerald-700" : ok === false ? "text-zinc-500" : "text-zinc-700"}`}>{val}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* EBS volume: metadata + attached instances */}
+        {data.resource_type === "ebs_volume" && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-3 gap-2 text-xs">
+              {([
+                ["Volume", data.volume_id ?? "—", null],
+                ["Size", data.size_gib != null ? `${data.size_gib} GiB` : "—", null],
+                ["Type", data.volume_type ?? "—", null],
+                ["State", data.state ?? "—", null],
+                ["Region", data.region ?? "—", null],
+                ["Attached", `${(data.attached_instances ?? []).length}`, null],
+              ] as [string, string, null][]).map(([label, val]) => (
+                <div key={label} className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                  <div className="font-medium text-zinc-400 mb-0.5">{label}</div>
+                  <div className="font-mono font-medium text-zinc-700 truncate">{val}</div>
+                </div>
+              ))}
+            </div>
+            {data.attached_instances && data.attached_instances.length > 0 && (
+              <div>
+                <div className="text-sm font-semibold text-zinc-700 mb-2">
+                  Attached instances
+                  {(data.running_count ?? 0) > 0 && <span className="ml-2 text-xs font-medium text-red-500">{data.running_count} running</span>}
+                </div>
+                <div className="space-y-1.5">
+                  {data.attached_instances.map((inst) => (
+                    <div key={inst.instance_id} className={`flex items-center justify-between rounded-md border px-3 py-2 text-xs ${inst.state === "running" ? "border-red-100 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className={`h-1.5 w-1.5 flex-shrink-0 rounded-full ${inst.state === "running" ? "bg-red-400" : "bg-zinc-300"}`} />
+                        <span className="font-mono text-zinc-700 truncate">{inst.name !== inst.instance_id ? inst.name : inst.instance_id}</span>
+                      </div>
+                      <div className="flex items-center gap-2 flex-shrink-0 pl-2">
+                        {inst.instance_type && <span className="text-zinc-400">{inst.instance_type}</span>}
+                        <span className={`font-medium ${inst.state === "running" ? "text-red-600" : "text-zinc-400"}`}>{inst.state}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* EBS encryption default: unencrypted volume count */}
+        {data.resource_type === "ebs_encryption_default" && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-xs">
+            <div className="font-medium text-zinc-400 mb-0.5">Existing unencrypted volumes</div>
+            <div className={`text-2xl font-bold tabular-nums ${(data.existing_unencrypted_count ?? 0) > 0 ? "text-amber-600" : "text-emerald-600"}`}>
+              {data.existing_unencrypted_count ?? 0}
+            </div>
+            <p className="mt-1.5 text-zinc-400 leading-relaxed">Enabling default encryption only affects volumes created <em>after</em> this change. Each existing unencrypted volume must be migrated separately via snapshot copy.</p>
           </div>
         )}
 
@@ -1406,6 +1539,12 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "s3.bucket.no_https_policy",
     "s3.bucket.public_access_not_blocked",
     "s3.bucket.no_logging",
+    "rds.instance.no_encryption",
+    "rds.instance.publicly_accessible",
+    "rds.instance.no_automated_backup",
+    "ec2.instance.imdsv2_not_required",
+    "ec2.ebs.volume_unencrypted",
+    "ec2.ebs.encryption_not_default",
   ]);
   const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 

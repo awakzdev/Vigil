@@ -15,7 +15,7 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.iam import IamAccessKey, IamUser
-from app.models.resources import CloudTrailTrail, Ec2Instance, KmsKey, S3Bucket, SecurityGroup
+from app.models.resources import CloudTrailTrail, Ec2Instance, EbsEncryptionDefault, EbsVolume, KmsKey, RdsInstance, S3Bucket, SecurityGroup
 from app.models.org import Org
 
 router = APIRouter()
@@ -645,6 +645,135 @@ def blast_radius(
             "public_access_blocked": bucket.public_access_blocked,
             "https_only": bucket.https_only,
             "logging_enabled": bucket.logging_enabled,
+            "warnings": warnings,
+        }
+
+    # ── EC2 Instance (IMDSv2) ────────────────────────────────────────────────
+    if check_id == "ec2.instance.imdsv2_not_required":
+        instance_id = resource_arn.split("/")[-1] if "/" in resource_arn else None
+        instance = db.scalar(
+            select(Ec2Instance).where(Ec2Instance.account_id == acc.id, Ec2Instance.instance_id == instance_id)
+        ) if instance_id else None
+        if not instance:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "instance not found — run a scan first")
+
+        warnings: list[str] = [
+            "Requiring IMDSv2 breaks applications that call the metadata service without a session token — test in non-prod first"
+        ]
+        if instance.state == "running":
+            warnings.append("Change takes effect immediately on a running instance — no restart needed, but verify application health after applying")
+
+        return {
+            "resource_type": "ec2_instance",
+            "confidence": "medium",
+            "instance_id": instance.instance_id,
+            "instance_type": instance.instance_type,
+            "state": instance.state,
+            "region": instance.region,
+            "imdsv2_required": instance.imdsv2_required,
+            "warnings": warnings,
+        }
+
+    # ── EBS Volume (unencrypted) ─────────────────────────────────────────────
+    if check_id == "ec2.ebs.volume_unencrypted":
+        volume = db.scalar(
+            select(EbsVolume).where(EbsVolume.account_id == acc.id, EbsVolume.arn == resource_arn)
+        )
+        if not volume:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "EBS volume not found — run a scan first")
+
+        attached_instances = []
+        if volume.attached_instance_ids:
+            ec2s = db.scalars(
+                select(Ec2Instance).where(
+                    Ec2Instance.account_id == acc.id,
+                    Ec2Instance.instance_id.in_(volume.attached_instance_ids),
+                )
+            ).all()
+            attached_instances = [
+                {
+                    "instance_id": i.instance_id,
+                    "state": i.state,
+                    "name": (i.tags or {}).get("Name", i.instance_id),
+                    "instance_type": i.instance_type,
+                }
+                for i in ec2s
+            ]
+
+        running = [i for i in attached_instances if i["state"] == "running"]
+        confidence = "low" if running else ("medium" if attached_instances else "high")
+
+        warnings = ["Encryption requires a snapshot, an encrypted copy, and a new volume — cannot be done in place"]
+        if running:
+            warnings.append(
+                f"{len(running)} running instance(s) attached — detaching and replacing the volume causes downtime unless the volume is non-root"
+            )
+
+        return {
+            "resource_type": "ebs_volume",
+            "confidence": confidence,
+            "volume_id": volume.volume_id,
+            "size_gib": volume.size_gib,
+            "volume_type": volume.volume_type,
+            "state": volume.state,
+            "region": volume.region,
+            "attached_instances": attached_instances,
+            "running_count": len(running),
+            "warnings": warnings,
+        }
+
+    # ── EBS Encryption Default ───────────────────────────────────────────────
+    if check_id == "ec2.ebs.encryption_not_default":
+        unencrypted = db.scalars(
+            select(EbsVolume).where(EbsVolume.account_id == acc.id, EbsVolume.encrypted == False)  # noqa: E712
+        ).all()
+        warnings = []
+        if unencrypted:
+            warnings.append(
+                f"{len(unencrypted)} existing unencrypted volume(s) — enabling default encryption does not retrofit them; each must be migrated separately"
+            )
+        return {
+            "resource_type": "ebs_encryption_default",
+            "confidence": "high",
+            "existing_unencrypted_count": len(unencrypted),
+            "warnings": warnings,
+        }
+
+    # ── RDS Instance ─────────────────────────────────────────────────────────
+    if check_id.startswith("rds.instance."):
+        rds = db.scalar(
+            select(RdsInstance).where(RdsInstance.account_id == acc.id, RdsInstance.arn == resource_arn)
+        )
+        if not rds:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "RDS instance not found — run a scan first")
+
+        warnings = []
+        confidence = "medium"
+
+        if check_id == "rds.instance.no_encryption":
+            confidence = "low"
+            warnings.append(
+                "Encryption cannot be enabled on a running instance — requires snapshot → copy with encryption → restore to new instance → update connection strings → delete old instance"
+            )
+            warnings.append("Plan a maintenance window: this typically causes 5–30 minutes of downtime depending on instance size")
+
+        elif check_id == "rds.instance.publicly_accessible":
+            confidence = "medium"
+            warnings.append("Disabling public accessibility removes the public endpoint — applications connecting from outside the VPC will lose access")
+            warnings.append("Ensure your application connects via private subnet, VPC peering, or a bastion host before applying")
+
+        elif check_id == "rds.instance.no_automated_backup":
+            confidence = "high"
+
+        return {
+            "resource_type": "rds_instance",
+            "confidence": confidence,
+            "db_instance_id": rds.db_instance_id,
+            "engine": rds.engine,
+            "region": rds.region,
+            "storage_encrypted": rds.storage_encrypted,
+            "publicly_accessible": rds.publicly_accessible,
+            "backup_retention_period": rds.backup_retention_period,
             "warnings": warnings,
         }
 
