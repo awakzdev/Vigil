@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import current_principal
+from app.data.control_narratives import NARRATIVES
 from app.models import Finding, AwsAccount, EvidenceSnapshot
 from app.models.control import Control, CheckControl
 
@@ -24,6 +25,7 @@ class ControlOut(BaseModel):
     title: str
     description: str
     guidance: str | None
+    narrative: str | None
     check_ids: list[str]
     status: str          # pass | fail | no_data
     finding_count: int
@@ -102,6 +104,7 @@ def list_controls(
                 title=ctrl.title,
                 description=ctrl.description,
                 guidance=ctrl.guidance,
+                narrative=NARRATIVES.get(ctrl.control_id),
                 check_ids=check_ids,
                 status=ctrl_status,
                 finding_count=len(hits),
