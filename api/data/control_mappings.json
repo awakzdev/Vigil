@@ -2,43 +2,49 @@
   {
     "framework": "soc2",
     "control_id": "CC6.1",
-    "title": "Logical Access — Asset Inventory",
+    "title": "Logical Access \u2014 Asset Inventory",
     "description": "The entity implements logical access security software, infrastructure, and architectures over protected information assets to protect them from security events to meet the entity's objectives.",
     "guidance": "Evidence: IAM user inventory, role inventory, access key list with last-used dates. All principals should be accounted for and actively used.",
     "checks": [
       "iam.user.inactive_90d",
       "iam.role.unassumed_90d",
-      "iam.access_key.unused_90d"
+      "iam.access_key.unused_90d",
+      "github.org.dormant_members",
+      "gitlab.org.dormant_members"
     ]
   },
   {
     "framework": "soc2",
     "control_id": "CC6.2",
-    "title": "Logical Access — Credential Registration",
+    "title": "Logical Access \u2014 Credential Registration",
     "description": "Prior to issuing system credentials and granting system access, the entity registers and authorizes new internal and external users whose access is administered by the entity.",
     "guidance": "Evidence: No root access keys present. Each user holds at most one active access key. Programmatic access is scoped to purpose.",
     "checks": [
       "iam.root.has_access_keys",
-      "iam.access_key.multiple_active"
+      "iam.access_key.multiple_active",
+      "github.org.mfa_not_enforced",
+      "gitlab.org.mfa_not_enforced"
     ]
   },
   {
     "framework": "soc2",
     "control_id": "CC6.3",
-    "title": "Logical Access — Access Removal",
+    "title": "Logical Access \u2014 Access Removal",
     "description": "The entity removes access to protected information assets when appropriate (e.g., the individual is no longer associated with the entity).",
     "guidance": "Evidence: No IAM users inactive beyond threshold. No access keys unused beyond threshold. No roles unassumed beyond threshold. Root account not used for routine operations.",
     "checks": [
       "iam.user.inactive_90d",
       "iam.access_key.unused_90d",
       "iam.role.unassumed_90d",
-      "iam.root.usage"
+      "iam.root.usage",
+      "github.org.dormant_members",
+      "gitlab.org.dormant_members"
     ]
   },
   {
     "framework": "soc2",
     "control_id": "CC6.6",
-    "title": "Logical Access — External Threat Controls",
+    "title": "Logical Access \u2014 External Threat Controls",
     "description": "The entity implements logical access security measures to protect against threats from sources outside its system boundaries, including MFA enforcement, least privilege, and network perimeter controls.",
     "guidance": "Evidence: MFA enabled for root and all IAM console users. No wildcard Action in role policies. No wildcard trust principals. S3 public access blocked. No security groups allow unrestricted SSH or RDP. RDS instances are not publicly accessible.",
     "checks": [
@@ -50,13 +56,21 @@
       "s3.bucket.public_access_not_blocked",
       "ec2.security_group.unrestricted_ssh",
       "ec2.security_group.unrestricted_rdp",
-      "rds.instance.publicly_accessible"
+      "rds.instance.publicly_accessible",
+      "github.org.mfa_not_enforced",
+      "gitlab.org.mfa_not_enforced",
+      "github.repo.no_branch_protection",
+      "gitlab.repo.no_branch_protection",
+      "github.repo.self_merge_allowed",
+      "gitlab.repo.self_merge_allowed",
+      "github.repo.insufficient_reviews",
+      "gitlab.repo.insufficient_reviews"
     ]
   },
   {
     "framework": "soc2",
     "control_id": "CC6.7",
-    "title": "Logical Access — Transmission Encryption",
+    "title": "Logical Access \u2014 Transmission Encryption",
     "description": "The entity restricts the transmission of confidential information to authorized internal and external users and protects it during transmission.",
     "guidance": "Evidence: S3 buckets enforce HTTPS-only via bucket policy (aws:SecureTransport condition).",
     "checks": [
@@ -66,7 +80,7 @@
   {
     "framework": "soc2",
     "control_id": "CC6.8",
-    "title": "Logical Access — Encryption at Rest",
+    "title": "Logical Access \u2014 Encryption at Rest",
     "description": "The entity implements controls to prevent unauthorized access to data at rest through encryption of storage resources.",
     "guidance": "Evidence: S3 buckets encrypted with KMS. KMS keys have automatic annual rotation enabled. RDS instances and EBS volumes have storage encryption enabled.",
     "checks": [
@@ -79,7 +93,7 @@
   {
     "framework": "soc2",
     "control_id": "CC7.1",
-    "title": "System Operations — Configuration Change Detection",
+    "title": "System Operations \u2014 Configuration Change Detection",
     "description": "To meet its objectives, the entity uses detection and monitoring procedures to identify changes to configurations that result in the introduction of new vulnerabilities.",
     "guidance": "Evidence: CloudTrail enabled with log file validation and KMS encryption in all regions.",
     "checks": [
@@ -91,13 +105,28 @@
   {
     "framework": "soc2",
     "control_id": "CC7.2",
-    "title": "System Operations — Anomaly Detection",
+    "title": "System Operations \u2014 Anomaly Detection",
     "description": "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts, natural disasters, and errors affecting the entity's ability to meet its objectives.",
     "guidance": "Evidence: GuardDuty and Security Hub enabled in all regions. VPC Flow Logs enabled on all VPCs.",
     "checks": [
       "guardduty.detector.not_enabled",
       "aws.securityhub.not_enabled",
       "vpc.flow_logs.not_enabled"
+    ]
+  },
+  {
+    "framework": "soc2",
+    "control_id": "CC8.1",
+    "title": "Change Management \u2014 Authorized Changes",
+    "description": "The entity authorizes, approves, and communicates changes to infrastructure, data, software, and procedures to meet its change management objectives.",
+    "guidance": "Evidence: All merged pull requests have required approvals. No self-merges by PR authors. Branch protection rules enforced on default branches.",
+    "checks": [
+      "github.repo.no_branch_protection",
+      "github.repo.self_merge_allowed",
+      "github.repo.insufficient_reviews",
+      "gitlab.repo.no_branch_protection",
+      "gitlab.repo.self_merge_allowed",
+      "gitlab.repo.insufficient_reviews"
     ]
   },
   {

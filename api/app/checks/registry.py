@@ -1,4 +1,14 @@
 from app.checks import (
+    github_org_mfa,
+    github_org_dormant,
+    github_repo_no_protection,
+    github_repo_self_merge,
+    github_repo_insufficient_reviews,
+    gitlab_org_mfa,
+    gitlab_org_dormant,
+    gitlab_repo_no_protection,
+    gitlab_repo_self_merge,
+    gitlab_repo_insufficient_reviews,
     access_analyzer_not_enabled,
     access_key_multiple_active,
     access_key_no_rotation,
@@ -89,4 +99,16 @@ ALL_CHECKS = [
     rds_publicly_accessible,
     rds_no_encryption,
     rds_no_automated_backup,
+    # GitHub identity
+    github_org_mfa,
+    github_org_dormant,
+    github_repo_no_protection,
+    github_repo_self_merge,
+    github_repo_insufficient_reviews,
+    # GitLab identity
+    gitlab_org_mfa,
+    gitlab_org_dormant,
+    gitlab_repo_no_protection,
+    gitlab_repo_self_merge,
+    gitlab_repo_insufficient_reviews,
 ]
