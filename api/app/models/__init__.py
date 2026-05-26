@@ -9,6 +9,7 @@ from app.models.resources import (
 )
 from app.models.control import Control, CheckControl
 from app.models.evidence_snapshot import EvidenceSnapshot
+from app.models.github import IdentityProvider, IdentityUser, Repo, RepoProtection, PullRequest
 
 __all__ = [
     "Org", "User",
@@ -20,4 +21,5 @@ __all__ = [
     "IamPasswordPolicy", "AccessAnalyzer", "ConfigRecorder", "SecurityHubStatus",
     "Control", "CheckControl",
     "EvidenceSnapshot",
+    "IdentityProvider", "IdentityUser", "Repo", "RepoProtection", "PullRequest",
 ]

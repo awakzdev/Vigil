@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import current_principal, issue_token
 from app.models import Org, User
+from app.routes.github_integration import handle_github_integration_callback, is_github_integration_state
 
 router = APIRouter()
 settings = get_settings()
@@ -127,6 +128,9 @@ def github_callback(
     state: str | None = None,
     db: Session = Depends(get_db),
 ):
+    if is_github_integration_state(state):
+        return handle_github_integration_callback(code=code, state=state, error=error, db=db)
+
     if error or not code:
         return RedirectResponse(f"{_frontend_url()}/login?error=oauth_denied")
 

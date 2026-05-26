@@ -74,24 +74,24 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
       {connected && provider && (
         <div className="mt-5 grid grid-cols-3 gap-4 border-t border-zinc-100 pt-4 text-sm">
           <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">Last sync</div>
+            <div className="text-xs font-medium text-zinc-400">Last sync</div>
             <div className="mt-1 font-medium text-zinc-700">{formatSync(provider.last_synced_at)}</div>
           </div>
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">Repos</div>
-            <div className="mt-1 pl-1 font-medium text-zinc-700">{provider.repos}</div>
+          <div className="text-center">
+            <div className="text-xs font-medium text-zinc-400">Repos</div>
+            <div className="mt-1 font-medium text-zinc-700">{provider.repos}</div>
           </div>
-          <div>
-            <div className="text-xs font-medium uppercase tracking-wide text-zinc-400">MRs / PRs</div>
-            <div className="mt-1 pl-1 font-medium text-zinc-700">{provider.pull_requests}</div>
+          <div className="text-center">
+            <div className="text-xs font-medium text-zinc-400">MRs / PRs</div>
+            <div className="mt-1 font-medium text-zinc-700">{provider.pull_requests}</div>
           </div>
         </div>
       )}
 
-      <div className="mt-auto pt-5">
+      <div className="mt-auto pt-3">
         <Link
           to={href}
-          className="inline-flex w-full items-center justify-center rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50"
+          className="mt-3 inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-white px-5 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 hover:text-zinc-950"
         >
           {connected ? "Manage" : "Connect"}
         </Link>
