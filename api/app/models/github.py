@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -91,7 +91,7 @@ class WorkflowRun(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), index=True)
-    run_id: Mapped[int] = mapped_column(Integer(), nullable=False)
+    run_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     workflow_path: Mapped[str | None] = mapped_column(String(255), nullable=True)
     event: Mapped[str] = mapped_column(String(60), nullable=False)
@@ -113,7 +113,7 @@ class CiPipeline(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     repo_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("repos.id", ondelete="CASCADE"), index=True)
-    pipeline_id: Mapped[int] = mapped_column(Integer(), nullable=False)
+    pipeline_id: Mapped[int] = mapped_column(BigInteger(), nullable=False)
     ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[str] = mapped_column(String(40), nullable=False)
     source: Mapped[str | None] = mapped_column(String(60), nullable=True)
