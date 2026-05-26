@@ -1522,13 +1522,6 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         {data.resource_type === "iam_user" && (
           <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
             <div className="px-3 py-2 text-xs text-zinc-600">
-              {data.days_inactive != null && data.days_inactive > 0
-                ? `Inactive for ${data.days_inactive} days`
-                : finding.check_id === "iam.user.inactive_90d"
-                  ? "Inactive for 90+ days"
-                  : "No recorded activity"}
-            </div>
-            <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-600">
               {data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}
             </div>
             {data.has_console_password && (
