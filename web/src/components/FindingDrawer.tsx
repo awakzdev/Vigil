@@ -819,11 +819,11 @@ function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
       const actions = text.split(",").map((part) => part.trim()).filter(Boolean);
       if (actions.length > 0) {
         return (
-          <div className="flex max-w-[26rem] flex-wrap gap-1">
+          <div className="max-w-[26rem] space-y-1">
             {actions.map((action) => (
-              <span key={action} className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 font-mono text-[11px] text-zinc-700 break-all">
+              <div key={action} className="font-mono text-xs leading-snug text-zinc-700 break-all">
                 {action}
-              </span>
+              </div>
             ))}
           </div>
         );
@@ -847,7 +847,7 @@ function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
           {items.map((row, i) => (
             <tr key={i} className="bg-white">
               {cols.map((c) => (
-                <td key={c} className="max-w-[300px] px-3 py-2 font-mono leading-relaxed text-zinc-800 align-top">
+                <td key={c} className="max-w-[300px] px-3 py-2 font-mono leading-relaxed text-zinc-800 align-middle">
                   {renderCell(c, row[c])}
                 </td>
               ))}
@@ -1236,9 +1236,21 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
   const verdict = buildVerdict(data);
   const vs = verdictStyle[verdict.type];
   const normalizedVerdict = verdict.text.toLowerCase().replace(/\s+/g, " ").trim();
+  function warningKey(text: string) {
+    const n = text.toLowerCase().replace(/\s+/g, " ").trim();
+    if ((n.includes("scoping down resource: *") || n.includes("scoping resource: *")) && (n.includes("specific arn") || n.includes("specific resource"))) {
+      return "scope-resource-star";
+    }
+    return n;
+  }
+  const verdictKey = warningKey(normalizedVerdict);
+  const seen = new Set<string>();
   const warningRows = data.warnings.filter((warning) => {
-    const normalizedWarning = warning.toLowerCase().replace(/\s+/g, " ").trim();
-    return !(normalizedWarning.includes("scoping down resource: *") && normalizedVerdict.includes("scoping down resource: *"));
+    const key = warningKey(warning);
+    if (key === verdictKey) return false;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
   });
 
   return (
