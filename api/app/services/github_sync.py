@@ -131,6 +131,22 @@ def _check_codeowners(client: httpx.Client, owner: str, repo_name: str) -> bool:
     return False
 
 
+def _collect_team_memberships(client: httpx.Client, owner: str) -> dict[str, list[str]]:
+    """Return {login: [team_slug, ...]} for all teams in the org."""
+    login_to_teams: dict[str, list[str]] = {}
+    teams = _paginate(client, f"/orgs/{owner}/teams")
+    for team in teams:
+        slug = team.get("slug", "")
+        if not slug:
+            continue
+        members = _paginate(client, f"/orgs/{owner}/teams/{slug}/members")
+        for m in members:
+            login = m.get("login", "")
+            if login:
+                login_to_teams.setdefault(login, []).append(slug)
+    return login_to_teams
+
+
 def _collect_environments(client: httpx.Client, owner: str, repo_name: str) -> list[dict[str, Any]]:
     """Collect deployment environments with their protection rules."""
     resp = client.get(f"{GITHUB_API}/repos/{owner}/{repo_name}/environments")
@@ -234,6 +250,20 @@ def sync_github_provider(db: Session, provider: IdentityProvider, org_login: str
             for member in members:
                 _upsert_identity_user(db, provider.id, member, now)
             stats.identity_users += len(members)
+
+            # Team memberships — update roles_json["teams"] for each member
+            team_memberships = _collect_team_memberships(client, owner)
+            for member in members:
+                login = member.get("login", "")
+                if login and login in team_memberships:
+                    row = db.scalar(
+                        select(IdentityUser).where(
+                            IdentityUser.provider_id == provider.id,
+                            IdentityUser.external_id == str(member["id"]),
+                        )
+                    )
+                    if row:
+                        row.roles_json = {**(row.roles_json or {}), "teams": team_memberships[login]}
 
             # Outside collaborators (non-org members with direct repo access)
             collabs = _paginate(client, f"/orgs/{owner}/outside_collaborators")
