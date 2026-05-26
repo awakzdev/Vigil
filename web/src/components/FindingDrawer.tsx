@@ -656,6 +656,17 @@ const identityRemediations: Record<string, Remediation> = {
     cli: "",
     risk: "Stale memberships are a common vector in insider-threat and ex-employee compromise scenarios.",
   },
+  "github.org.outside_collaborators": {
+    why: "Outside collaborators are non-organization members who have been granted direct repository access. Unlike org members, their activity is less visible to administrators — they don't appear in org-level member lists and may retain access after a project ends or after they change employers.",
+    console: [
+      "Go to your GitHub organization → People → Outside collaborators",
+      "Review each collaborator — confirm they still need access and which repos they can access",
+      "To remove a collaborator: click the three-dot menu → Remove from all repositories",
+      "If they still need access, consider inviting them as an org member for better visibility",
+    ],
+    cli: "",
+    risk: "Outside collaborators with stale access can push code, read sensitive repositories, and exfiltrate data without appearing in standard member audit reports.",
+  },
   "github.repo.no_branch_protection": {
     why: "Without branch protection, any contributor can push directly to the default branch — bypassing code review, CI checks, and deployment gates. This makes it trivial to introduce unauthorized changes or backdoors.",
     console: [

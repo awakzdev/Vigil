@@ -17,6 +17,7 @@ import GitLabIntegration from "./pages/GitLabIntegration";
 import GitLabIntegrationEdit from "./pages/GitLabIntegrationEdit";
 import Integrations from "./pages/Integrations";
 import Security from "./pages/Security";
+import Timeline from "./pages/Timeline";
 import Layout from "./Layout";
 
 const qc = new QueryClient();
@@ -44,6 +45,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="/integrations/github/edit" element={<GitHubIntegrationEdit />} />
             <Route path="/integrations/gitlab" element={<GitLabIntegration />} />
             <Route path="/integrations/gitlab/edit" element={<GitLabIntegrationEdit />} />
+            <Route path="/timeline" element={<Timeline />} />
           </Route>
         </Routes>
       </BrowserRouter>

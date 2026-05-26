@@ -71,6 +71,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // GitHub
   { id: "github.org.mfa_not_enforced", label: "GitHub MFA not enforced", severity: "high", description: "Require two-factor authentication for all organization members." },
   { id: "github.org.dormant_members", label: "GitHub dormant members", severity: "medium", description: "Remove or deactivate members with no activity in the last 90 days." },
+  { id: "github.org.outside_collaborators", label: "Outside collaborators", severity: "medium", description: "Non-organization members with direct repository access — review and remove stale access." },
   { id: "github.repo.no_branch_protection", label: "No branch protection", severity: "high", description: "Enable branch protection on the default branch to require reviews and block direct pushes." },
   { id: "github.repo.no_codeowners", label: "No CODEOWNERS file", severity: "medium", description: "Add a CODEOWNERS file to automatically assign reviewers for code changes." },
   { id: "github.repo.no_env_protection", label: "Deployment environment unprotected", severity: "high", description: "Add required reviewers to deployment environments to enforce change approval before deploying." },

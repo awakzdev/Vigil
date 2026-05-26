@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -14,6 +14,8 @@ from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
+from app.models.cloudtrail import CloudTrailEvent
+from app.models.github import IdentityProvider, PullRequest, Repo
 from app.models.iam import IamAccessKey, IamUser
 from app.models.resources import (
     AccessAnalyzer, CloudTrailTrail, ConfigRecorder, Ec2Instance,
@@ -947,3 +949,95 @@ def blast_radius(
         }
 
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"blast radius not supported for check: {check_id}")
+
+
+_TIMELINE_CORRELATION_WINDOW = 3600  # ±60 minutes
+
+
+@router.get("/{account_id}/timeline")
+def get_timeline(
+    account_id: str,
+    days: int = Query(default=30, ge=1, le=90),
+    limit: int = Query(default=100, ge=1, le=500),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """CloudTrail infrastructure events correlated with GitHub PR merges by timestamp (±60 min)."""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    ct_events = db.scalars(
+        select(CloudTrailEvent)
+        .where(CloudTrailEvent.account_id == acc.id, CloudTrailEvent.event_time >= cutoff)
+        .order_by(CloudTrailEvent.event_time.desc())
+        .limit(limit)
+    ).all()
+
+    # Load PRs from all GitHub/GitLab providers for this org
+    providers = db.scalars(
+        select(IdentityProvider).where(IdentityProvider.org_id == acc.org_id)
+    ).all()
+
+    prs: list[PullRequest] = []
+    repo_by_id: dict[uuid.UUID, Repo] = {}
+    for prov in providers:
+        repos = db.scalars(
+            select(Repo).where(Repo.provider_id == prov.id)
+        ).all()
+        for r in repos:
+            repo_by_id[r.id] = r
+        if repos:
+            repo_ids = [r.id for r in repos]
+            prs.extend(
+                db.scalars(
+                    select(PullRequest)
+                    .where(
+                        PullRequest.repo_id.in_(repo_ids),
+                        PullRequest.merged_at.isnot(None),
+                        PullRequest.merged_at >= cutoff,
+                    )
+                    .order_by(PullRequest.merged_at.desc())
+                    .limit(500)
+                ).all()
+            )
+
+    def _correlate(event_time: datetime) -> list[dict]:
+        matched = []
+        for pr in prs:
+            if pr.merged_at is None:
+                continue
+            delta = int((event_time - pr.merged_at).total_seconds())
+            if abs(delta) <= _TIMELINE_CORRELATION_WINDOW:
+                repo = repo_by_id.get(pr.repo_id)
+                matched.append({
+                    "number": pr.number,
+                    "repo": repo.name if repo else str(pr.repo_id),
+                    "merged_at": pr.merged_at.isoformat(),
+                    "merged_by": pr.merged_by,
+                    "author": pr.author,
+                    "approval_count": pr.approval_count,
+                    "required_review_count": pr.required_review_count,
+                    "self_merge": pr.self_merge,
+                    "delta_seconds": delta,
+                })
+        matched.sort(key=lambda x: abs(x["delta_seconds"]))
+        return matched
+
+    result = []
+    for evt in ct_events:
+        result.append({
+            "type": "cloudtrail",
+            "event_id": evt.event_id,
+            "event_name": evt.event_name,
+            "event_source": evt.event_source,
+            "event_time": evt.event_time.isoformat(),
+            "actor": evt.actor,
+            "source_ip": evt.source_ip,
+            "resources": evt.resources or [],
+            "correlated_prs": _correlate(evt.event_time),
+        })
+
+    return {"events": result, "total": len(result)}

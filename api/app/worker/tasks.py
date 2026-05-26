@@ -13,6 +13,7 @@ from app.collectors.iam import collect_iam
 from app.collectors.last_accessed import collect_perm_usage
 from app.collectors.account import collect_s3, collect_s3_account_public_access_block, collect_kms
 from app.collectors.cloudtrail import collect_cloudtrail
+from app.collectors.cloudtrail_events import collect_cloudtrail_events
 from app.collectors.guardduty import collect_guardduty
 from app.collectors.vpc import collect_vpc
 from app.collectors.rds import collect_rds
@@ -395,6 +396,7 @@ def run_scan(account_id: str) -> dict:
         stats["s3_buckets"] = collect_s3(db, acc)
         stats["kms_keys"] = collect_kms(db, acc)
         stats["cloudtrail_trails"] = collect_cloudtrail(db, acc)
+        stats["cloudtrail_events"] = collect_cloudtrail_events(db, acc)
         vpc_stats = collect_vpc(db, acc)
         stats["vpcs"] = vpc_stats.get("vpcs", 0)
         stats["security_groups"] = vpc_stats.get("security_groups", 0)

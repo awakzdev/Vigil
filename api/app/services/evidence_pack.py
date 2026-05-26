@@ -244,6 +244,8 @@ def _build_identity_snapshots(
                     "provider": ptype,
                     "name": repo.name,
                     "default_branch": repo.default_branch,
+                    "has_codeowners": repo.has_codeowners,
+                    "protected_envs": repo.protected_envs,
                     "branch_protection": {
                         "required_reviews": protection.required_reviews if protection else None,
                         "dismiss_stale": protection.dismiss_stale if protection else None,

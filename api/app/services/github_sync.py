@@ -223,6 +223,7 @@ def sync_github_provider(db: Session, provider: IdentityProvider, org_login: str
         viewer.raise_for_status()
         config["login"] = viewer.json().get("login")
 
+        outside_collaborators: list[dict[str, Any]] = []
         for owner in owners:
             # Org members expose 2FA state only when the OAuth token has suitable org access.
             members = _paginate(client, f"/orgs/{owner}/members")
@@ -233,6 +234,12 @@ def sync_github_provider(db: Session, provider: IdentityProvider, org_login: str
             for member in members:
                 _upsert_identity_user(db, provider.id, member, now)
             stats.identity_users += len(members)
+
+            # Outside collaborators (non-org members with direct repo access)
+            collabs = _paginate(client, f"/orgs/{owner}/outside_collaborators")
+            outside_collaborators.extend(
+                {"login": c.get("login"), "id": c.get("id")} for c in collabs
+            )
 
             org_repos = _paginate(client, f"/orgs/{owner}/repos", {"type": "all", "sort": "updated"})
             repos = org_repos or _paginate(client, "/user/repos", {"affiliation": "owner,collaborator,organization_member", "sort": "updated"})
@@ -277,6 +284,7 @@ def sync_github_provider(db: Session, provider: IdentityProvider, org_login: str
                     _upsert_pr(db, repo.id, pr, required_reviews, len(approvers), now)
                     stats.pull_requests += 1
 
+    config["outside_collaborators"] = outside_collaborators
     config["org_login"] = owners[0]
     config["org_logins"] = owners
     set_provider_config(provider, config)

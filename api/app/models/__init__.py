@@ -10,6 +10,7 @@ from app.models.resources import (
 from app.models.control import Control, CheckControl
 from app.models.evidence_snapshot import EvidenceSnapshot
 from app.models.github import IdentityProvider, IdentityUser, Repo, RepoProtection, PullRequest
+from app.models.cloudtrail import CloudTrailEvent
 
 __all__ = [
     "Org", "User",
@@ -22,4 +23,5 @@ __all__ = [
     "Control", "CheckControl",
     "EvidenceSnapshot",
     "IdentityProvider", "IdentityUser", "Repo", "RepoProtection", "PullRequest",
+    "CloudTrailEvent",
 ]

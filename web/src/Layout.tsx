@@ -67,6 +67,13 @@ export default function Layout() {
             Compliance
           </NavLink>
 
+          <NavLink to="/timeline" className={navItem}>
+            <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Timeline
+          </NavLink>
+
           <NavLink to="/integrations" className={navItem}>
             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" d="M4 7a2 2 0 012-2h2.5a2 2 0 011.6.8l.8 1.067a2 2 0 001.6.8H18a2 2 0 012 2V17a2 2 0 01-2 2H6a2 2 0 01-2-2V7z" />

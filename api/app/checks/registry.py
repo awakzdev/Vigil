@@ -1,6 +1,7 @@
 from app.checks import (
     github_org_mfa,
     github_org_dormant,
+    github_org_outside_collaborators,
     github_repo_no_protection,
     github_repo_no_codeowners,
     github_repo_no_env_protection,
@@ -110,6 +111,7 @@ ALL_CHECKS = [
     # GitHub identity
     github_org_mfa,
     github_org_dormant,
+    github_org_outside_collaborators,
     github_repo_no_protection,
     github_repo_no_codeowners,
     github_repo_no_env_protection,

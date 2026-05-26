@@ -23,6 +23,7 @@
       "iam.root.has_access_keys",
       "iam.access_key.multiple_active",
       "github.org.mfa_not_enforced",
+      "github.org.outside_collaborators",
       "gitlab.org.mfa_not_enforced"
     ]
   },

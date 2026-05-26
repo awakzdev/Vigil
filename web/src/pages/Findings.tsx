@@ -111,6 +111,7 @@ const checkLabels: Record<string, string> = {
   // GitHub
   "github.org.mfa_not_enforced": "GitHub MFA not enforced",
   "github.org.dormant_members": "GitHub dormant members",
+  "github.org.outside_collaborators": "Outside collaborators",
   "github.repo.no_branch_protection": "No branch protection",
   "github.repo.no_codeowners": "No CODEOWNERS file",
   "github.repo.no_env_protection": "Deployment environment unprotected",
@@ -167,6 +168,7 @@ const checkDescriptions: Record<string, string> = {
   // GitHub
   "github.org.mfa_not_enforced": "GitHub organization does not require MFA for all members.",
   "github.org.dormant_members": "Organization members with no activity in the last 90 days.",
+  "github.org.outside_collaborators": "Non-organization members with direct access to one or more repositories.",
   "github.repo.no_branch_protection": "Default branch has no protection rules — anyone can push directly.",
   "github.repo.no_codeowners": "No CODEOWNERS file — code review is not automatically assigned to responsible team members.",
   "github.repo.no_env_protection": "Deployment environment(s) have no required reviewers — deploys can proceed without human approval.",
