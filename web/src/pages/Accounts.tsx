@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../api";
 
 type Account = {
@@ -54,6 +54,17 @@ function AccountCard({ acc, findingsData, onRemoved }: {
   const [roleArn, setRoleArn] = useState("");
   const [scanQueued, setScanQueued] = useState(false);
   const [showUpdateArn, setShowUpdateArn] = useState(false);
+  const snapshotRef = useRef<HTMLDivElement>(null);
+  const [lockedHeight, setLockedHeight] = useState<number | null>(null);
+
+  function toggleUpdateArn() {
+    if (!showUpdateArn && snapshotRef.current) {
+      setLockedHeight(snapshotRef.current.offsetHeight);
+    } else {
+      setLockedHeight(null);
+    }
+    setShowUpdateArn((v) => !v);
+  }
 
   const verify = useMutation({
     mutationFn: () => api<Account>(`/v1/accounts/${acc.id}/verify`, { method: "POST", body: JSON.stringify({ role_arn: roleArn }) }),
@@ -238,7 +249,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
                 {scan.isPending ? "Triggering…" : "Run scan now"}
               </button>
               <button
-                onClick={() => { setShowUpdateArn((v) => !v); setRoleArn(""); verify.reset(); }}
+                onClick={() => { toggleUpdateArn(); setRoleArn(""); verify.reset(); }}
                 className="flex items-center gap-1.5 border border-zinc-200 bg-white hover:bg-zinc-50 text-zinc-700 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
               >
                 Update role ARN
@@ -259,21 +270,22 @@ function AccountCard({ acc, findingsData, onRemoved }: {
       </div>
 
       {/* Posture snapshot sidebar */}
-      <div className="bg-white rounded-xl border border-zinc-200 shadow-sm px-5 py-5 flex flex-col">
+      <div ref={snapshotRef} className="bg-white rounded-xl border border-zinc-200 shadow-sm px-5 py-5 flex flex-col" style={lockedHeight ? { height: lockedHeight } : undefined}>
         <div className="text-xs font-semibold text-zinc-400 uppercase tracking-widest mb-3">Posture Snapshot</div>
         {acc.status === "connected" ? (
           <>
-            <div className="flex-1 grid grid-cols-2 gap-2.5 mb-3">
-              <div className="rounded-lg border border-red-100 bg-red-50 px-3 flex flex-col items-center justify-center text-center">
+            <div className="grid grid-cols-2 gap-2.5 mb-3">
+              <div className="rounded-lg border border-red-100 bg-red-50 px-3 py-4 flex flex-col items-center justify-center text-center">
                 <div className="text-4xl font-bold text-red-600 tabular-nums">{findingsData ? critHigh : "…"}</div>
                 <div className="text-xs text-red-500 font-medium mt-1">critical · high</div>
               </div>
-              <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 flex flex-col items-center justify-center text-center">
+              <div className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-4 flex flex-col items-center justify-center text-center">
                 <div className="text-4xl font-bold text-amber-600 tabular-nums">{findingsData ? medium : "…"}</div>
                 <div className="text-xs text-amber-500 font-medium mt-1">medium</div>
               </div>
             </div>
-            <div className="mt-auto space-y-3 pt-2">
+            <div className="flex-1" />
+            <div className="space-y-3 pt-2">
               {[
                 { label: "SOC 2", pct: soc2.data },
                 { label: "CIS AWS L1", pct: cis.data },
