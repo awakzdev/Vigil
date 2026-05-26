@@ -28,6 +28,7 @@ const ALL_CHECKS: { id: string; label: string; severity: string; description: st
   // Roles
   { id: "iam.role.unassumed_90d", label: "Role unassumed", severity: "medium", description: "Remove or deactivate roles that have never been assumed." },
   { id: "iam.role.wildcard_action", label: "Wildcard action in inline policy", severity: "high", description: "Replace Action: '*' with explicit action lists." },
+  { id: "iam.policy.wildcard_resource", label: "Wildcard resource in policy", severity: "high", description: "Policy grants dangerous actions on Resource: '*' — scope to specific ARNs." },
   { id: "iam.role.unused_services_90d", label: "Unused granted services", severity: "medium", description: "Scope role policies down to services actually used." },
   { id: "iam.role.trust_wildcard", label: "Wildcard trust policy", severity: "critical", description: "Roles that trust '*' can be assumed by anyone." },
   // S3

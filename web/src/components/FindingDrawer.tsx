@@ -113,6 +113,26 @@ aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>
 aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json`,
     risk: "Broad wildcard permissions increase blast radius if the role is compromised or misused.",
   },
+  "iam.policy.wildcard_resource": {
+    why: "This policy grants write or sensitive actions on Resource: \"*\" — meaning they apply to every resource in the account. Even when the action list is explicit, a wildcard resource makes the permission unreasonably broad and hard to audit.",
+    console: [
+      "Open IAM → Roles → select the role → Permissions tab",
+      "Find the policy listed in the finding evidence",
+      "For each flagged statement, replace Resource: '*' with the specific ARN(s) the role actually needs",
+      "If specific ARNs are unknown, use IAM Access Analyzer to generate a least-privilege policy from CloudTrail history",
+      "Save the updated policy and verify the workload still functions",
+    ],
+    cli: `# Review the flagged policy
+aws iam get-role-policy --role-name <role-name> --policy-name <policy-name>
+
+# Replace with scoped version (Resource narrowed to specific ARNs)
+aws iam put-role-policy --role-name <role-name> --policy-name <policy-name> --policy-document file://scoped-policy.json
+
+# For customer-managed attached policies
+aws iam get-policy-version --policy-arn <policy-arn> --version-id v1
+aws iam create-policy-version --policy-arn <policy-arn> --policy-document file://scoped-policy.json --set-as-default`,
+    risk: "Wildcard resources on write actions mean the role can modify or delete any resource of that type in the account — not just the ones it should own.",
+  },
   "iam.role.unused_services_90d": {
     why: "This role has permissions to services it has not recently used according to IAM service-last-accessed data. Those permissions may be removable, but should be validated against workload behavior and data freshness.",
     console: ["Open IAM → Roles → select the role", 'Click "Permissions" tab → find inline policies under "Permissions policies"', "Review each inline policy and remove statements for the unused services listed below", "Save the updated policy (or delete it entirely if all its services are unused)"],
