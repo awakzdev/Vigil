@@ -1307,7 +1307,7 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
   }
   const verdictKey = warningKey(normalizedVerdict);
   const seen = new Set<string>();
-  const warningRows = data.warnings.filter((warning) => {
+  const warningRows = (data.resource_type === "iam_access_key" ? [] : data.warnings).filter((warning) => {
     const key = warningKey(warning);
     if (key === verdictKey) return false;
     if (seen.has(key)) return false;
