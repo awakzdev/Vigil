@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = ""
     GITHUB_CLIENT_ID: str = ""
     GITHUB_CLIENT_SECRET: str = ""
+    GITHUB_INTEGRATION_CALLBACK_PATH: str = "/v1/auth/github/callback"
+
+    GITLAB_CLIENT_ID: str = ""
+    GITLAB_CLIENT_SECRET: str = ""
+    GITLAB_INTEGRATION_CALLBACK_PATH: str = "/v1/integrations/gitlab/callback"
 
     RESEND_API_KEY: str = ""
     DIGEST_FROM: str = "hygiene@example.com"

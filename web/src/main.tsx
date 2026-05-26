@@ -11,6 +11,11 @@ import Account from "./pages/Account";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import Controls from "./pages/Controls";
+import GitHubIntegration from "./pages/GitHubIntegration";
+import GitHubIntegrationEdit from "./pages/GitHubIntegrationEdit";
+import GitLabIntegration from "./pages/GitLabIntegration";
+import GitLabIntegrationEdit from "./pages/GitLabIntegrationEdit";
+import Integrations from "./pages/Integrations";
 import Layout from "./Layout";
 
 const qc = new QueryClient();
@@ -32,6 +37,11 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="/account" element={<Account />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/controls" element={<Controls />} />
+            <Route path="/integrations" element={<Integrations />} />
+            <Route path="/integrations/github" element={<GitHubIntegration />} />
+            <Route path="/integrations/github/edit" element={<GitHubIntegrationEdit />} />
+            <Route path="/integrations/gitlab" element={<GitLabIntegration />} />
+            <Route path="/integrations/gitlab/edit" element={<GitLabIntegrationEdit />} />
           </Route>
         </Routes>
       </BrowserRouter>
