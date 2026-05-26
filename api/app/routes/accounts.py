@@ -15,7 +15,7 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.iam import IamAccessKey, IamUser
-from app.models.resources import Ec2Instance, SecurityGroup
+from app.models.resources import CloudTrailTrail, Ec2Instance, KmsKey, SecurityGroup
 from app.models.org import Org
 
 router = APIRouter()
@@ -544,6 +544,60 @@ def blast_radius(
             "affected_instances": instance_data,
             "running_count": len(running),
             "total_count": len(affected),
+            "warnings": warnings,
+        }
+
+    # ── KMS Key ──────────────────────────────────────────────────────────────
+    if check_id.startswith("kms.key."):
+        kms_key = db.scalar(
+            select(KmsKey).where(KmsKey.account_id == acc.id, KmsKey.arn == resource_arn)
+        )
+        if not kms_key:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "KMS key not found — run a scan first")
+
+        # Find CloudTrail trails that reference this key
+        all_trails = db.scalars(
+            select(CloudTrailTrail).where(
+                CloudTrailTrail.account_id == acc.id,
+                CloudTrailTrail.kms_key_id.isnot(None),
+            )
+        ).all()
+        dependent_trails = [
+            t for t in all_trails
+            if kms_key.key_id in (t.kms_key_id or "") or kms_key.arn == t.kms_key_id
+        ]
+        trail_data = [
+            {
+                "name": t.name,
+                "arn": t.arn,
+                "region": t.home_region,
+                "is_multi_region": t.is_multi_region,
+            }
+            for t in dependent_trails
+        ]
+
+        # Enabling rotation is transparent to applications — AWS retains old key material.
+        # confidence=high unless the key is in a state that prevents rotation.
+        confidence = "high"
+        warnings: list[str] = []
+
+        state_lower = (kms_key.key_state or "").lower()
+        if state_lower == "pendingdeletion":
+            confidence = "medium"
+            warnings.append("Key is pending deletion — rotation cannot be enabled until the deletion is cancelled")
+        elif state_lower == "disabled":
+            confidence = "medium"
+            warnings.append("Key is currently disabled — re-enable the key before enabling rotation")
+
+        return {
+            "resource_type": "kms_key",
+            "confidence": confidence,
+            "key_id": kms_key.key_id,
+            "alias": kms_key.alias,
+            "key_state": kms_key.key_state,
+            "rotation_enabled": kms_key.rotation_enabled,
+            "dependent_trails": trail_data,
+            "dependent_trail_count": len(dependent_trails),
             "warnings": warnings,
         }
 

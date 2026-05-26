@@ -738,7 +738,7 @@ type BlastRadiusData = {
   unused_service_count?: number;
   has_inline_policies?: boolean;
   attached_policies?: AttachedPolicyAnalysis[];
-  // key fields
+  // access key fields
   keys?: { key_id: string; last_used: string | null; days_ago: number | null; last_used_service: string | null; last_used_region: string | null; active: boolean }[];
   // user fields
   has_console_password?: boolean;
@@ -753,6 +753,13 @@ type BlastRadiusData = {
   affected_instances?: { instance_id: string; instance_type: string | null; state: string; vpc_id: string | null; name: string }[];
   running_count?: number;
   total_count?: number;
+  // kms key fields
+  key_id?: string;
+  alias?: string | null;
+  key_state?: string | null;
+  rotation_enabled?: boolean;
+  dependent_trails?: { name: string; arn: string; region: string; is_multi_region: boolean }[];
+  dependent_trail_count?: number;
   warnings: string[];
 };
 
@@ -808,6 +815,13 @@ function buildVerdict(data: BlastRadiusData): { text: string; type: "safe" | "ca
     if (running > 0) return { text: `Restrict with care — ${running} running instance${running !== 1 ? "s" : ""} will be affected (${total} total).`, type: "warning" };
     if (total > 0) return { text: `${total} instance${total !== 1 ? "s" : ""} attached, none running — safe to modify.`, type: "caution" };
     return { text: "No instances attached to this security group — safe to update.", type: "safe" };
+  }
+
+  if (resource_type === "kms_key") {
+    const state = (data.key_state ?? "").toLowerCase();
+    if (state === "pendingdeletion") return { text: "Key is pending deletion — cancel deletion before enabling rotation.", type: "caution" };
+    if (state === "disabled") return { text: "Key is disabled — re-enable the key before enabling rotation.", type: "caution" };
+    return { text: "Safe to enable — KMS key rotation is transparent to applications. AWS retains old key material; no application changes required.", type: "safe" };
   }
 
   if (confidence === "high") return { text: "No active usage detected — safe to remediate.", type: "safe" };
@@ -1044,6 +1058,45 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             <div>{data.days_inactive !== null && data.days_inactive !== undefined ? `Inactive for ${data.days_inactive} days` : "No recorded activity"}</div>
             <div>{data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}</div>
             {data.has_console_password && <div>Has console password</div>}
+          </div>
+        )}
+
+        {/* KMS key: metadata + dependent trails */}
+        {data.resource_type === "kms_key" && (
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">Alias</div>
+                <div className="font-mono text-zinc-700 truncate">{data.alias ?? "no alias"}</div>
+              </div>
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-2">
+                <div className="font-medium text-zinc-400 mb-0.5">Key state</div>
+                <div className={`font-mono font-medium ${data.key_state === "Enabled" ? "text-emerald-700" : "text-amber-700"}`}>
+                  {data.key_state ?? "unknown"}
+                </div>
+              </div>
+            </div>
+
+            {data.dependent_trails && data.dependent_trails.length > 0 ? (
+              <div>
+                <div className="text-sm font-semibold text-zinc-700 mb-2">
+                  Used by CloudTrail ({data.dependent_trail_count})
+                </div>
+                <div className="space-y-1.5">
+                  {data.dependent_trails.map((trail) => (
+                    <div key={trail.arn} className="flex items-center justify-between rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs">
+                      <span className="font-mono text-zinc-700 truncate">{trail.name}</span>
+                      <div className="flex items-center gap-2 flex-shrink-0 pl-2">
+                        <span className="text-zinc-400">{trail.region}</span>
+                        {trail.is_multi_region && <span className="rounded border border-blue-200 bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">multi-region</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-400">No CloudTrail trails reference this key. Note: S3, RDS, and EBS key associations are not yet tracked per-key in Vigil.</p>
+            )}
           </div>
         )}
 
@@ -1309,6 +1362,7 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
     "ec2.security_group.unrestricted_ssh",
     "ec2.security_group.unrestricted_rdp",
     "ec2.security_group.default_allows_traffic",
+    "kms.key.no_rotation",
   ]);
   const showBlastRadius = BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 
