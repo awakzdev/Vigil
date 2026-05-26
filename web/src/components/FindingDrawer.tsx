@@ -921,6 +921,30 @@ function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
   );
 }
 
+function KeyActivityCard({ keyData }: { keyData: { key_id: string; last_used: string | null; days_ago: number | null; last_used_service: string | null; last_used_region: string | null; active: boolean } }) {
+  const service = keyData.last_used_service ?? "unknown service";
+  const region = keyData.last_used_region ?? "unknown region";
+  const age = keyData.days_ago != null ? `${keyData.days_ago}d ago` : "recently";
+
+  return (
+    <div className={`rounded-lg border px-3 py-2.5 text-xs ${keyData.active ? "border-red-100 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
+      <div className="font-mono font-semibold text-zinc-700">{keyData.key_id}</div>
+      {keyData.last_used ? (
+        <>
+          <div className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Last API activity</div>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-600">{service}</span>
+            <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-600">{region}</span>
+            <span className="rounded-md border border-zinc-200 bg-white px-1.5 py-0.5 text-zinc-600">{age}</span>
+          </div>
+        </>
+      ) : (
+        <div className="mt-1 text-zinc-500">No recorded API activity</div>
+      )}
+    </div>
+  );
+}
+
 function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unknown>; checkId: string }) {
   const skip = new Set(["removable_statements", "unused_services", "role_arn"]);
   const entries = Object.entries(evidence).filter(([k]) => !skip.has(k));
@@ -1466,14 +1490,7 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
         {data.resource_type === "iam_access_key" && data.keys && data.keys.length > 0 && (
           <div className="space-y-2">
             {data.keys.map((k) => (
-              <div key={k.key_id} className={`rounded-lg border px-3 py-2.5 text-xs ${k.active ? "border-red-100 bg-red-50" : "border-zinc-200 bg-zinc-50"}`}>
-                <div className="font-mono font-semibold text-zinc-700">{k.key_id}</div>
-                <div className="mt-1 text-zinc-500">
-                  {k.last_used
-                    ? `Last used ${k.days_ago}d ago · ${k.last_used_service ?? "unknown service"} · ${k.last_used_region ?? ""}`
-                    : "Never used"}
-                </div>
-              </div>
+              <KeyActivityCard key={k.key_id} keyData={k} />
             ))}
           </div>
         )}
@@ -1493,14 +1510,7 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             {data.keys && data.keys.length > 0 && (
               <div className="space-y-2 pt-1">
                 {data.keys.map((k) => (
-                  <div key={k.key_id} className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5 text-xs">
-                    <div className="font-mono font-semibold text-zinc-700">{k.key_id}</div>
-                    <div className="mt-1 text-zinc-500">
-                      {k.last_used
-                        ? `Last used ${k.days_ago}d ago · ${k.last_used_service ?? "unknown service"} · ${k.last_used_region ?? ""}`
-                        : "Never used"}
-                    </div>
-                  </div>
+                  <KeyActivityCard key={k.key_id} keyData={k} />
                 ))}
               </div>
             )}
