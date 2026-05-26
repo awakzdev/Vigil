@@ -1331,7 +1331,11 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
   }
   const verdictKey = warningKey(normalizedVerdict);
   const seen = new Set<string>();
-  const baseWarnings = data.resource_type === "iam_access_key" ? [] : data.warnings;
+  const baseWarnings = (data.resource_type === "iam_access_key" ? [] : data.warnings).filter((warning) => {
+    if (data.resource_type !== "iam_user") return true;
+    const normalized = warning.toLowerCase();
+    return !(normalized.startsWith("access key ") && normalized.includes(" used ") && normalized.includes(" deactivate keys before disabling user"));
+  });
   const keyUsageWarnings = data.resource_type === "iam_user" && data.keys
     ? data.keys
         .filter((k) => k.last_used && k.days_ago != null)
