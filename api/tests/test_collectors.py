@@ -101,6 +101,12 @@ class TestCollectIam:
             "get_account_password_policy",
             service_error_code="NoSuchEntity",
         )
+        # list_policies (customer-managed, Scope=Local)
+        stub.add_response(
+            "list_policies",
+            {"Policies": [], "IsTruncated": False},
+            {"Scope": "Local"},
+        )
 
         stub.activate()
 
@@ -136,6 +142,11 @@ class TestCollectIam:
         stub.add_client_error(
             "get_account_password_policy",
             service_error_code="NoSuchEntity",
+        )
+        stub.add_response(
+            "list_policies",
+            {"Policies": [], "IsTruncated": False},
+            {"Scope": "Local"},
         )
         stub.activate()
 

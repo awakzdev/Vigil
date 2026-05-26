@@ -455,3 +455,178 @@ class TestSgDefaultAllowsTraffic:
         mock_db.scalars.return_value.all.return_value = []
         drafts = sg_default_allows_traffic.run(mock_db, acc.id)
         assert drafts == []
+
+
+# --- iam.policy.wildcard_resource ---
+
+def _role_with_inline(*, arn=None, name="TestRole", inline=None, attached=None, account_id=None):
+    r = MagicMock()
+    r.account_id = account_id or uuid.uuid4()
+    r.arn = arn or f"arn:aws:iam::123456789012:role/{name}"
+    r.name = name
+    r.inline_policies = inline or {}
+    r.attached_policies = attached or []
+    return r
+
+
+class TestWildcardResourceCheck:
+    def test_flags_role_with_dangerous_inline_policy(self, mock_db):
+        from app.checks import iam_policy_wildcard_resource
+        acc_id = uuid.uuid4()
+        role = _role_with_inline(
+            account_id=acc_id,
+            inline={"InlineAdmin": {"Statement": [
+                {"Effect": "Allow", "Action": ["iam:CreateUser", "iam:DeleteUser"], "Resource": "*"}
+            ]}}
+        )
+        mock_db.scalars.return_value.all.return_value = [role]
+        drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "iam.policy.wildcard_resource"
+        assert "InlineAdmin" in drafts[0].evidence["policy_names"]
+
+    def test_skips_read_only_actions(self, mock_db):
+        from app.checks import iam_policy_wildcard_resource
+        acc_id = uuid.uuid4()
+        role = _role_with_inline(
+            account_id=acc_id,
+            inline={"ReadOnly": {"Statement": [
+                {"Effect": "Allow", "Action": ["s3:GetObject", "s3:ListBucket"], "Resource": "*"}
+            ]}}
+        )
+        mock_db.scalars.return_value.all.return_value = [role]
+        drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
+        assert drafts == []
+
+    def test_skips_deny_statements(self, mock_db):
+        from app.checks import iam_policy_wildcard_resource
+        acc_id = uuid.uuid4()
+        role = _role_with_inline(
+            account_id=acc_id,
+            inline={"DenyAll": {"Statement": [
+                {"Effect": "Deny", "Action": "iam:*", "Resource": "*"}
+            ]}}
+        )
+        mock_db.scalars.return_value.all.return_value = [role]
+        drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
+        assert drafts == []
+
+    def test_skips_service_linked_role(self, mock_db):
+        from app.checks import iam_policy_wildcard_resource
+        acc_id = uuid.uuid4()
+        role = _role_with_inline(
+            arn="arn:aws:iam::123456789012:role/aws-service-role/ec2.amazonaws.com/AWSServiceRoleForEC2",
+            account_id=acc_id,
+            inline={"Policy": {"Statement": [
+                {"Effect": "Allow", "Action": "iam:CreateUser", "Resource": "*"}
+            ]}}
+        )
+        mock_db.scalars.return_value.all.return_value = [role]
+        drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
+        assert drafts == []
+
+
+# --- github.org.outside_collaborators ---
+
+class TestOutsideCollaborators:
+    def _provider(self, org="myorg", collaborators=None):
+        p = MagicMock()
+        import json
+        cfg: dict = {"org_login": org, "org_logins": [org]}
+        if collaborators is not None:
+            cfg["outside_collaborators"] = collaborators
+        p.config_json_encrypted = json.dumps(cfg)
+        return p
+
+    def test_flags_when_collaborators_present(self, mock_db):
+        from app.checks import github_org_outside_collaborators
+        acc_id = uuid.uuid4()
+        mock_db.scalars.return_value.all.return_value = [
+            self._provider(collaborators=[{"login": "ext-user", "id": 99}])
+        ]
+        drafts = github_org_outside_collaborators.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "github.org.outside_collaborators"
+        assert drafts[0].evidence["count"] == 1
+
+    def test_no_finding_when_empty(self, mock_db):
+        from app.checks import github_org_outside_collaborators
+        mock_db.scalars.return_value.all.return_value = [self._provider(collaborators=[])]
+        drafts = github_org_outside_collaborators.run(mock_db, uuid.uuid4())
+        assert drafts == []
+
+    def test_skips_when_not_yet_collected(self, mock_db):
+        from app.checks import github_org_outside_collaborators
+        mock_db.scalars.return_value.all.return_value = [self._provider()]
+        drafts = github_org_outside_collaborators.run(mock_db, uuid.uuid4())
+        assert drafts == []
+
+
+# --- iam.perm.granted_vs_used ---
+
+class TestPermGrantedVsUsed:
+    def _role_with_policies(self, *, arn=None, name="TestRole", inline=None, attached=None, account_id=None):
+        r = MagicMock()
+        r.account_id = account_id or uuid.uuid4()
+        r.arn = arn or f"arn:aws:iam::123456789012:role/{name}"
+        r.name = name
+        r.inline_policies = inline or {}
+        r.attached_policies = attached or []
+        return r
+
+    def _usage(self, *, service="s3", last_auth=None, actions_json=None):
+        u = MagicMock()
+        u.service = service
+        u.last_authenticated = last_auth
+        u.actions_json = actions_json or []
+        return u
+
+    def test_flags_role_with_high_unused_pct(self, mock_db):
+        from app.checks import iam_perm_granted_vs_used
+        acc_id = uuid.uuid4()
+        role = self._role_with_policies(
+            account_id=acc_id,
+            inline={"Policy": {"Statement": [
+                {"Effect": "Allow", "Action": [
+                    "s3:PutObject", "s3:DeleteObject", "ec2:TerminateInstances",
+                    "iam:CreateUser", "iam:DeleteUser",
+                ], "Resource": "*"}
+            ]}}
+        )
+        # Usage exists (with actions_json) but nothing was used recently
+        cutoff = datetime.now(timezone.utc) - timedelta(days=100)
+        usages = [self._usage(service="s3", last_auth=cutoff, actions_json=["s3:PutObject"])]
+
+        def scalars_side_effect(query):
+            result = MagicMock()
+            # First call → roles; subsequent → usages
+            result.all.return_value = [role] if not hasattr(scalars_side_effect, "called") else usages
+            scalars_side_effect.called = True
+            return result
+
+        mock_db.scalars.side_effect = scalars_side_effect
+        drafts = iam_perm_granted_vs_used.run(mock_db, acc_id)
+        # Should produce a finding since most actions unused
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "iam.perm.granted_vs_used"
+
+    def test_skips_when_no_action_data(self, mock_db):
+        from app.checks import iam_perm_granted_vs_used
+        acc_id = uuid.uuid4()
+        role = self._role_with_policies(
+            account_id=acc_id,
+            inline={"Policy": {"Statement": [
+                {"Effect": "Allow", "Action": "s3:PutObject", "Resource": "*"}
+            ]}}
+        )
+        usage_no_actions = self._usage(service="s3", actions_json=None)
+
+        def scalars_side_effect(query):
+            result = MagicMock()
+            result.all.return_value = [role] if not hasattr(scalars_side_effect, "called") else [usage_no_actions]
+            scalars_side_effect.called = True
+            return result
+
+        mock_db.scalars.side_effect = scalars_side_effect
+        drafts = iam_perm_granted_vs_used.run(mock_db, acc_id)
+        assert drafts == []
