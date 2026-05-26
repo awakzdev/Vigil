@@ -265,17 +265,9 @@ export default function GitHubIntegration() {
             <p className="text-sm font-medium text-zinc-800">Evidence health</p>
             <span className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ${syncStateClass}`}>{syncState}</span>
           </div>
-          <div className="mt-5 grid grid-cols-2 gap-5">
-            <div>
-              <div className="text-xl font-semibold text-zinc-950">{evidenceItems}</div>
-              <div className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Evidence records</div>
-            </div>
-            <div>
-              <div className={`text-xl font-semibold ${hasProtectionGap ? "text-amber-700" : "text-zinc-950"}`}>
-                {protectedCoverageLabel}
-              </div>
-              <div className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Protected during last scan</div>
-            </div>
+          <div className="mt-5">
+            <div className="text-xl font-semibold text-zinc-950">{evidenceItems}</div>
+            <div className="mt-1 text-xs font-medium uppercase tracking-wide text-zinc-500">Evidence records</div>
           </div>
           <div className="mt-5 space-y-3 border-y border-zinc-200 py-3 text-sm">
             <div className="flex items-center justify-between gap-4">
@@ -306,6 +298,12 @@ export default function GitHubIntegration() {
             <div className="flex items-center justify-between gap-3">
               <span className="text-zinc-500">Self-merge checks</span>
               <span className="font-medium text-zinc-700">Collected</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-zinc-500">Branch protections</span>
+              <span className={`font-medium ${missingProtections ? "text-amber-700" : "text-zinc-700"}`}>
+                {missingProtections ? "Needs review" : "Collected"}
+              </span>
             </div>
           </div>
           <div className="mt-auto pt-4 border-t border-zinc-200">
@@ -360,12 +358,6 @@ export default function GitHubIntegration() {
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <span className="font-semibold text-zinc-800">Last synced scope</span>
               <span className="font-semibold text-zinc-950">{scannedRepoCount || 0} repositories</span>
-            </div>
-            <div className="flex items-center justify-between gap-4 px-5 py-4">
-              <span className="font-semibold text-zinc-800">{hasScopeDrift ? "Scope drift" : "Missing branch protection"}</span>
-              <span className={`font-semibold ${hasScopeDrift || missingProtections ? "text-amber-800" : "text-zinc-950"}`}>
-                {hasScopeDrift ? scopeDriftSummary : missingProtections}
-              </span>
             </div>
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <span className="font-semibold text-zinc-800">Remediation state</span>
