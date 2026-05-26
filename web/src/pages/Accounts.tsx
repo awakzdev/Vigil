@@ -187,7 +187,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
 
         {/* Connected state */}
         {acc.status === "connected" && (
-          <div className="px-6 py-5 space-y-4">
+          <div className="relative px-6 py-5 space-y-4">
             {/* Info tiles */}
             <div className="grid grid-cols-2 gap-3">
               <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-4 py-3">
@@ -235,7 +235,11 @@ function AccountCard({ acc, findingsData, onRemoved }: {
             )}
 
             {scanQueued && (
-              <p className="text-sm text-zinc-500">Scan queued — results will appear in Findings shortly.</p>
+              <div className="pointer-events-none absolute right-6 top-5 z-10">
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 shadow-sm">
+                  Scan queued
+                </div>
+              </div>
             )}
 
             {/* Actions */}
