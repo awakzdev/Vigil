@@ -137,13 +137,20 @@ export default function GitHubIntegration() {
           Sync GitHub identity, repository controls, and pull request activity into audit-ready compliance evidence.
         </p>
         {!p && (
-          <button
-            onClick={() => connect.mutate()}
-            disabled={connect.isPending}
-            className="mt-4 rounded-lg bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
-          >
-            {connect.isPending ? "Connecting..." : "Connect GitHub"}
-          </button>
+          <>
+            <button
+              onClick={() => connect.mutate()}
+              disabled={connect.isPending}
+              className="mt-4 rounded-lg bg-zinc-950 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-800 disabled:opacity-60"
+            >
+              {connect.isPending ? "Connecting..." : "Connect GitHub"}
+            </button>
+            {connect.isError && (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {(connect.error as Error).message}
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -289,20 +296,20 @@ export default function GitHubIntegration() {
           <div className="mt-3.5 space-y-2.5 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span className="text-zinc-500">Access review</span>
-              <span className="font-medium text-zinc-700">Collected</span>
+              <span className="font-medium text-zinc-700">{p?.last_synced_at ? "Collected" : "—"}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-zinc-500">Pull request approvals</span>
-              <span className="font-medium text-zinc-700">Collected</span>
+              <span className="font-medium text-zinc-700">{p?.last_synced_at ? "Collected" : "—"}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-zinc-500">Self-merge checks</span>
-              <span className="font-medium text-zinc-700">Collected</span>
+              <span className="font-medium text-zinc-700">{p?.last_synced_at ? "Collected" : "—"}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
               <span className="text-zinc-500">Branch protections</span>
-              <span className={`font-medium ${missingProtections ? "text-amber-700" : "text-zinc-700"}`}>
-                {missingProtections ? "Needs review" : "Collected"}
+              <span className={`font-medium ${!p?.last_synced_at ? "text-zinc-400" : missingProtections ? "text-amber-700" : "text-zinc-700"}`}>
+                {!p?.last_synced_at ? "—" : missingProtections ? "Needs review" : "Collected"}
               </span>
             </div>
           </div>
@@ -343,11 +350,13 @@ export default function GitHubIntegration() {
               />
             </div>
             <div className="mt-3 text-sm leading-6 text-zinc-600">
-              {hasScopeDrift
-                ? `Latest evidence was collected from ${scannedRepoCount} repositories. The current scope contains ${currentScopeCount}.`
-                : missingProtections
-                  ? `${missingProtections} repositories are missing branch protection.`
-                : "All analyzed repositories have branch protection evidence."}
+              {!p?.repos
+                ? "No data collected yet."
+                : hasScopeDrift
+                  ? `Latest evidence was collected from ${scannedRepoCount} repositories. The current scope contains ${currentScopeCount}.`
+                  : missingProtections
+                    ? `${missingProtections} repositories are missing branch protection.`
+                    : "All analyzed repositories have branch protection evidence."}
             </div>
           </div>
           <div className="divide-y divide-zinc-200 rounded-lg border border-zinc-200 bg-zinc-50 text-sm">
@@ -361,8 +370,8 @@ export default function GitHubIntegration() {
             </div>
             <div className="flex items-center justify-between gap-4 px-5 py-4">
               <span className="font-semibold text-zinc-800">Remediation state</span>
-              <span className={`font-semibold ${hasScopeDrift || missingProtections ? "text-amber-800" : "text-emerald-700"}`}>
-                {hasScopeDrift ? "Needs refresh" : missingProtections ? "Needs review" : "Complete"}
+              <span className={`font-semibold ${!p?.repos ? "text-zinc-500" : hasScopeDrift || missingProtections ? "text-amber-800" : "text-emerald-700"}`}>
+                {!p?.repos ? "—" : hasScopeDrift ? "Needs refresh" : missingProtections ? "Needs review" : "Complete"}
               </span>
             </div>
           </div>
