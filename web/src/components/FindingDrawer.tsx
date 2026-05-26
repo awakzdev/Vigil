@@ -859,6 +859,54 @@ function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
   );
 }
 
+function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
+  return (
+    <div className="space-y-2.5">
+      {items.map((row, i) => {
+        const policyName = String(row.policy ?? row.policy_name ?? "Unnamed policy");
+        const policyType = String(row.type ?? row.policy_type ?? "policy");
+        const raw = String(row.dangerous_actions ?? row.actions ?? "");
+        const actions = raw.split(",").map((a) => a.trim()).filter(Boolean);
+        const serviceCounts = new Map<string, number>();
+        actions.forEach((action) => {
+          const service = action.split(":")[0] || "other";
+          serviceCounts.set(service, (serviceCounts.get(service) ?? 0) + 1);
+        });
+        return (
+          <details key={`${policyName}-${i}`} className="group rounded-lg border border-zinc-200 bg-white open:bg-zinc-50/40">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-zinc-900">{policyName}</div>
+                <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
+                  <span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 uppercase tracking-wide">{policyType.replace("_", " ")}</span>
+                  <span>{actions.length} dangerous action{actions.length === 1 ? "" : "s"}</span>
+                </div>
+              </div>
+              <svg className="h-4 w-4 flex-shrink-0 text-zinc-400 transition group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </summary>
+            <div className="border-t border-zinc-200 px-3 py-2.5">
+              <div className="mb-2 flex flex-wrap gap-1.5">
+                {Array.from(serviceCounts.entries()).map(([service, count]) => (
+                  <span key={service} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+                    {service}:{count}
+                  </span>
+                ))}
+              </div>
+              <div className="max-h-40 space-y-1 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                {actions.map((action) => (
+                  <div key={action} className="font-mono text-xs text-zinc-700 break-all">{action}</div>
+                ))}
+              </div>
+            </div>
+          </details>
+        );
+      })}
+    </div>
+  );
+}
+
 function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unknown>; checkId: string }) {
   const skip = new Set(["removable_statements", "unused_services", "role_arn"]);
   const entries = Object.entries(evidence).filter(([k]) => !skip.has(k));
@@ -900,7 +948,7 @@ function EvidenceSection({ evidence, checkId }: { evidence: Record<string, unkno
       {objectLists.map(([k, items]) => (
         <div key={k}>
           <div className="mb-2 text-sm font-semibold text-zinc-700">{k.replace(/_/g, " ")}</div>
-          <ObjectListTable items={items} />
+          {k === "policies" ? <PolicyEvidenceList items={items} /> : <ObjectListTable items={items} />}
         </div>
       ))}
       {removable && <RemovableStatementsBlock statements={removable} />}
