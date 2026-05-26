@@ -860,6 +860,17 @@ function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
 }
 
 function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
+  function serviceLabel(raw: string) {
+    const normalized = raw.toLowerCase();
+    if (normalized === "iam") return "IAM";
+    if (normalized === "ec2") return "EC2";
+    if (normalized === "shield") return "Shield";
+    if (normalized === "elasticloadbalancing") return "ELB";
+    if (normalized === "wafv2") return "WAFv2";
+    if (normalized === "waf-regional") return "WAF Regional";
+    return raw.length <= 3 ? raw.toUpperCase() : raw.charAt(0).toUpperCase() + raw.slice(1);
+  }
+
   return (
     <div className="space-y-2.5">
       {items.map((row, i) => {
@@ -886,17 +897,20 @@ function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
                 <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
               </svg>
             </summary>
-            <div className="border-t border-zinc-200 px-3 py-2.5">
-              <div className="mb-2 flex flex-wrap gap-1.5">
+            <div className="border-t border-zinc-200 px-3.5 py-3.5">
+              <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                Grouped dangerous actions
+              </div>
+              <div className="mb-3 flex flex-wrap gap-1.5">
                 {Array.from(serviceCounts.entries()).map(([service, count]) => (
-                  <span key={service} className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-                    {service}:{count}
+                  <span key={service} className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
+                    {serviceLabel(service)} · {count} action{count === 1 ? "" : "s"}
                   </span>
                 ))}
               </div>
-              <div className="max-h-40 space-y-1 overflow-auto rounded-md border border-zinc-200 bg-zinc-50 p-2">
+              <div className="max-h-40 space-y-1.5 overflow-auto rounded-md border border-zinc-200 bg-zinc-50/70 p-2.5">
                 {actions.map((action) => (
-                  <div key={action} className="font-mono text-xs text-zinc-700 break-all">{action}</div>
+                  <div key={action} className="font-mono text-xs leading-5 text-zinc-500 break-all">{action}</div>
                 ))}
               </div>
             </div>
