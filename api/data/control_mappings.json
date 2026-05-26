@@ -258,5 +258,129 @@
     "checks": [
       "rds.instance.no_automated_backup"
     ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.9.2.1",
+    "title": "User Registration and De-registration",
+    "description": "Implement a formal user registration and de-registration process for granting and revoking access to all systems and services.",
+    "guidance": "Evidence: IAM users are active and accounted for. Inactive users beyond 90 days are deprovisioned. Access keys are deactivated when no longer needed.",
+    "checks": [
+      "iam.user.inactive_90d",
+      "iam.access_key.unused_90d"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.9.2.4",
+    "title": "Management of Secret Authentication Information",
+    "description": "The allocation of secret authentication information shall be controlled through a formal management process.",
+    "guidance": "Evidence: Root and all console IAM users have MFA enabled. Account password policy enforces complexity and minimum length.",
+    "checks": [
+      "iam.root.no_mfa",
+      "iam.user.no_mfa",
+      "iam.account.password_policy_weak"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.9.2.5",
+    "title": "Review of User Access Rights",
+    "description": "Asset owners shall review users' access rights at regular intervals to prevent privilege accumulation.",
+    "guidance": "Evidence: No unassumed roles. Role permissions scoped to actively-used services. No wildcard actions or trust principals. Access keys used within 90 days.",
+    "checks": [
+      "iam.role.unassumed_90d",
+      "iam.role.wildcard_action",
+      "iam.role.trust_wildcard",
+      "iam.role.unused_services_90d",
+      "iam.access_key.no_rotation_90d"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.9.4.2",
+    "title": "Secure Log-on Procedures",
+    "description": "Where required by the access control policy, access to systems and applications shall be controlled by a secure log-on procedure.",
+    "guidance": "Evidence: No root access keys exist. MFA is enforced for root and all console users. Only one active access key per user.",
+    "checks": [
+      "iam.root.has_access_keys",
+      "iam.root.no_mfa",
+      "iam.user.no_mfa",
+      "iam.access_key.multiple_active"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.10.1.1",
+    "title": "Policy on the Use of Cryptographic Controls",
+    "description": "A policy on the use of cryptographic controls for protecting information shall be developed and implemented.",
+    "guidance": "Evidence: KMS customer-managed keys have automatic rotation enabled. RDS storage is encrypted. EBS volumes are encrypted. EBS encryption-by-default is enabled in all regions.",
+    "checks": [
+      "kms.key.no_rotation",
+      "rds.instance.no_encryption",
+      "ec2.ebs.volume_unencrypted",
+      "ec2.ebs.encryption_not_default"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.12.4.1",
+    "title": "Event Logging",
+    "description": "Event logs recording user activities, exceptions, faults and information security events shall be produced, kept and regularly reviewed.",
+    "guidance": "Evidence: CloudTrail is enabled with multi-region logging. VPC flow logs are enabled. GuardDuty is active and detecting threats.",
+    "checks": [
+      "cloudtrail.trail.not_enabled",
+      "cloudtrail.trail.no_log_validation",
+      "vpc.flow_logs.not_enabled",
+      "guardduty.detector.not_enabled"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.12.4.2",
+    "title": "Protection of Log Information",
+    "description": "Logging facilities and log information shall be protected against tampering and unauthorised access.",
+    "guidance": "Evidence: CloudTrail log file integrity validation is enabled. CloudTrail logs are encrypted with a customer-managed KMS key.",
+    "checks": [
+      "cloudtrail.trail.no_log_validation",
+      "cloudtrail.trail.no_kms"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.12.6.1",
+    "title": "Management of Technical Vulnerabilities",
+    "description": "Information about technical vulnerabilities of systems being used shall be obtained in a timely fashion and appropriate measures taken.",
+    "guidance": "Evidence: Security Hub is enabled for centralised security findings. AWS Config maintains a continuous configuration change history. IAM Access Analyzer surfaces over-permissive cross-account access.",
+    "checks": [
+      "aws.securityhub.not_enabled",
+      "aws.config.not_enabled",
+      "aws.access_analyzer.not_enabled"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.13.1.1",
+    "title": "Network Controls",
+    "description": "Networks shall be managed and controlled to protect information in systems and applications from threats via the network.",
+    "guidance": "Evidence: No security groups allow unrestricted SSH or RDP from 0.0.0.0/0. Default security groups have no inbound or outbound rules. VPC flow logs are enabled for network visibility.",
+    "checks": [
+      "ec2.security_group.unrestricted_ssh",
+      "ec2.security_group.unrestricted_rdp",
+      "ec2.security_group.default_allows_traffic",
+      "vpc.flow_logs.not_enabled"
+    ]
+  },
+  {
+    "framework": "iso27001",
+    "control_id": "A.13.2.3",
+    "title": "Electronic Messaging",
+    "description": "Information involved in electronic messaging shall be appropriately protected in transit.",
+    "guidance": "Evidence: S3 buckets enforce HTTPS-only via aws:SecureTransport policy condition. Account-level and bucket-level S3 Block Public Access prevents accidental data exposure.",
+    "checks": [
+      "s3.bucket.no_https_policy",
+      "s3.account.public_access_not_blocked",
+      "s3.bucket.public_access_not_blocked"
+    ]
   }
 ]

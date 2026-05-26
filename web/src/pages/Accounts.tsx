@@ -87,6 +87,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
   const totalOpen = findingsData?.items.length ?? 0;
   const soc2 = useComplianceScore("soc2", acc.status === "connected");
   const cis = useComplianceScore("cis_aws_l1", acc.status === "connected");
+  const iso = useComplianceScore("iso27001", acc.status === "connected");
 
   return (
     <div className="grid grid-cols-[1fr_280px] gap-4 items-stretch">
@@ -290,6 +291,7 @@ function AccountCard({ acc, findingsData, onRemoved }: {
               {[
                 { label: "SOC 2", pct: soc2.data },
                 { label: "CIS AWS L1", pct: cis.data },
+                { label: "ISO 27001", pct: iso.data },
               ].map(({ label, pct }) => (
                 <div key={label}>
                   <span className="text-xs font-medium text-zinc-600 block mb-1">{label}</span>

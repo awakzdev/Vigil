@@ -14,7 +14,7 @@ from app.models.control import Control, CheckControl
 
 router = APIRouter()
 
-FRAMEWORKS = {"soc2", "cis_aws_l1"}
+FRAMEWORKS = {"soc2", "cis_aws_l1", "iso27001"}
 
 
 class ControlOut(BaseModel):

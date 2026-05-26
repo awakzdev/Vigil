@@ -23,6 +23,7 @@ type ControlRow = {
 const FRAMEWORKS = [
   { id: "soc2", label: "SOC 2" },
   { id: "cis_aws_l1", label: "CIS AWS L1" },
+  { id: "iso27001", label: "ISO 27001" },
 ];
 
 const statusBadge: Record<string, string> = {
@@ -125,7 +126,7 @@ export default function Controls() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-950">Compliance</h1>
           <p className="text-sm text-zinc-500 mt-1">
-            Control status against {framework === "soc2" ? "SOC 2 Trust Services Criteria" : "CIS AWS Foundations Benchmark L1"}.
+            Control status against {framework === "soc2" ? "SOC 2 Trust Services Criteria" : framework === "cis_aws_l1" ? "CIS AWS Foundations Benchmark L1" : "ISO 27001:2013 Annex A"}.
           </p>
         </div>
 
