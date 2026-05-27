@@ -47,6 +47,130 @@ function readStoredMfaToken(): string | null {
   return sessionStorage.getItem(MFA_STORAGE_KEY);
 }
 
+const SAMPLE_PREVIEW_ROWS = [
+  {
+    title: "Control status summary",
+    detail: "Pass / needs review per SOC 2 control with evidence completeness",
+    mock: (
+      <div className="mt-2 space-y-1.5 rounded-lg border border-white/10 bg-black/20 p-2.5">
+        {[
+          { id: "CC6.1", status: "PASS", tone: "text-emerald-400 bg-emerald-500/15" },
+          { id: "CC6.3", status: "REVIEW", tone: "text-amber-400 bg-amber-500/15" },
+          { id: "CC7.2", status: "REVIEW", tone: "text-amber-400 bg-amber-500/15" },
+        ].map((row) => (
+          <div key={row.id} className="flex items-center justify-between gap-2 text-[11px]">
+            <span className="font-mono text-zinc-300">{row.id}</span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${row.tone}`}>{row.status}</span>
+          </div>
+        ))}
+      </div>
+    ),
+  },
+  {
+    title: "Timeline of evidence changes",
+    detail: "Finding opened, resolved, and scan events across the audit period",
+    mock: (
+      <div className="mt-2 space-y-2 rounded-lg border border-white/10 bg-black/20 p-2.5">
+        {[
+          { time: "Apr 12", event: "Scan completed" },
+          { time: "Apr 18", event: "Finding opened · IAM role wildcard" },
+          { time: "May 02", event: "Exception approved until Q3" },
+        ].map((row) => (
+          <div key={row.time} className="flex gap-2 text-[11px]">
+            <span className="shrink-0 font-mono text-zinc-500">{row.time}</span>
+            <span className="text-zinc-300">{row.event}</span>
+          </div>
+        ))}
+      </div>
+    ),
+  },
+  {
+    title: "Exceptions and auditor notes",
+    detail: "Approved risk acceptance with approver, expiry, and control narrative",
+    mock: (
+      <div className="mt-2 rounded-lg border border-amber-500/20 bg-amber-500/5 p-2.5 text-[11px] leading-relaxed text-amber-100/90">
+        <p className="font-medium text-amber-200/90">CC6.6 · Legacy batch role</p>
+        <p className="mt-1 text-zinc-400">
+          Exception approved by CTO until Aug 2026. Raw JSON in{" "}
+          <span className="font-mono text-zinc-300">controls/CC6.6/exceptions.json</span>
+        </p>
+      </div>
+    ),
+  },
+] as const;
+
+function LoginBrand() {
+  return (
+    <div className="flex items-center gap-3 mb-8">
+      <img src="/favicon.png" alt="Vigil" className="w-12 h-12 object-contain lg:w-14 lg:h-14" />
+      <span className="text-white text-xl font-semibold tracking-tight">Vigil</span>
+    </div>
+  );
+}
+
+function SampleEvidencePanel({
+  loading,
+  error,
+  onDownload,
+}: {
+  loading: boolean;
+  error: string | null;
+  onDownload: () => void;
+}) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-indigo-400/20 bg-white/[0.04] p-6 shadow-2xl shadow-black/40 backdrop-blur-sm lg:p-8">
+      <div className="pointer-events-none absolute -right-8 -top-8 h-32 w-32 rounded-full bg-indigo-500/10 blur-2xl" />
+      <div className="pointer-events-none absolute -bottom-10 -left-6 h-28 w-28 rounded-full bg-violet-500/10 blur-2xl" />
+
+      <div className="relative">
+        <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-indigo-400/25 bg-indigo-500/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-indigo-200">
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+          </svg>
+          Sample evidence pack
+        </div>
+
+        <h2 className="text-xl font-semibold tracking-tight text-white lg:text-2xl">
+          See what Vigil generates
+        </h2>
+        <p className="mt-2 max-w-md text-sm leading-relaxed text-zinc-400">
+          Download a sample SOC 2 evidence pack with control status, timeline, exceptions, and raw evidence references.
+        </p>
+
+        <div className="mt-6 space-y-4">
+          {SAMPLE_PREVIEW_ROWS.map((row) => (
+            <div key={row.title} className="rounded-xl border border-white/10 bg-black/20 p-3.5">
+              <p className="text-sm font-medium text-zinc-100">{row.title}</p>
+              <p className="mt-0.5 text-xs text-zinc-500">{row.detail}</p>
+              {row.mock}
+            </div>
+          ))}
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2.5 text-sm text-red-300">
+            {error}
+          </div>
+        )}
+
+        <button
+          type="button"
+          onClick={onDownload}
+          disabled={loading}
+          className="mt-6 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-indigo-900/30 transition hover:bg-indigo-500 disabled:opacity-60"
+        >
+          <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M7.5 10.5L12 15m0 0l4.5-4.5M12 15V3" />
+          </svg>
+          {loading ? "Preparing download…" : "Download sample evidence pack"}
+        </button>
+
+        <p className="mt-3 text-center text-xs text-zinc-500">No account required · ZIP + PDF · synthetic demo data</p>
+      </div>
+    </div>
+  );
+}
+
 export default function Login() {
   const nav = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -58,6 +182,7 @@ export default function Login() {
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [sampleLoading, setSampleLoading] = useState(false);
+  const [sampleError, setSampleError] = useState<string | null>(null);
 
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
@@ -179,6 +304,7 @@ export default function Login() {
 
   async function downloadSamplePack() {
     setSampleLoading(true);
+    setSampleError(null);
     try {
       const res = await fetch(`${BASE}/v1/exports/sample-evidence-pack?framework=soc2`);
       if (!res.ok) throw new Error("Download failed");
@@ -186,13 +312,13 @@ export default function Login() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `vigil-sample-soc2-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.download = `vigil-sample-soc-2-${new Date().toISOString().slice(0, 10)}.zip`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
     } catch {
-      setErr("Could not download sample pack. Try again.");
+      setSampleError("Could not download sample pack. Try again.");
     } finally {
       setSampleLoading(false);
     }
@@ -257,40 +383,22 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        <div className="flex items-center justify-center gap-3 mb-8">
-          <img src="/favicon.png" alt="Vigil" className="w-16 h-16 object-contain" />
-          <span className="text-white text-xl font-semibold tracking-tight">Vigil</span>
-        </div>
+    <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4 lg:p-10">
+      <div className="w-full max-w-5xl">
+        <div className="grid items-start gap-8 lg:grid-cols-2 lg:gap-12 lg:items-center">
+          {/* Login column */}
+          <div className="w-full max-w-sm mx-auto lg:mx-0 lg:max-w-none">
+            <LoginBrand />
 
-        <div className="bg-white rounded-2xl shadow-2xl p-8">
-          <h1 className="text-lg font-semibold text-zinc-900 mb-1">
-            {mode === "login" ? "Welcome back" : "Create your account"}
-          </h1>
-          <p className="text-sm text-zinc-500 mb-6">
-            {mode === "login" ? "Sign in to your workspace" : "Start monitoring your AWS IAM posture"}
-          </p>
+            <div className="bg-white rounded-2xl shadow-2xl p-8">
+              <h1 className="text-lg font-semibold text-zinc-900 mb-1">
+                {mode === "login" ? "Welcome back" : "Create your account"}
+              </h1>
+              <p className="text-sm text-zinc-500 mb-6">
+                {mode === "login" ? "Sign in to your workspace" : "Start monitoring your AWS IAM posture"}
+              </p>
 
-          <div className="mb-6 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">See what auditors get</p>
-            <p className="mt-1.5 text-sm leading-snug text-zinc-600">
-              Download a sample SOC 2 evidence pack — ZIP with control status, timeline, and exception examples. No account required.
-            </p>
-            <button
-              type="button"
-              onClick={downloadSamplePack}
-              disabled={sampleLoading}
-              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-800 transition hover:bg-indigo-50 disabled:opacity-60"
-            >
-              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M7.5 10.5L12 15m0 0l4.5-4.5M12 15V3" />
-              </svg>
-              {sampleLoading ? "Preparing…" : "Download sample evidence pack"}
-            </button>
-          </div>
-
-          <form noValidate onSubmit={submit} className="space-y-4">
+              <form noValidate onSubmit={submit} className="space-y-4">
             {mode === "signup" && (
               <div>
                 <label className="block text-xs font-medium text-zinc-700 mb-1.5">Organization name</label>
@@ -395,6 +503,17 @@ export default function Login() {
                 {mode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
               </button>
             </div>
+          </div>
+          </div>
+          </div>
+
+          {/* Sample preview column */}
+          <div className="w-full max-w-sm mx-auto lg:max-w-none lg:mx-0 order-last lg:order-none">
+            <SampleEvidencePanel
+              loading={sampleLoading}
+              error={sampleError}
+              onDownload={downloadSamplePack}
+            />
           </div>
         </div>
       </div>
