@@ -220,9 +220,6 @@ export default function Controls() {
   const failed = rows.filter((r) => r.status === "fail").length;
   const noData = rows.filter((r) => r.status === "no_data").length;
   const total = rows.length;
-  const passPct = total > 0 ? (passed / total) * 100 : 0;
-  const failPct = total > 0 ? (failed / total) * 100 : 0;
-  const noDataPct = total > 0 ? (noData / total) * 100 : 0;
   const groupedRows = useMemo(() => groupControls(rows, framework), [rows, framework]);
   const selectedGroup = groupedRows.find((group) => group.key === selectedFamilyKey) ?? groupedRows[0] ?? null;
   const topBlocker = useMemo(() => {
@@ -256,11 +253,11 @@ export default function Controls() {
   }
 
   return (
-    <div className="w-full px-8 py-7">
-      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+    <div className="w-full px-8 py-8">
+      <div className="mb-7 flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Compliance</h1>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1.5 text-sm text-zinc-500">
             {controls.isLoading ? (
               "Loading control status…"
             ) : total === 0 ? (
@@ -293,19 +290,6 @@ export default function Controls() {
               </>
             )}
           </p>
-          {!controls.isLoading && total > 0 && (
-            <div className="mt-2.5 flex h-1 max-w-sm overflow-hidden rounded-full bg-zinc-100">
-              {passPct > 0 && (
-                <div className="h-full bg-emerald-500 transition-all duration-500" style={{ width: `${passPct}%` }} />
-              )}
-              {failPct > 0 && (
-                <div className="h-full bg-red-400 transition-all duration-500" style={{ width: `${failPct}%` }} />
-              )}
-              {noDataPct > 0 && (
-                <div className="h-full bg-zinc-300 transition-all duration-500" style={{ width: `${noDataPct}%` }} />
-              )}
-            </div>
-          )}
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -380,7 +364,7 @@ export default function Controls() {
 
         {!controls.isLoading && groupedRows.length > 0 && selectedGroup && (
           <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]">
-            <div className="flex flex-col gap-3 border-b border-zinc-100 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-col gap-3 border-b border-zinc-100 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]" role="tablist" aria-label="Control families">
                 {groupedRows.map((group) => {
                   const isSelected = selectedGroup.key === group.key;
@@ -411,7 +395,7 @@ export default function Controls() {
               <span className="shrink-0 text-xs font-medium text-zinc-400">{selectedGroup.label}</span>
             </div>
 
-            <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-zinc-100 px-4 py-2 sm:px-5">
+            <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-zinc-100 px-5 py-2.5">
               <span className="w-3.5" />
               <span className="w-[52px]" />
               <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Control</span>
@@ -426,7 +410,7 @@ export default function Controls() {
                   <div key={ctrl.id}>
                     <button
                       onClick={() => setExpanded(isExpanded ? null : ctrl.id)}
-                      className={`grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 py-3 pl-4 pr-4 text-left transition-colors sm:pl-5 sm:pr-5 ${statusAccent[ctrl.status]} ${
+                      className={`grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 py-3.5 pl-5 pr-5 text-left transition-colors ${statusAccent[ctrl.status]} ${
                         isExpanded ? statusExpandedBg[ctrl.status] : "hover:bg-zinc-50/80"
                       }`}
                     >
@@ -465,11 +449,11 @@ export default function Controls() {
                     </button>
 
                     {isExpanded && (
-                      <div className={`border-t border-zinc-100/80 px-4 pb-4 pt-3 sm:px-5 sm:pb-5 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                          <div className="min-w-0 flex-1">
+                      <div className={`border-t border-zinc-100/80 px-5 pb-5 pt-4 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
+                        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                          <div className="min-w-0 flex-1 space-y-2">
                             <p className="text-sm font-semibold leading-snug text-zinc-900">{failureSummary(ctrl)}</p>
-                            <p className="mt-1.5 text-sm leading-relaxed text-zinc-600">{nextStep(ctrl)}</p>
+                            <p className="text-sm leading-relaxed text-zinc-600">{nextStep(ctrl)}</p>
                           </div>
                           {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
                             <button
@@ -485,33 +469,33 @@ export default function Controls() {
                         </div>
 
                         {areas.length > 0 && (
-                          <div className="mt-3 flex flex-wrap gap-1.5">
+                          <div className="mt-4 flex flex-wrap gap-2">
                             {areas.map((area) => (
-                              <span key={area} className="rounded-md bg-white/80 px-2 py-0.5 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200/80">
+                              <span key={area} className="rounded-md bg-white/80 px-2.5 py-1 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200/80">
                                 {area}
                               </span>
                             ))}
                           </div>
                         )}
 
-                        <div className="mt-4 rounded-xl border border-zinc-200/80 bg-white p-4 shadow-sm shadow-zinc-950/[0.03]">
+                        <div className="mt-5 rounded-xl border border-zinc-200/80 bg-white p-5 shadow-sm shadow-zinc-950/[0.03]">
                           <p className="text-sm leading-relaxed text-zinc-600">{ctrl.description}</p>
 
                           {(ctrl.guidance || ctrl.check_ids.length > 0) && (
-                            <div className="mt-3 border-t border-zinc-100 pt-3">
+                            <div className="mt-4 space-y-4 border-t border-zinc-100 pt-4">
                               {ctrl.guidance && (
-                                <>
-                                  <p className="vigil-kicker mb-1.5">Evidence to collect</p>
+                                <div>
+                                  <p className="vigil-kicker mb-2">Evidence to collect</p>
                                   <p className="text-sm leading-relaxed text-zinc-800">{stripEvidencePrefix(ctrl.guidance)}</p>
-                                </>
+                                </div>
                               )}
 
                               {ctrl.check_ids.length > 0 && (
-                                <div className={ctrl.guidance ? "mt-3 border-t border-zinc-100 pt-3" : ""}>
-                                  <p className="vigil-kicker mb-2">
+                                <div className={ctrl.guidance ? "border-t border-zinc-100 pt-4" : ""}>
+                                  <p className="vigil-kicker mb-2.5">
                                     {ctrl.check_ids.length} mapped check{ctrl.check_ids.length === 1 ? "" : "s"}
                                   </p>
-                                  <div className="flex flex-wrap gap-1">
+                                  <div className="flex flex-wrap gap-1.5">
                                     {ctrl.check_ids.map((cid) => (
                                       <code
                                         key={cid}

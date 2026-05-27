@@ -28,9 +28,44 @@ interface TimelineEvent {
   correlated_prs: CorrelatedPR[];
 }
 
+interface TimelineMeta {
+  cloudtrail_logging: boolean;
+  trail_count: number;
+  events_in_account: number;
+  last_scan_at: string | null;
+  scm_connected: boolean;
+}
+
 interface TimelineResponse {
   events: TimelineEvent[];
   total: number;
+  meta?: TimelineMeta;
+}
+
+function emptyTimelineCopy(meta: TimelineMeta | undefined, days: number) {
+  if (!meta?.last_scan_at) {
+    return {
+      title: "No events yet",
+      body: "Run an AWS scan on your connected account. Each scan pulls up to 90 days of infrastructure change events from CloudTrail.",
+    };
+  }
+  if (meta.events_in_account === 0 && !meta.cloudtrail_logging) {
+    return {
+      title: "CloudTrail is not logging",
+      body: "Enable a multi-region CloudTrail trail so AWS API changes are recorded. Without logging, this timeline stays empty after scans.",
+      hint: "Fix the CloudTrail finding under Findings, then run another scan.",
+    };
+  }
+  if (meta.events_in_account === 0) {
+    return {
+      title: "No infrastructure changes found",
+      body: "The last scan did not find tracked write events (IAM, security groups, S3 policies, etc.) in the past 90 days.",
+    };
+  }
+  return {
+    title: "Nothing in this window",
+    body: `No tracked events in the last ${days} days. Try Last 90 days, or wait for new changes and re-scan.`,
+  };
 }
 
 function fmtDelta(seconds: number): string {
@@ -225,12 +260,12 @@ export default function Timeline() {
   const total = data?.total || 0;
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="mx-auto max-w-4xl space-y-5">
       {/* Header */}
-      <div>
+      <div className="space-y-2">
         <h1 className="text-2xl font-semibold text-zinc-900">Change Timeline</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          CloudTrail infrastructure events correlated with GitHub PR merges within ±60 minutes.
+        <p className="max-w-2xl text-sm leading-relaxed text-zinc-500">
+          AWS infrastructure changes from CloudTrail, with GitHub or GitLab pull requests highlighted when they merged within an hour of the same change.
         </p>
       </div>
 
@@ -300,15 +335,32 @@ export default function Timeline() {
       )}
 
       {/* Empty */}
-      {data && total === 0 && (
-        <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center">
-          <svg className="mx-auto mb-3 h-10 w-10 text-zinc-300" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-          <p className="text-zinc-500">No CloudTrail events collected yet.</p>
-          <p className="mt-1 text-sm text-zinc-400">Run a scan to collect the last 90 days of infrastructure events.</p>
-        </div>
-      )}
+      {data && total === 0 && (() => {
+        const copy = emptyTimelineCopy(data.meta, days);
+        return (
+          <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-12 sm:px-10">
+            <div className="mx-auto flex max-w-md flex-col items-center gap-4 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-zinc-100">
+                <svg className="h-6 w-6 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24" aria-hidden="true">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="space-y-2">
+                <p className="text-base font-medium text-zinc-800">{copy.title}</p>
+                <p className="text-sm leading-relaxed text-zinc-500">{copy.body}</p>
+              </div>
+              {copy.hint && (
+                <p className="text-xs leading-relaxed text-zinc-400">{copy.hint}</p>
+              )}
+              {data.meta && !data.meta.scm_connected && data.meta.last_scan_at && (
+                <p className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs leading-relaxed text-zinc-500">
+                  Connect GitHub or GitLab under Integrations to match infrastructure changes to merged pull requests.
+                </p>
+              )}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Correlation banner */}
       {data && correlated.length > 0 && (

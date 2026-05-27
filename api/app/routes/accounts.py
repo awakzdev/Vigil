@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.aws import verify_account
@@ -1185,4 +1185,26 @@ def get_timeline(
             "correlated_prs": _correlate(evt.event_time),
         })
 
-    return {"events": result, "total": len(result)}
+    trails = db.scalars(
+        select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id)
+    ).all()
+    events_in_account = db.scalar(
+        select(func.count())
+        .select_from(CloudTrailEvent)
+        .where(CloudTrailEvent.account_id == acc.id)
+    ) or 0
+
+    return {
+        "events": result,
+        "total": len(result),
+        "meta": {
+            "cloudtrail_logging": any(t.is_logging for t in trails),
+            "trail_count": len(trails),
+            "events_in_account": events_in_account,
+            "last_scan_at": acc.last_scan_at.isoformat() if acc.last_scan_at else None,
+            "scm_connected": any(
+                p.status == "connected" and p.type in ("github", "gitlab")
+                for p in providers
+            ),
+        },
+    }

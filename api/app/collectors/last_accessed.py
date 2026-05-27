@@ -67,11 +67,7 @@ def _collect_job(db: Session, iam, account_id, role_arn: str, job_id: str) -> in
         resp = iam.get_service_last_accessed_details(JobId=job_id)
         status = resp["JobStatus"]
         if status == "COMPLETED":
-            count = 0
-            for svc in resp.get("ServicesLastAccessed", []):
-                _upsert(db, account_id, role_arn, svc)
-                count += 1
-            return count
+            return _persist_completed_job(db, iam, account_id, role_arn, job_id, resp)
         if status == "FAILED":
             return 0
         # still IN_PROGRESS — wait 1s and retry
@@ -79,23 +75,49 @@ def _collect_job(db: Session, iam, account_id, role_arn: str, job_id: str) -> in
     return 0
 
 
-def _upsert(db: Session, account_id, principal_arn: str, svc: dict) -> None:
+def _persist_completed_job(
+    db: Session,
+    iam,
+    account_id,
+    role_arn: str,
+    job_id: str,
+    first_page: dict,
+) -> int:
+    """Persist all service/action rows, following IsTruncated pagination."""
+    count = 0
+    page = first_page
+    while True:
+        for svc in page.get("ServicesLastAccessed", []):
+            _upsert(db, account_id, role_arn, svc)
+            count += 1
+        if not page.get("IsTruncated"):
+            break
+        page = iam.get_service_last_accessed_details(JobId=job_id, Marker=page["Marker"])
+    return count
+
+
+def _tracked_actions_from_svc(svc: dict) -> list | None:
+    """Extract used actions from AWS TrackedActionsLastAccessed payload."""
     service_ns = (svc.get("ServiceNamespace") or "").lower()
-    action_entries = svc.get("ActionLastAccessed", [])
-    actions = None
-    if action_entries:
-        actions = []
-        for a in action_entries:
-            name = a.get("ActionName")
-            la = a.get("LastAuthenticated")
-            if not name or la is None:
-                continue
-            if ":" not in name and service_ns:
-                name = f"{service_ns}:{name}"
-            if hasattr(la, "isoformat"):
-                la = la.isoformat()
-            actions.append({"action": name, "last_authenticated": la})
-        actions = actions or None
+    action_entries = svc.get("TrackedActionsLastAccessed") or []
+    if not action_entries:
+        return None
+    actions: list[dict] = []
+    for entry in action_entries:
+        name = entry.get("ActionName")
+        la = entry.get("LastAccessedTime")
+        if not name or la is None:
+            continue
+        if ":" not in name and service_ns:
+            name = f"{service_ns}:{name}"
+        if hasattr(la, "isoformat"):
+            la = la.isoformat()
+        actions.append({"action": name, "last_authenticated": la})
+    return actions or None
+
+
+def _upsert(db: Session, account_id, principal_arn: str, svc: dict) -> None:
+    actions = _tracked_actions_from_svc(svc)
 
     stmt = pg_insert(IamPermUsage).values(
         id=uuid.uuid4(),
