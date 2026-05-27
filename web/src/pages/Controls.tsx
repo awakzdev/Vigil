@@ -1,7 +1,10 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, token } from "../api";
+import ScanProgressBar from "../components/ScanProgressBar";
+import { labelForCheck } from "../data/checkLabels";
+import { saveScanDurationMs, useScanProgress } from "../hooks/useScanProgress";
 
 const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
@@ -233,6 +236,66 @@ function formatEvidenceDate(iso: string) {
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
+function lastScanLabel(iso: string) {
+  const d = new Date(iso);
+  const diff = Date.now() - d.getTime();
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function familyPassLabel(group: ControlGroup) {
+  const total = group.rows.length;
+  const passed = group.passed;
+  return `${passed}/${total}`;
+}
+
+function LoadingSkeleton() {
+  return (
+    <div className="animate-pulse space-y-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-24 rounded-2xl border border-zinc-200 bg-zinc-50" />
+        ))}
+      </div>
+      <div className="h-12 rounded-xl border border-zinc-200 bg-zinc-50" />
+      <div className="h-96 rounded-2xl border border-zinc-200 bg-zinc-50" />
+    </div>
+  );
+}
+
+function MappedChecksList({ checkIds }: { checkIds: string[] }) {
+  const [showIds, setShowIds] = useState(false);
+
+  return (
+    <div>
+      <div className="mb-2.5 flex items-center justify-between gap-3">
+        <p className="vigil-kicker">
+          {checkIds.length} mapped check{checkIds.length === 1 ? "" : "s"}
+        </p>
+        <button
+          type="button"
+          onClick={() => setShowIds((v) => !v)}
+          className="text-[11px] font-semibold text-zinc-500 transition hover:text-zinc-800"
+        >
+          {showIds ? "Hide IDs" : "Show IDs"}
+        </button>
+      </div>
+      <ul className="space-y-2">
+        {checkIds.map((cid) => (
+          <li key={cid} className="rounded-lg border border-zinc-100 bg-zinc-50/80 px-3 py-2">
+            <p className="text-sm font-medium text-zinc-800">{labelForCheck(cid)}</p>
+            {showIds && <code className="mt-1 block font-mono text-[10px] text-zinc-400">{cid}</code>}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function NarrativeBlock({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -334,12 +397,17 @@ function useFrameworkPassRate(framework: string, accountId: string | undefined, 
 
 export default function Controls() {
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const [framework, setFramework] = useState("soc2");
   const [selectedFamilyKey, setSelectedFamilyKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [period, setPeriod] = useState(90);
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [search, setSearch] = useState("");
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [scanTriggered, setScanTriggered] = useState(false);
+  const prevScanStatus = useRef<string | null>(null);
 
   const accounts = useQuery({
     queryKey: ["accounts"],
@@ -350,6 +418,44 @@ export default function Controls() {
   const hasScanned = !!connectedAccount?.last_scan_at;
   const activeFramework = FRAMEWORKS.find((fw) => fw.id === framework)!;
 
+  const scanRun = useQuery({
+    queryKey: ["scan-run-latest", connectedAccount?.id],
+    queryFn: () =>
+      connectedAccount
+        ? api<{
+            id: string;
+            status: string;
+            started_at: string;
+            finished_at: string | null;
+          } | null>(`/v1/accounts/${connectedAccount.id}/scan-runs/latest`)
+        : null,
+    enabled: !!connectedAccount,
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 5000 : false),
+  });
+
+  const scan = useMutation({
+    mutationFn: (accountId: string) => api(`/v1/accounts/${accountId}/scan`, { method: "POST", body: "{}" }),
+  });
+
+  const scanStatus = scanRun.data?.status ?? null;
+  const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
+  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
+  const isRunning = scanStatus === "running" && !scanStuck;
+  const isScanActive = scanTriggered || isRunning;
+  const scanProgress = useScanProgress(isScanActive, isRunning ? scanStartedAt : null);
+
+  useEffect(() => {
+    if (prevScanStatus.current === "running" && scanStatus === "ok") {
+      qc.invalidateQueries({ queryKey: ["controls"] });
+      qc.invalidateQueries({ queryKey: ["control-evidence"] });
+      if (scanRun.data?.started_at && scanRun.data?.finished_at) {
+        saveScanDurationMs(scanRun.data.started_at, scanRun.data.finished_at);
+      }
+    }
+    if (scanStatus === "running") setScanTriggered(false);
+    prevScanStatus.current = scanStatus;
+  }, [scanStatus, qc, scanRun.data?.started_at, scanRun.data?.finished_at]);
+
   const controls = useQuery({
     queryKey: ["controls", framework, connectedAccount?.id],
     queryFn: () =>
@@ -358,6 +464,13 @@ export default function Controls() {
       ),
     enabled: !accounts.isLoading,
   });
+
+  useEffect(() => {
+    if (isRefreshing && !controls.isFetching) {
+      const t = setTimeout(() => setIsRefreshing(false), 600);
+      return () => clearTimeout(t);
+    }
+  }, [isRefreshing, controls.isFetching]);
 
   const soc2Rate = useFrameworkPassRate("soc2", connectedAccount?.id, hasScanned);
   const cisRate = useFrameworkPassRate("cis_aws_l1", connectedAccount?.id, hasScanned);
@@ -375,8 +488,25 @@ export default function Controls() {
     [rows, statusFilter]
   );
 
-  const groupedRows = useMemo(() => groupControls(filteredRows, framework), [filteredRows, framework]);
+  const searchedRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return filteredRows;
+    return filteredRows.filter(
+      (r) =>
+        r.control_id.toLowerCase().includes(q) ||
+        r.title.toLowerCase().includes(q) ||
+        r.description.toLowerCase().includes(q) ||
+        (r.narrative?.toLowerCase().includes(q) ?? false)
+    );
+  }, [filteredRows, search]);
+
+  const groupedRows = useMemo(() => groupControls(searchedRows, framework), [searchedRows, framework]);
   const selectedGroup = groupedRows.find((group) => group.key === selectedFamilyKey) ?? groupedRows[0] ?? null;
+
+  function openControl(ctrl: ControlRow) {
+    setSelectedFamilyKey(controlFamily(framework, ctrl.control_id).key);
+    setExpanded(ctrl.id);
+  }
 
   const topBlocker = useMemo(() => {
     const failing = rows.filter((row) => row.status === "fail");
@@ -415,24 +545,118 @@ export default function Controls() {
     { id: "no_data", label: "No data", count: noData },
   ];
 
+  if (!accounts.isLoading && !connectedAccount) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-8 py-20 text-center">
+        <div className="mb-5 flex h-14 w-14 items-center justify-center rounded-2xl border border-zinc-200 bg-white shadow-sm">
+          <svg className="h-7 w-7 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+          </svg>
+        </div>
+        <h2 className="mb-2 text-lg font-semibold text-zinc-900">Connect AWS to view compliance</h2>
+        <p className="mb-6 max-w-sm text-sm leading-relaxed text-zinc-500">
+          Map SOC 2, CIS, and ISO 27001 controls to your AWS posture and export auditor-ready evidence packs.
+        </p>
+        <a href="/accounts" className="rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700">
+          Connect AWS account
+        </a>
+      </div>
+    );
+  }
+
   return (
     <div className="w-full px-8 py-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Compliance</h1>
-        <p className="mt-1.5 text-sm text-zinc-500">
-          {activeFramework.fullLabel}
-          {connectedAccount?.account_id && (
-            <span className="text-zinc-400"> · account {connectedAccount.account_id}</span>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Compliance</h1>
+          <p className="mt-1.5 text-sm text-zinc-500">
+            {activeFramework.fullLabel}
+            {connectedAccount?.account_id && (
+              <span className="text-zinc-400"> · account {connectedAccount.account_id}</span>
+            )}
+            {(scanRun.data?.finished_at || connectedAccount?.last_scan_at) && (
+              <span className="text-zinc-400">
+                {" "}
+                · Last scan {lastScanLabel(scanRun.data?.finished_at ?? connectedAccount!.last_scan_at!)}
+              </span>
+            )}
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (isRefreshing) return;
+              qc.invalidateQueries({ queryKey: ["controls"] });
+              qc.invalidateQueries({ queryKey: ["control-evidence"] });
+              setIsRefreshing(true);
+            }}
+            disabled={isRefreshing}
+            className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {isRefreshing && (
+              <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+            )}
+            Refresh
+          </button>
+          {connectedAccount && (
+            <button
+              type="button"
+              onClick={() => {
+                setScanTriggered(true);
+                scan.mutate(connectedAccount.id);
+              }}
+              disabled={scanTriggered || isRunning}
+              className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {(scanTriggered || isRunning) && (
+                <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+              )}
+              {isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}
+            </button>
           )}
-        </p>
+        </div>
       </div>
 
+      {isScanActive && (
+        <div className="mb-6">
+          <ScanProgressBar
+            phase={isRunning ? "running" : "starting"}
+            progress={scanProgress.progress}
+            elapsedMs={scanProgress.elapsedMs}
+            remainingMs={scanProgress.remainingMs}
+            indeterminate={scanProgress.indeterminate}
+            finishing={scanProgress.finishing}
+          />
+        </div>
+      )}
+
+      {!hasScanned && connectedAccount && !controls.isLoading && (
+        <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50/60 px-5 py-4 text-sm text-amber-900">
+          <span className="font-semibold">Awaiting first scan.</span> Control pass/fail status appears after your account finishes scanning.
+        </div>
+      )}
+
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_288px]">
-        <div className="min-w-0 space-y-5">
+        <div className="min-w-0 order-2 space-y-5 xl:order-1">
           {/* Summary stats */}
+          {controls.isLoading && <LoadingSkeleton />}
+
           {!controls.isLoading && total > 0 && (
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-4 shadow-sm shadow-zinc-950/[0.03]">
+              <button
+                type="button"
+                onClick={() => setStatusFilter("all")}
+                className={`rounded-2xl border px-5 py-4 text-left shadow-sm transition hover:ring-2 hover:ring-zinc-200 ${
+                  statusFilter === "all" ? "border-zinc-300 bg-white ring-2 ring-zinc-200" : "border-zinc-200 bg-white shadow-zinc-950/[0.03]"
+                }`}
+              >
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Pass rate</p>
                 <p className={`mt-1 text-3xl font-bold tabular-nums ${passRate == null ? "text-zinc-300" : passRateColor(passRate)}`}>
                   {passRate == null ? "—" : `${passRate}%`}
@@ -443,97 +667,135 @@ export default function Controls() {
                     style={{ width: `${passRate ?? 0}%` }}
                   />
                 </div>
-              </div>
-              <div className="rounded-2xl border border-emerald-100 bg-emerald-50/40 px-5 py-4">
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("pass")}
+                className={`rounded-2xl border px-5 py-4 text-left transition hover:ring-2 hover:ring-emerald-200 ${
+                  statusFilter === "pass" ? "border-emerald-300 bg-emerald-50/60 ring-2 ring-emerald-200" : "border-emerald-100 bg-emerald-50/40"
+                }`}
+              >
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-600/80">Passing</p>
                 <p className="mt-1 text-3xl font-bold tabular-nums text-emerald-700">{passed}</p>
-              </div>
-              <div className="rounded-2xl border border-red-100 bg-red-50/40 px-5 py-4">
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("fail")}
+                className={`rounded-2xl border px-5 py-4 text-left transition hover:ring-2 hover:ring-red-200 ${
+                  statusFilter === "fail" ? "border-red-300 bg-red-50/60 ring-2 ring-red-200" : "border-red-100 bg-red-50/40"
+                }`}
+              >
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600/80">Failing</p>
                 <p className="mt-1 text-3xl font-bold tabular-nums text-red-600">{failed}</p>
-              </div>
-              <div className="rounded-2xl border border-zinc-200 bg-zinc-50/60 px-5 py-4">
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("no_data")}
+                className={`rounded-2xl border px-5 py-4 text-left transition hover:ring-2 hover:ring-zinc-200 ${
+                  statusFilter === "no_data" ? "border-zinc-300 bg-zinc-100 ring-2 ring-zinc-200" : "border-zinc-200 bg-zinc-50/60"
+                }`}
+              >
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">No data</p>
                 <p className="mt-1 text-3xl font-bold tabular-nums text-zinc-500">{noData}</p>
-              </div>
+              </button>
             </div>
           )}
 
-          {/* Toolbar */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <div className="inline-flex flex-wrap items-center gap-2">
-              <div className="inline-flex items-center rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]" aria-label="Framework">
-                {FRAMEWORKS.map((fw) => (
-                  <button
-                    key={fw.id}
-                    onClick={() => {
-                      setFramework(fw.id);
-                      setSelectedFamilyKey(null);
+          {!controls.isLoading && total > 0 && (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+                <div className="inline-flex flex-wrap items-center gap-2">
+                  <div className="inline-flex items-center rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]" aria-label="Framework">
+                    {FRAMEWORKS.map((fw) => (
+                      <button
+                        key={fw.id}
+                        onClick={() => {
+                          setFramework(fw.id);
+                          setSelectedFamilyKey(null);
+                          setExpanded(null);
+                        }}
+                        className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                          framework === fw.id
+                            ? "bg-zinc-950 text-white shadow-sm"
+                            : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+                        }`}
+                      >
+                        {fw.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
+                    {statusFilters.map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => {
+                          setStatusFilter(f.id);
+                          setExpanded(null);
+                        }}
+                        className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                          statusFilter === f.id
+                            ? "bg-zinc-900 text-white"
+                            : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
+                        }`}
+                      >
+                        {f.label}
+                        <span className={statusFilter === f.id ? "text-white/70" : "text-zinc-400"}> · {f.count}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="relative min-w-[200px] lg:max-w-xs lg:flex-1">
+                  <svg className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-4.35-4.35M11 18a7 7 0 100-14 7 7 0 000 14z" />
+                  </svg>
+                  <input
+                    type="search"
+                    value={search}
+                    onChange={(e) => {
+                      setSearch(e.target.value);
                       setExpanded(null);
                     }}
-                    className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
-                      framework === fw.id
-                        ? "bg-zinc-950 text-white shadow-sm"
-                        : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
-                    }`}
-                  >
-                    {fw.label}
-                  </button>
-                ))}
+                    placeholder="Search controls…"
+                    className="w-full rounded-xl border border-zinc-200 bg-white py-2.5 pl-9 pr-3 text-sm text-zinc-800 shadow-sm outline-none transition placeholder:text-zinc-400 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
+                  />
+                </div>
               </div>
 
-              <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
-                {statusFilters.map((f) => (
+              {topBlocker && statusFilter !== "pass" && (
+                <p className="text-xs text-zinc-500">
+                  Top blocker:{" "}
                   <button
-                    key={f.id}
+                    type="button"
                     onClick={() => {
-                      setStatusFilter(f.id);
-                      setExpanded(null);
+                      setStatusFilter("fail");
+                      openControl(topBlocker);
                     }}
-                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                      statusFilter === f.id
-                        ? "bg-zinc-900 text-white"
-                        : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-800"
-                    }`}
+                    className="font-semibold text-red-600 hover:text-red-700"
                   >
-                    {f.label}
-                    <span className={statusFilter === f.id ? "text-white/70" : "text-zinc-400"}> · {f.count}</span>
+                    {topBlocker.control_id}
                   </button>
-                ))}
-              </div>
+                  {" "}({findingLabel(topBlocker.finding_count)})
+                </p>
+              )}
             </div>
-
-            {topBlocker && statusFilter !== "pass" && (
-              <p className="text-xs text-zinc-500">
-                Top blocker:{" "}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStatusFilter("fail");
-                    setExpanded(topBlocker.id);
-                  }}
-                  className="font-semibold text-red-600 hover:text-red-700"
-                >
-                  {topBlocker.control_id}
-                </button>
-                {" "}({findingLabel(topBlocker.finding_count)})
-              </p>
-            )}
-          </div>
+          )}
 
           {/* Control list */}
           <section>
-            {controls.isLoading && (
-              <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">
-                Loading controls…
+            {!controls.isLoading && rows.length > 0 && searchedRows.length === 0 && (
+              <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-12 text-center text-sm text-zinc-400 shadow-sm">
+                No controls match your search.
               </div>
             )}
+
             {!controls.isLoading && rows.length === 0 && (
               <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-16 text-center text-sm text-zinc-400 shadow-sm">
-                No controls found.{!connectedAccount && " Connect an AWS account to see compliance status."}
+                No controls found for this framework.
               </div>
             )}
-            {!controls.isLoading && rows.length > 0 && filteredRows.length === 0 && (
+            {!controls.isLoading && rows.length > 0 && filteredRows.length === 0 && statusFilter !== "all" && (
               <div className="rounded-2xl border border-zinc-200 bg-white px-6 py-12 text-center text-sm text-zinc-400 shadow-sm">
                 No controls match this filter.
               </div>
@@ -566,8 +828,9 @@ export default function Controls() {
                           }`}
                         >
                           {shortFamilyLabel(group.label)}
+                          <span className={isSelected ? "text-white/60" : "text-zinc-400"}> · {familyPassLabel(group)}</span>
                           {group.failed > 0 && (
-                            <span className={isSelected ? "text-white/70" : "text-red-500"}> · {group.failed}</span>
+                            <span className={isSelected ? "text-red-200" : "text-red-500"}> · {group.failed} fail</span>
                           )}
                         </button>
                       );
@@ -689,19 +952,7 @@ export default function Controls() {
 
                                   {ctrl.check_ids.length > 0 && (
                                     <div className={ctrl.guidance ? "border-t border-zinc-100 pt-4" : ""}>
-                                      <p className="vigil-kicker mb-2.5">
-                                        {ctrl.check_ids.length} mapped check{ctrl.check_ids.length === 1 ? "" : "s"}
-                                      </p>
-                                      <div className="flex flex-wrap gap-1.5">
-                                        {ctrl.check_ids.map((cid) => (
-                                          <code
-                                            key={cid}
-                                            className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-[11px] leading-5 text-zinc-600"
-                                          >
-                                            {cid}
-                                          </code>
-                                        ))}
-                                      </div>
+                                      <MappedChecksList checkIds={ctrl.check_ids} />
                                     </div>
                                   )}
                                 </div>
@@ -716,16 +967,10 @@ export default function Controls() {
               </div>
             )}
           </section>
-
-          {!connectedAccount && !accounts.isLoading && (
-            <p className="text-center text-sm text-zinc-400">
-              Connect an AWS account and run a scan to see live compliance status.
-            </p>
-          )}
         </div>
 
-        {/* Sidebar */}
-        <aside className="space-y-4 xl:sticky xl:top-8 xl:self-start">
+        {/* Sidebar — evidence pack first on mobile */}
+        <aside className="order-1 space-y-4 xl:order-2 xl:sticky xl:top-8 xl:self-start">
           <div className="rounded-2xl border border-zinc-200 bg-white p-5 shadow-sm shadow-zinc-950/[0.04]">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Framework scores</p>
             <div className="mt-4 space-y-3">

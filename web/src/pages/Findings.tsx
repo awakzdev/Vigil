@@ -5,6 +5,7 @@ import { api, token } from "../api";
 import { FindingDrawer } from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
 import ScanProgressBar from "../components/ScanProgressBar";
+import { checkLabels } from "../data/checkLabels";
 import { saveScanDurationMs, useScanProgress } from "../hooks/useScanProgress";
 
 type Finding = {
@@ -55,80 +56,6 @@ const sevExpandedBg: Record<string, string> = {
 };
 
 const sevWeight: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-
-
-const checkLabels: Record<string, string> = {
-  // IAM root
-  "iam.root.has_access_keys": "Root has access keys",
-  "iam.root.no_mfa": "Root MFA not enabled",
-  "iam.root.usage": "Root account used recently",
-  // IAM account
-  "iam.account.password_policy_weak": "Weak password policy",
-  // IAM users
-  "iam.user.no_mfa": "MFA not enabled",
-  "iam.user.inactive_90d": "Inactive user",
-  // Access keys
-  "iam.access_key.unused_90d": "Unused access key",
-  "iam.access_key.no_rotation_90d": "Long-lived access key",
-  "iam.access_key.multiple_active": "Multiple active access keys",
-  // Roles
-  "iam.role.unassumed_90d": "Role unassumed",
-  "iam.role.wildcard_action": "Wildcard action",
-  "iam.perm.granted_vs_used": "Write actions granted but never used",
-  "iam.policy.wildcard_resource": "Wildcard resource in policy",
-  "iam.policy.unattached": "Unattached managed policy",
-  "iam.role.unused_services_90d": "Unused granted services",
-  "iam.role.trust_wildcard": "Wildcard trust policy",
-  // S3
-  "s3.account.public_access_not_blocked": "Account public access not blocked",
-  "s3.bucket.public_access_not_blocked": "Public access not blocked",
-  "s3.bucket.no_https_policy": "No HTTPS-only policy",
-  "s3.bucket.no_kms": "Not encrypted with KMS",
-  "s3.bucket.no_logging": "Access logging disabled",
-  // KMS
-  "kms.key.no_rotation": "Key rotation disabled",
-  // CloudTrail
-  "cloudtrail.trail.not_enabled": "CloudTrail not enabled",
-  "cloudtrail.trail.no_log_validation": "Log file validation disabled",
-  "cloudtrail.trail.no_kms": "CloudTrail not encrypted with KMS",
-  // GuardDuty
-  "guardduty.detector.not_enabled": "GuardDuty not enabled",
-  // Access Analyzer
-  "aws.access_analyzer.not_enabled": "IAM Access Analyzer not enabled",
-  // AWS Config
-  "aws.config.not_enabled": "AWS Config not enabled",
-  // Security Hub
-  "aws.securityhub.not_enabled": "Security Hub not enabled",
-  // VPC
-  "vpc.flow_logs.not_enabled": "VPC flow logs disabled",
-  // Security Groups
-  "ec2.security_group.unrestricted_ssh": "Unrestricted SSH",
-  "ec2.security_group.unrestricted_rdp": "Unrestricted RDP",
-  "ec2.security_group.default_allows_traffic": "Default security group has rules",
-  // EC2
-  "ec2.instance.imdsv2_not_required": "IMDSv2 not required",
-  "ec2.ebs.encryption_not_default": "EBS encryption not default",
-  "ec2.ebs.volume_unencrypted": "EBS volume not encrypted",
-  // RDS
-  "rds.instance.publicly_accessible": "RDS publicly accessible",
-  "rds.instance.no_encryption": "RDS storage not encrypted",
-  "rds.instance.no_automated_backup": "RDS backups disabled",
-  // GitHub
-  "github.org.mfa_not_enforced": "GitHub MFA not enforced",
-  "github.org.dormant_members": "GitHub dormant members",
-  "github.org.outside_collaborators": "Outside collaborators",
-  "github.repo.no_branch_protection": "No branch protection",
-  "github.repo.no_codeowners": "No CODEOWNERS file",
-  "github.repo.no_env_protection": "Deployment environment unprotected",
-  "github.repo.self_merge_allowed": "Self-merge allowed",
-  "github.repo.insufficient_reviews": "Insufficient PR reviews",
-  // GitLab
-  "gitlab.org.mfa_not_enforced": "GitLab MFA not enforced",
-  "gitlab.org.dormant_members": "GitLab dormant members",
-  "gitlab.repo.no_branch_protection": "No branch protection",
-  "gitlab.repo.self_merge_allowed": "Self-merge allowed",
-  "gitlab.repo.insufficient_reviews": "Insufficient MR reviews",
-};
 
 const checkDescriptions: Record<string, string> = {
   "iam.root.has_access_keys": "Root account access keys are permanent credentials — delete them.",
