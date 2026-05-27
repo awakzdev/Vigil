@@ -2,7 +2,7 @@
   {
     "framework": "soc2",
     "control_id": "CC6.1",
-    "title": "Logical Access — Asset Inventory",
+    "title": "Logical Access \u2014 Asset Inventory",
     "description": "The entity implements logical access security software, infrastructure, and architectures over protected information assets to protect them from security events to meet the entity's objectives.",
     "guidance": "Evidence: IAM user inventory, role inventory, access key list with last-used dates. All principals should be accounted for and actively used.",
     "checks": [
@@ -16,7 +16,7 @@
   {
     "framework": "soc2",
     "control_id": "CC6.2",
-    "title": "Logical Access — Credential Registration",
+    "title": "Logical Access \u2014 Credential Registration",
     "description": "Prior to issuing system credentials and granting system access, the entity registers and authorizes new internal and external users whose access is administered by the entity.",
     "guidance": "Evidence: No root access keys present. Each user holds at most one active access key. Programmatic access is scoped to purpose.",
     "checks": [
@@ -30,7 +30,7 @@
   {
     "framework": "soc2",
     "control_id": "CC6.3",
-    "title": "Logical Access — Access Removal",
+    "title": "Logical Access \u2014 Access Removal",
     "description": "The entity removes access to protected information assets when appropriate (e.g., the individual is no longer associated with the entity).",
     "guidance": "Evidence: No IAM users inactive beyond threshold. No access keys unused beyond threshold. No roles unassumed beyond threshold. Root account not used for routine operations.",
     "checks": [
@@ -45,7 +45,7 @@
   {
     "framework": "soc2",
     "control_id": "CC6.6",
-    "title": "Logical Access — External Threat Controls",
+    "title": "Logical Access \u2014 External Threat Controls",
     "description": "The entity implements logical access security measures to protect against threats from sources outside its system boundaries, including MFA enforcement, least privilege, and network perimeter controls.",
     "guidance": "Evidence: MFA enabled for root and all IAM console users. No wildcard Action in role policies. No wildcard trust principals. S3 public access blocked. No security groups allow unrestricted SSH or RDP. RDS instances are not publicly accessible.",
     "checks": [
@@ -70,13 +70,18 @@
       "gitlab.repo.self_merge_allowed",
       "github.repo.insufficient_reviews",
       "gitlab.repo.insufficient_reviews",
-      "ec2.instance.imdsv2_not_required"
+      "ec2.instance.imdsv2_not_required",
+      "ec2.ebs.snapshot_public",
+      "ec2.ami.public",
+      "s3.bucket.no_default_encryption",
+      "elb.load_balancer.weak_tls_policy",
+      "dynamodb.table.no_encryption"
     ]
   },
   {
     "framework": "soc2",
     "control_id": "CC6.7",
-    "title": "Logical Access — Transmission Encryption",
+    "title": "Logical Access \u2014 Transmission Encryption",
     "description": "The entity restricts the transmission of confidential information to authorized internal and external users and protects it during transmission.",
     "guidance": "Evidence: S3 buckets enforce HTTPS-only via bucket policy (aws:SecureTransport condition).",
     "checks": [
@@ -86,32 +91,40 @@
   {
     "framework": "soc2",
     "control_id": "CC6.8",
-    "title": "Logical Access — Encryption at Rest",
+    "title": "Logical Access \u2014 Encryption at Rest",
     "description": "The entity implements controls to prevent unauthorized access to data at rest through encryption of storage resources.",
     "guidance": "Evidence: S3 buckets encrypted with KMS. KMS keys have automatic annual rotation enabled. RDS instances and EBS volumes have storage encryption enabled.",
     "checks": [
       "s3.bucket.no_kms",
       "kms.key.no_rotation",
       "rds.instance.no_encryption",
-      "ec2.ebs.volume_unencrypted"
+      "ec2.ebs.volume_unencrypted",
+      "ec2.ebs.snapshot_unencrypted",
+      "s3.bucket.no_default_encryption",
+      "dynamodb.table.no_encryption",
+      "sns.topic.no_encryption",
+      "sqs.queue.no_encryption"
     ]
   },
   {
     "framework": "soc2",
     "control_id": "CC7.1",
-    "title": "System Operations — Configuration Change Detection",
+    "title": "System Operations \u2014 Configuration Change Detection",
     "description": "To meet its objectives, the entity uses detection and monitoring procedures to identify changes to configurations that result in the introduction of new vulnerabilities.",
     "guidance": "Evidence: CloudTrail enabled with log file validation and KMS encryption in all regions.",
     "checks": [
       "cloudtrail.trail.not_enabled",
       "cloudtrail.trail.no_log_validation",
-      "cloudtrail.trail.no_kms"
+      "cloudtrail.trail.no_kms",
+      "cloudtrail.trail.s3_bucket_public",
+      "cloudtrail.trail.no_cloudwatch_logs",
+      "cloudtrail.trail.s3_bucket_no_logging"
     ]
   },
   {
     "framework": "soc2",
     "control_id": "CC7.2",
-    "title": "System Operations — Anomaly Detection",
+    "title": "System Operations \u2014 Anomaly Detection",
     "description": "The entity monitors system components and the operation of those components for anomalies that are indicative of malicious acts, natural disasters, and errors affecting the entity's ability to meet its objectives.",
     "guidance": "Evidence: GuardDuty and Security Hub enabled in all regions. VPC Flow Logs enabled on all VPCs.",
     "checks": [
@@ -124,7 +137,7 @@
   {
     "framework": "soc2",
     "control_id": "CC8.1",
-    "title": "Change Management — Authorized Changes",
+    "title": "Change Management \u2014 Authorized Changes",
     "description": "The entity authorizes, approves, and communicates changes to infrastructure, data, software, and procedures to meet its change management objectives.",
     "guidance": "Evidence: All merged pull requests have required approvals. No self-merges by PR authors. Branch protection rules enforced on default branches.",
     "checks": [
@@ -330,7 +343,9 @@
     "checks": [
       "iam.root.no_mfa",
       "iam.user.no_mfa",
-      "iam.account.password_policy_weak"
+      "iam.account.password_policy_weak",
+      "secretsmanager.secret.no_rotation",
+      "ssm.parameter.plaintext_secret"
     ]
   },
   {
@@ -373,7 +388,11 @@
       "kms.key.no_rotation",
       "rds.instance.no_encryption",
       "ec2.ebs.volume_unencrypted",
-      "ec2.ebs.encryption_not_default"
+      "ec2.ebs.encryption_not_default",
+      "ec2.ebs.snapshot_unencrypted",
+      "dynamodb.table.no_encryption",
+      "sns.topic.no_encryption",
+      "sqs.queue.no_encryption"
     ]
   },
   {
@@ -387,7 +406,10 @@
       "cloudtrail.trail.no_log_validation",
       "vpc.flow_logs.not_enabled",
       "guardduty.detector.not_enabled",
-      "s3.bucket.no_logging"
+      "s3.bucket.no_logging",
+      "cloudtrail.trail.no_cloudwatch_logs",
+      "cloudtrail.trail.s3_bucket_no_logging",
+      "elb.load_balancer.no_access_logs"
     ]
   },
   {
@@ -398,7 +420,9 @@
     "guidance": "Evidence: CloudTrail log file integrity validation is enabled. CloudTrail logs are encrypted with a customer-managed KMS key.",
     "checks": [
       "cloudtrail.trail.no_log_validation",
-      "cloudtrail.trail.no_kms"
+      "cloudtrail.trail.no_kms",
+      "cloudtrail.trail.s3_bucket_public",
+      "cloudtrail.trail.s3_bucket_no_logging"
     ]
   },
   {
@@ -437,6 +461,56 @@
       "s3.bucket.no_https_policy",
       "s3.account.public_access_not_blocked",
       "s3.bucket.public_access_not_blocked"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "2.1.2",
+    "title": "Ensure S3 buckets have default encryption enabled",
+    "description": "Ensure S3 buckets have default encryption enabled",
+    "guidance": "Automated check: s3.bucket.no_default_encryption",
+    "checks": [
+      "s3.bucket.no_default_encryption"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "2.1.3",
+    "title": "Ensure MFA Delete is enabled on S3 buckets",
+    "description": "Ensure MFA Delete is enabled on S3 buckets",
+    "guidance": "Automated check: s3.bucket.no_mfa_delete",
+    "checks": [
+      "s3.bucket.no_mfa_delete"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "3.3",
+    "title": "Ensure CloudTrail log bucket is not publicly accessible",
+    "description": "Ensure CloudTrail log bucket is not publicly accessible",
+    "guidance": "Automated check: cloudtrail.trail.s3_bucket_public",
+    "checks": [
+      "cloudtrail.trail.s3_bucket_public"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "3.4",
+    "title": "Ensure CloudTrail logs are integrated with CloudWatch Logs",
+    "description": "Ensure CloudTrail logs are integrated with CloudWatch Logs",
+    "guidance": "Automated check: cloudtrail.trail.no_cloudwatch_logs",
+    "checks": [
+      "cloudtrail.trail.no_cloudwatch_logs"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "3.6",
+    "title": "Ensure S3 bucket access logging is enabled on CloudTrail bucket",
+    "description": "Ensure S3 bucket access logging is enabled on CloudTrail bucket",
+    "guidance": "Automated check: cloudtrail.trail.s3_bucket_no_logging",
+    "checks": [
+      "cloudtrail.trail.s3_bucket_no_logging"
     ]
   }
 ]

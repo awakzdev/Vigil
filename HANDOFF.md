@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-27 (session 17)_
+_Last updated: 2026-05-27 (session 18)_
 
 ---
 
@@ -748,6 +748,38 @@ policy analysis, onboarding empty state.
 "Working agreements" above, deployment / sandbox / Stripe items are out of
 scope and intentionally absent from that list.
 
+**Session 18 additions (2026-05-27)** — AWS gap checks + evidence export fixes:
+- **21 new AWS checks** (73 total across AWS + GitHub + GitLab): S3 default
+  encryption + MFA delete; EBS snapshot public/unencrypted; EC2 public AMI;
+  CloudTrail S3 bucket public / no CloudWatch / no access logging; ACM cert
+  expiring within 30d; Lambda deprecated runtime + no DLQ; RDS no deletion
+  protection + no Multi-AZ (when backups enabled); Secrets Manager no rotation;
+  SSM plaintext sensitive params; ELB no access logs + weak TLS; DynamoDB no
+  PITR + no encryption; SNS/SQS no KMS encryption.
+- **Migration `0028`**: new tables (`ebs_snapshots`, `ec2_amis`, `acm_certificates`,
+  `lambda_functions`, `secrets_manager_secrets`, `ssm_parameters`,
+  `elb_load_balancers`, `dynamodb_tables`, `sns_topics`, `sqs_queues`) +
+  extended columns on `s3_buckets`, `cloudtrail_trails`, `rds_instances`.
+- **`collectors/extended.py`**: ACM, Lambda, Secrets Manager, SSM, ELBv2,
+  DynamoDB, SNS, SQS collectors. EC2 collector extended for snapshots + AMIs.
+  S3/CloudTrail/RDS collectors extended for new fields.
+- **CFN role** (`infra/cfn/vigil-readonly-role.yaml`): new read-only actions
+  for all new collectors. **Existing connected accounts must update their
+  CloudFormation stack** to pick up these permissions or new collectors will
+  silently skip (ClientError → empty).
+- **Control mappings**: 5 new CIS L1 controls (2.1.2, 2.1.3, 3.3, 3.4, 3.6)
+  + new checks wired into SOC2 CC6.6/CC6.8/CC7.1 and ISO A.10/A.12/A.9.
+- **Evidence pack fixes** (auditor-facing):
+  - `exceptions.json` now written per control folder (was computed but dropped)
+  - Excepted findings no longer fail a control — only `open` findings do
+  - `INDEX.csv` columns aligned: `control_id,title,status,open_findings,exceptions`
+  - ISO 27001 added to `/v1/exports/evidence-pack` frameworks (was UI-only before)
+  - Findings CSV export adds exception columns (`exception_reason`,
+    `exception_approved_by`, `exception_expires_at`)
+- **Tests**: 79 passing (+4 evidence/gap check tests).
+
+**Remaining gaps after session 18 — see canonical list below.**
+
 ---
 
 ## Canonical remaining work
@@ -759,31 +791,24 @@ work surfaces.
 
 **Founder-blocking (need a click, not code):**
 
-1. **Re-scan the connected AWS account** to populate action-level
-   `actions_json` so the least-privilege policy generator has data. One
-   button click on the Accounts page.
+1. **Re-scan the connected AWS account** — populates `actions_json` for
+   least-privilege policy generation AND runs all 21 new gap checks.
+   One button on Accounts page.
+2. **Update CloudFormation stack** in the connected AWS account so the
+   read-only role includes the new permissions from session 18. Without
+   this, new collectors return empty (no error surfaced to UI yet).
 
 **Product — the actual moat:**
 
-2. **"What If I fix this?" blast-radius drawer tab** on IAM role findings.
-   This is the explicit differentiator vs Orca/Wiz/Prisma/CSPM tools
-   (see `CLAUDE.md` "Primary differentiator"). All required data is
-   already collected (`iam_perm_usage`, `cloudtrail_events`,
-   role/policy snapshots) — this is UI work, no new collectors:
-   - Blast radius — principals/services that touch this resource
-   - Used vs. unused actions (already powering the generated policy)
-   - Policy diff — before/after if scoped to least-privilege
-   - Confidence score — "no recorded usage in 90d" vs "used 3× recently"
+3. **"What If I fix this?" blast-radius drawer tab** on IAM role findings.
+   (unchanged — see session 17 notes)
 
 **Polish / minor:**
 
-3. Web bundle is ~533 KB pre-gzip (~143 KB gzipped). Vite warns. Split
-   route bundles or accept the warning.
-4. Switch `ALLOW_SSO_SIGNUP=False` whenever the founder wants the
-   signup funnel locked. Default stays `True` until then.
-5. Pin `CFN_TEMPLATE_URL` to a versioned S3 object once the YAML
-   stabilises — eliminates "stack launched yesterday vs today is
-   different" risk.
+4. Web bundle size warning (Vite). Split route bundles or accept.
+5. `ALLOW_SSO_SIGNUP=False` when signup funnel should be locked.
+6. Pin `CFN_TEMPLATE_URL` to versioned S3 object when YAML stabilises.
+7. Surface collector permission errors in scan UI when CFN stack is stale.
 
 ### Phase 3 — GitHub integration (3 weeks)
 

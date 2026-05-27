@@ -80,6 +80,7 @@ Resources:
                   - s3:GetBucketVersioning
                   - s3:GetBucketPublicAccessBlock
                   - s3:GetBucketPolicy
+                  - s3:GetBucketAcl
                 Resource: "*"
 
               - Sid: KmsKeyConfiguration
@@ -127,6 +128,9 @@ Resources:
                 Action:
                   - ec2:DescribeInstances
                   - ec2:DescribeVolumes
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeSnapshotAttribute
+                  - ec2:DescribeImages
                   - ec2:GetEbsEncryptionByDefault
                 Resource: "*"
 
@@ -148,6 +152,62 @@ Resources:
                 Effect: Allow
                 Action:
                   - rds:DescribeDBInstances
+                Resource: "*"
+
+              - Sid: AcmCertificates
+                Effect: Allow
+                Action:
+                  - acm:ListCertificates
+                  - acm:DescribeCertificate
+                Resource: "*"
+
+              - Sid: LambdaConfiguration
+                Effect: Allow
+                Action:
+                  - lambda:ListFunctions
+                  - lambda:GetFunctionEventInvokeConfig
+                Resource: "*"
+
+              - Sid: SecretsManagerConfiguration
+                Effect: Allow
+                Action:
+                  - secretsmanager:ListSecrets
+                Resource: "*"
+
+              - Sid: SsmParameters
+                Effect: Allow
+                Action:
+                  - ssm:DescribeParameters
+                Resource: "*"
+
+              - Sid: ElbConfiguration
+                Effect: Allow
+                Action:
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeLoadBalancerAttributes
+                  - elasticloadbalancing:DescribeListeners
+                Resource: "*"
+
+              - Sid: DynamoDbConfiguration
+                Effect: Allow
+                Action:
+                  - dynamodb:ListTables
+                  - dynamodb:DescribeTable
+                  - dynamodb:DescribeContinuousBackups
+                Resource: "*"
+
+              - Sid: SnsConfiguration
+                Effect: Allow
+                Action:
+                  - sns:ListTopics
+                  - sns:GetTopicAttributes
+                Resource: "*"
+
+              - Sid: SqsConfiguration
+                Effect: Allow
+                Action:
+                  - sqs:ListQueues
+                  - sqs:GetQueueAttributes
                 Resource: "*"
 
               - Sid: OrganizationsAccountLabel

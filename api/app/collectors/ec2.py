@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.core.aws import assume_role
 from app.models import AwsAccount
-from app.models.resources import EbsEncryptionDefault, EbsVolume, Ec2Instance
+from app.models.resources import EbsEncryptionDefault, EbsSnapshot, EbsVolume, Ec2Ami, Ec2Instance
 
 log = structlog.get_logger()
 
@@ -33,7 +33,7 @@ def _get_regions(sess) -> list[str]:
 def collect_ec2(db: Session, account: AwsAccount) -> dict:
     sess = assume_role(account.role_arn, account.external_id, session_name="vigil-ec2", aws_account=account, purpose="collect_ec2")
     regions = _get_regions(sess)
-    instance_count = volume_count = ebs_count = 0
+    instance_count = volume_count = ebs_count = snapshot_count = ami_count = 0
 
     for region in regions:
         try:
@@ -147,9 +147,87 @@ def collect_ec2(db: Session, account: AwsAccount) -> dict:
                     db.execute(stmt)
                     volume_count += 1
 
+            # EBS snapshots owned by this account
+            snap_paginator = client.get_paginator("describe_snapshots")
+            for page in snap_paginator.paginate(OwnerIds=["self"]):
+                for snap in page.get("Snapshots", []):
+                    snapshot_id = snap["SnapshotId"]
+                    arn = f"arn:aws:ec2:{region}:{account.account_id or 'unknown'}:snapshot/{snapshot_id}"
+                    is_public = False
+                    try:
+                        attrs = client.describe_snapshot_attribute(
+                            SnapshotId=snapshot_id,
+                            Attribute="createVolumePermission",
+                        )
+                        for perm in attrs.get("CreateVolumePermissions", []):
+                            if perm.get("Group") == "all":
+                                is_public = True
+                                break
+                    except ClientError:
+                        pass
+                    stmt = pg_insert(EbsSnapshot).values(
+                        id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:{region}:{snapshot_id}"),
+                        account_id=account.id,
+                        region=region,
+                        snapshot_id=snapshot_id,
+                        arn=arn,
+                        encrypted=snap.get("Encrypted", False),
+                        is_public=is_public,
+                        last_seen=_now(),
+                    ).on_conflict_do_update(
+                        index_elements=["account_id", "region", "snapshot_id"],
+                        set_={
+                            "encrypted": snap.get("Encrypted", False),
+                            "is_public": is_public,
+                            "last_seen": _now(),
+                        },
+                    )
+                    db.execute(stmt)
+                    snapshot_count += 1
+
+            # AMIs owned by this account
+            image_paginator = client.get_paginator("describe_images")
+            for page in image_paginator.paginate(Owners=["self"]):
+                for image in page.get("Images", []):
+                    image_id = image["ImageId"]
+                    arn = f"arn:aws:ec2:{region}:{account.account_id or 'unknown'}:image/{image_id}"
+                    stmt = pg_insert(Ec2Ami).values(
+                        id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:{region}:{image_id}"),
+                        account_id=account.id,
+                        region=region,
+                        image_id=image_id,
+                        arn=arn,
+                        name=image.get("Name"),
+                        is_public=image.get("Public", False),
+                        last_seen=_now(),
+                    ).on_conflict_do_update(
+                        index_elements=["account_id", "region", "image_id"],
+                        set_={
+                            "name": image.get("Name"),
+                            "is_public": image.get("Public", False),
+                            "last_seen": _now(),
+                        },
+                    )
+                    db.execute(stmt)
+                    ami_count += 1
+
         except ClientError:
             continue
 
     db.commit()
-    log.info("collect_ec2.done", account_id=str(account.id), instances=instance_count, volumes=volume_count, ebs_regions=ebs_count)
-    return {"instances": instance_count, "volumes": volume_count, "ebs_regions": ebs_count}
+    log.info(
+        "collect_ec2.done",
+        account_id=str(account.id),
+        instances=instance_count,
+        volumes=volume_count,
+        snapshots=snapshot_count,
+        amis=ami_count,
+        ebs_regions=ebs_count,
+    )
+    return {
+        "instances": instance_count,
+        "volumes": volume_count,
+        "snapshots": snapshot_count,
+        "amis": ami_count,
+        "ebs_regions": ebs_count,
+    }

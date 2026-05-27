@@ -12,7 +12,7 @@ from app.services.evidence_pack import build_evidence_pack
 
 router = APIRouter()
 
-FRAMEWORKS = {"soc2", "cis_aws_l1"}
+FRAMEWORKS = {"soc2", "cis_aws_l1", "iso27001"}
 
 
 @router.get("/evidence-pack")
@@ -240,9 +240,18 @@ def export_findings_csv(
 
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["id", "check_id", "resource_arn", "title", "severity", "risk_score", "status", "first_seen", "last_seen"])
+    w.writerow([
+        "id", "check_id", "resource_arn", "title", "severity", "risk_score", "status",
+        "first_seen", "last_seen", "exception_reason", "exception_approved_by", "exception_expires_at",
+    ])
     for f in rows:
-        w.writerow([str(f.id), f.check_id, f.resource_arn, f.title, f.severity, f.risk_score, f.status, f.first_seen.isoformat(), f.last_seen.isoformat()])
+        w.writerow([
+            str(f.id), f.check_id, f.resource_arn, f.title, f.severity, f.risk_score, f.status,
+            f.first_seen.isoformat(), f.last_seen.isoformat(),
+            f.exception_reason or "",
+            f.exception_approved_by or "",
+            f.exception_expires_at.isoformat() if f.exception_expires_at else "",
+        ])
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     return Response(

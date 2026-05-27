@@ -19,6 +19,16 @@ from app.collectors.guardduty import collect_guardduty
 from app.collectors.vpc import collect_vpc
 from app.collectors.rds import collect_rds
 from app.collectors.ec2 import collect_ec2
+from app.collectors.extended import (
+    collect_acm,
+    collect_dynamodb,
+    collect_elb,
+    collect_lambda,
+    collect_secrets,
+    collect_sns,
+    collect_sqs,
+    collect_ssm_parameters,
+)
 from app.collectors.access_analyzer import collect_access_analyzer
 from app.collectors.config_service import collect_config_service
 from app.collectors.securityhub import collect_securityhub
@@ -58,9 +68,18 @@ _COLLECTOR_FOR_CHECK = {
     "aws.config.": lambda db, acc: collect_config_service(db, acc),
     "aws.securityhub.": lambda db, acc: collect_securityhub(db, acc),
     "vpc.": lambda db, acc: collect_vpc(db, acc),
+    "ec2.ami.": lambda db, acc: collect_ec2(db, acc),
     "ec2.security_group.": lambda db, acc: collect_vpc(db, acc),
     "ec2.instance.": lambda db, acc: collect_ec2(db, acc),
     "ec2.ebs.": lambda db, acc: collect_ec2(db, acc),
+    "acm.": lambda db, acc: collect_acm(db, acc),
+    "lambda.": lambda db, acc: collect_lambda(db, acc),
+    "secretsmanager.": lambda db, acc: collect_secrets(db, acc),
+    "ssm.": lambda db, acc: collect_ssm_parameters(db, acc),
+    "elb.": lambda db, acc: collect_elb(db, acc),
+    "dynamodb.": lambda db, acc: collect_dynamodb(db, acc),
+    "sns.": lambda db, acc: collect_sns(db, acc),
+    "sqs.": lambda db, acc: collect_sqs(db, acc),
     "rds.": lambda db, acc: collect_rds(db, acc),
 }
 
@@ -443,7 +462,17 @@ def run_scan(account_id: str) -> dict:
         ec2_stats = _step("collect_ec2", lambda: collect_ec2(db, acc))
         stats["ec2_instances"] = ec2_stats.get("instances", 0)
         stats["ebs_volumes"] = ec2_stats.get("volumes", 0)
+        stats["ebs_snapshots"] = ec2_stats.get("snapshots", 0)
+        stats["ec2_amis"] = ec2_stats.get("amis", 0)
         stats["ebs_regions"] = ec2_stats.get("ebs_regions", 0)
+        stats["acm_certificates"] = _step("collect_acm", lambda: collect_acm(db, acc))
+        stats["lambda_functions"] = _step("collect_lambda", lambda: collect_lambda(db, acc))
+        stats["secrets_manager_secrets"] = _step("collect_secrets", lambda: collect_secrets(db, acc))
+        stats["ssm_parameters"] = _step("collect_ssm_parameters", lambda: collect_ssm_parameters(db, acc))
+        stats["elb_load_balancers"] = _step("collect_elb", lambda: collect_elb(db, acc))
+        stats["dynamodb_tables"] = _step("collect_dynamodb", lambda: collect_dynamodb(db, acc))
+        stats["sns_topics"] = _step("collect_sns", lambda: collect_sns(db, acc))
+        stats["sqs_queues"] = _step("collect_sqs", lambda: collect_sqs(db, acc))
         stats["access_analyzers"] = _step("collect_access_analyzer", lambda: collect_access_analyzer(db, acc))
         stats["config_regions"] = _step("collect_config_service", lambda: collect_config_service(db, acc))
         stats["securityhub_regions"] = _step("collect_securityhub", lambda: collect_securityhub(db, acc))

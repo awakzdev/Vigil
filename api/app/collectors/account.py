@@ -48,12 +48,14 @@ def collect_s3(db: Session, account: AwsAccount) -> int:
             kms_encrypted = False
             encrypted = False
 
-        # versioning
+        # versioning + MFA delete
         try:
             ver = s3.get_bucket_versioning(Bucket=name)
             versioning_enabled = ver.get("Status") == "Enabled"
+            mfa_delete_enabled = ver.get("MFADelete") == "Enabled"
         except ClientError:
             versioning_enabled = False
+            mfa_delete_enabled = False
 
         # public access block
         try:
@@ -85,6 +87,7 @@ def collect_s3(db: Session, account: AwsAccount) -> int:
             versioning_enabled=versioning_enabled,
             public_access_blocked=public_access_blocked,
             https_only=https_only,
+            mfa_delete_enabled=mfa_delete_enabled,
             last_seen=_now(),
         ).on_conflict_do_update(
             index_elements=["account_id", "arn"],
@@ -95,6 +98,7 @@ def collect_s3(db: Session, account: AwsAccount) -> int:
                 "versioning_enabled": versioning_enabled,
                 "public_access_blocked": public_access_blocked,
                 "https_only": https_only,
+                "mfa_delete_enabled": mfa_delete_enabled,
                 "last_seen": _now(),
             },
         )

@@ -52,6 +52,8 @@ def collect_rds(db: Session, account: AwsAccount) -> int:
                         storage_encrypted=inst.get("StorageEncrypted", False),
                         backup_retention_period=inst.get("BackupRetentionPeriod", 0),
                         engine=inst.get("Engine"),
+                        multi_az=inst.get("MultiAZ", False),
+                        deletion_protection=inst.get("DeletionProtection", False),
                         last_seen=_now(),
                     ).on_conflict_do_update(
                         index_elements=["account_id", "arn"],
@@ -60,6 +62,8 @@ def collect_rds(db: Session, account: AwsAccount) -> int:
                             "storage_encrypted": inst.get("StorageEncrypted", False),
                             "backup_retention_period": inst.get("BackupRetentionPeriod", 0),
                             "engine": inst.get("Engine"),
+                            "multi_az": inst.get("MultiAZ", False),
+                            "deletion_protection": inst.get("DeletionProtection", False),
                             "last_seen": _now(),
                         },
                     )

@@ -21,6 +21,7 @@ class S3Bucket(Base):
     versioning_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     public_access_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
     https_only: Mapped[bool] = mapped_column(Boolean, default=False)
+    mfa_delete_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     __table_args__ = (
@@ -72,6 +73,10 @@ class CloudTrailTrail(Base):
     is_logging: Mapped[bool] = mapped_column(Boolean, default=False)
     log_validation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     kms_key_id: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    s3_bucket_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    s3_bucket_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    s3_bucket_logging_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    cloudwatch_logs_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -229,4 +234,141 @@ class RdsInstance(Base):
     storage_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
     backup_retention_period: Mapped[int] = mapped_column(Integer, default=0)
     engine: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    multi_az: Mapped[bool] = mapped_column(Boolean, default=False)
+    deletion_protection: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class EbsSnapshot(Base):
+    __tablename__ = "ebs_snapshots"
+    __table_args__ = (UniqueConstraint("account_id", "region", "snapshot_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    snapshot_id: Mapped[str] = mapped_column(String(64))
+    arn: Mapped[str] = mapped_column(String(512))
+    encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Ec2Ami(Base):
+    __tablename__ = "ec2_amis"
+    __table_args__ = (UniqueConstraint("account_id", "region", "image_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    image_id: Mapped[str] = mapped_column(String(64))
+    arn: Mapped[str] = mapped_column(String(512))
+    name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AcmCertificate(Base):
+    __tablename__ = "acm_certificates"
+    __table_args__ = (UniqueConstraint("account_id", "certificate_arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    certificate_arn: Mapped[str] = mapped_column(String(512))
+    domain_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class LambdaFunction(Base):
+    __tablename__ = "lambda_functions"
+    __table_args__ = (UniqueConstraint("account_id", "arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    function_name: Mapped[str] = mapped_column(String(256))
+    arn: Mapped[str] = mapped_column(String(512))
+    runtime: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    has_dlq: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SecretsManagerSecret(Base):
+    __tablename__ = "secrets_manager_secrets"
+    __table_args__ = (UniqueConstraint("account_id", "secret_arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    secret_arn: Mapped[str] = mapped_column(String(512))
+    name: Mapped[str] = mapped_column(String(512))
+    rotation_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SsmParameter(Base):
+    __tablename__ = "ssm_parameters"
+    __table_args__ = (UniqueConstraint("account_id", "region", "parameter_name"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    parameter_name: Mapped[str] = mapped_column(String(512))
+    parameter_type: Mapped[str] = mapped_column(String(40))
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ElbLoadBalancer(Base):
+    __tablename__ = "elb_load_balancers"
+    __table_args__ = (UniqueConstraint("account_id", "load_balancer_arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    load_balancer_arn: Mapped[str] = mapped_column(String(512))
+    name: Mapped[str] = mapped_column(String(256))
+    lb_type: Mapped[str] = mapped_column(String(20))
+    access_logs_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    ssl_policy: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class DynamoDbTable(Base):
+    __tablename__ = "dynamodb_tables"
+    __table_args__ = (UniqueConstraint("account_id", "arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    table_name: Mapped[str] = mapped_column(String(256))
+    arn: Mapped[str] = mapped_column(String(512))
+    pitr_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    kms_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SnsTopic(Base):
+    __tablename__ = "sns_topics"
+    __table_args__ = (UniqueConstraint("account_id", "topic_arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    topic_arn: Mapped[str] = mapped_column(String(512))
+    kms_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class SqsQueue(Base):
+    __tablename__ = "sqs_queues"
+    __table_args__ = (UniqueConstraint("account_id", "queue_arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    queue_url: Mapped[str] = mapped_column(String(512))
+    queue_arn: Mapped[str] = mapped_column(String(512))
+    kms_encrypted: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

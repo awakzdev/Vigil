@@ -71,9 +71,20 @@ def test_run_scan_check_failure_does_not_kill_scan(monkeypatch):
         "collect_access_analyzer",
         "collect_config_service",
         "collect_securityhub",
+        "collect_acm",
+        "collect_lambda",
+        "collect_secrets",
+        "collect_ssm_parameters",
+        "collect_elb",
+        "collect_dynamodb",
+        "collect_sns",
+        "collect_sqs",
     }
     for name in dict_collectors:
-        monkeypatch.setattr(tasks, name, lambda *a, **kw: {})
+        if name == "collect_ec2":
+            monkeypatch.setattr(tasks, name, lambda *a, **kw: {"instances": 0, "volumes": 0, "snapshots": 0, "amis": 0, "ebs_regions": 0})
+        else:
+            monkeypatch.setattr(tasks, name, lambda *a, **kw: {})
     for name in int_collectors:
         monkeypatch.setattr(tasks, name, lambda *a, **kw: 0)
 

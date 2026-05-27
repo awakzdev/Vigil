@@ -24,13 +24,17 @@ def _control_status(
     open_findings: list[Finding],
     check_ids: list[str],
 ) -> tuple[str, list[Finding]]:
-    """Return (pass|fail|partial|no_data, matching_findings)."""
+    """Return (pass|fail|no_data, matching_findings).
+
+    Findings with status ``excepted`` are included in ``matching_findings`` for
+    evidence export but do not cause a control to fail — only ``open`` findings do.
+    """
     if not check_ids:
         return "no_data", []
     hits = [f for f in open_findings if f.check_id in check_ids]
-    if hits:
+    if any(f.status == "open" for f in hits):
         return "fail", hits
-    return "pass", []
+    return "pass", hits
 
 
 def build_evidence_pack(
@@ -147,6 +151,7 @@ def build_evidence_pack(
                 "generated_at": generated_at.isoformat(),
             }, indent=2))
             zf.writestr(folder + "findings.json", json.dumps(cr["findings"], indent=2, default=str))
+            zf.writestr(folder + "exceptions.json", json.dumps(cr["exceptions"], indent=2, default=str))
             zf.writestr(folder + "snapshots.json", json.dumps(cr["snapshots"], indent=2, default=str))
 
         pdf_bytes = build_pdf(acc, framework, period_days, generated_at, control_results)
@@ -191,6 +196,25 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
         elif cid.startswith("ec2.ebs"):
             types.add("ebs_volume")
             types.add("ebs_encryption_default")
+            types.add("ebs_snapshot")
+        elif cid.startswith("ec2.ami"):
+            types.add("ec2_ami")
+        elif cid.startswith("acm."):
+            types.add("acm_certificate")
+        elif cid.startswith("lambda."):
+            types.add("lambda_function")
+        elif cid.startswith("secretsmanager."):
+            types.add("secrets_manager_secret")
+        elif cid.startswith("ssm."):
+            types.add("ssm_parameter")
+        elif cid.startswith("elb."):
+            types.add("elb_load_balancer")
+        elif cid.startswith("dynamodb."):
+            types.add("dynamodb_table")
+        elif cid.startswith("sns."):
+            types.add("sns_topic")
+        elif cid.startswith("sqs."):
+            types.add("sqs_queue")
         elif cid.startswith("rds."):
             types.add("rds_instance")
         elif cid.startswith("github."):
@@ -446,10 +470,11 @@ def _build_readme(
         "",
         "CONTENTS",
         "-" * 30,
-        "INDEX.csv          - control ID, status, finding count",
+        "INDEX.csv          - control ID, status, open findings, exceptions",
         "controls/[ID]/     - per-control folder",
         "  summary.json     - control metadata and pass/fail status",
         "  findings.json    - open findings mapped to this control",
+        "  exceptions.json  - approved exceptions (risk accepted) for this control",
         "  snapshots.json   - raw collected evidence (last 50 entries)",
         "report.pdf         - formatted summary report",
         "",
@@ -464,7 +489,13 @@ def _build_readme(
 def _build_index_csv(results: list[dict[str, Any]]) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["control_id", "title", "status", "finding_count"])
+    writer.writerow(["control_id", "title", "status", "open_findings", "exceptions"])
     for r in results:
-        writer.writerow([r["control_id"], r["title"], r["status"], r["finding_count"]])
+        writer.writerow([
+            r["control_id"],
+            r["title"],
+            r["status"],
+            r["finding_count"],
+            r.get("exception_count", 0),
+        ])
     return buf.getvalue()

@@ -22,6 +22,7 @@ def _now() -> datetime:
 def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
     sess = assume_role(account.role_arn, account.external_id, session_name="vigil-cloudtrail", aws_account=account, purpose="collect_cloudtrail")
     ct = sess.client("cloudtrail", region_name="us-east-1")
+    s3 = sess.client("s3", region_name="us-east-1")
     count = 0
 
     trails = ct.describe_trails(includeShadowTrails=False).get("trailList", [])
@@ -32,6 +33,35 @@ def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
         is_multi_region = t.get("IsMultiRegionTrail", False)
         log_validation = t.get("LogFileValidationEnabled", False)
         kms_key_id = t.get("KmsKeyId")
+        s3_bucket_name = t.get("S3BucketName")
+        cloudwatch_logs_enabled = bool(t.get("CloudWatchLogsLogGroupArn"))
+
+        s3_bucket_public = False
+        s3_bucket_logging_enabled = False
+        if s3_bucket_name:
+            try:
+                pab = s3.get_public_access_block(Bucket=s3_bucket_name).get("PublicAccessBlockConfiguration", {})
+                s3_bucket_public = not all([
+                    pab.get("BlockPublicAcls", False),
+                    pab.get("IgnorePublicAcls", False),
+                    pab.get("BlockPublicPolicy", False),
+                    pab.get("RestrictPublicBuckets", False),
+                ])
+            except ClientError:
+                try:
+                    acl = s3.get_bucket_acl(Bucket=s3_bucket_name)
+                    for grant in acl.get("Grants", []):
+                        grantee = grant.get("Grantee", {})
+                        if grantee.get("URI") == "http://acs.amazonaws.com/groups/global/AllUsers":
+                            s3_bucket_public = True
+                            break
+                except ClientError:
+                    pass
+            try:
+                log_cfg = s3.get_bucket_logging(Bucket=s3_bucket_name).get("LoggingEnabled")
+                s3_bucket_logging_enabled = log_cfg is not None
+            except ClientError:
+                pass
 
         try:
             status = ct.get_trail_status(Name=arn)
@@ -49,6 +79,10 @@ def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
             is_logging=is_logging,
             log_validation_enabled=log_validation,
             kms_key_id=kms_key_id,
+            s3_bucket_name=s3_bucket_name,
+            s3_bucket_public=s3_bucket_public,
+            s3_bucket_logging_enabled=s3_bucket_logging_enabled,
+            cloudwatch_logs_enabled=cloudwatch_logs_enabled,
             last_seen=_now(),
         ).on_conflict_do_update(
             index_elements=["account_id", "arn"],
@@ -57,6 +91,10 @@ def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
                 "is_logging": is_logging,
                 "log_validation_enabled": log_validation,
                 "kms_key_id": kms_key_id,
+                "s3_bucket_name": s3_bucket_name,
+                "s3_bucket_public": s3_bucket_public,
+                "s3_bucket_logging_enabled": s3_bucket_logging_enabled,
+                "cloudwatch_logs_enabled": cloudwatch_logs_enabled,
                 "last_seen": _now(),
             },
         )
