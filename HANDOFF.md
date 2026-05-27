@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-26 (session 13)_
+_Last updated: 2026-05-27 (session 15)_
 
 ---
 
@@ -9,9 +9,12 @@ _Last updated: 2026-05-26 (session 13)_
 ### Auth
 - Email + password signup/login (JWT, bcrypt + sha256 prehash — passlib removed due to bcrypt 4.x bug)
 - GitHub OAuth — login + connect/disconnect from Account settings
+- GitLab OAuth — login + connect/disconnect from Account settings (separate from the GitLab evidence integration)
 - Google OAuth — login
-- Account settings page: change password / set password (SSO-aware — no current password field for SSO-only users), GitHub connect/disconnect
+- TOTP MFA (pyotp) — enable/disable from Account settings; Redis-backed lockout (5 failures → 10 min, repeat → 30 min)
+- Account settings page: change password / set password (SSO-aware — no current password field for SSO-only users), GitHub + GitLab connect/disconnect, MFA setup
 - SSO users with no password get "Set a password" flow; credential users get "Change password"
+- OAuth link flow re-issues session tokens on success so connecting a provider never drops the active session
 
 ### AWS account onboarding
 - Create account → CFN launch URL (pre-filled ExternalId + trust principal)
@@ -124,11 +127,14 @@ _Last updated: 2026-05-26 (session 13)_
 - Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Reference, Settings, Account, Sign out
 
 ### Security
-- Rate limiting: signup 5/min, login 10/min (slowapi)
+- Rate limiting: signup 5/min, login 10/min (slowapi); MFA verify locks the account after 5 failures (10 min, escalating to 30 min)
 - Password minimum 12 chars enforced at signup + change password
 - Fernet encryption for `role_arn` + `external_id` at rest
-- Auto-scan triggered on role verify (no manual trigger needed)
+- Auto-scan triggered on role verify (no manual trigger needed). GitHub/GitLab sync no longer triggers AWS scans as a side effect.
+- Scan dedup: `POST /v1/accounts/{id}/scan` returns the running scan if one started within the last 30 min instead of queueing a duplicate
+- Stuck-scan reaper: worker marks `running` ScanRuns as `error` on startup (kills zombies from hot-reload) and every 15 min (anything > 30 min old)
 - Refresh tokens: 30-day signed JWT, auto-retry on 401, OAuth callbacks store both tokens
+- GitLab API tokens auto-refresh: `app/services/gitlab_tokens.py` swaps expired access tokens via `refresh_token` before each API call
 
 ### Infra
 - `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
@@ -190,7 +196,7 @@ AWS control-plane APIs, reachable via public HTTPS.
 - [x] **Generate Least-Privilege Policy** — `GET /v1/accounts/:id/roles/generated-policy` strips unused service statements from inline policies and returns cleaned JSON; Access Analyzer CloudTrail-based generation is future work (requires `accessRole` setup)
 - [x] PDF compliance report (fpdf2, bundled in evidence pack ZIP)
 - [x] Slack webhook (settings + `POST /v1/settings/test-slack` + weekly digest integration)
-- [ ] TOTP MFA (pyotp already in requirements) — deferred to Phase 1.5
+- [x] TOTP MFA (pyotp) — Account settings setup flow, Redis-backed lockout (5/10min → 30min on repeat)
 - [x] Refresh tokens (30-day JWT, auto-retry on 401, OAuth callbacks updated)
 - [x] Account deletion + role re-verify button
 
@@ -678,6 +684,28 @@ policy analysis, onboarding empty state.
 4. Stripe (deferred)
 5. TOTP MFA (deferred to Phase 1.5)
 6. Re-scan production account to populate action-level `actions_json` after collector fix
+
+**Session 15 additions (2026-05-27):**
+- **TOTP MFA shipped** (was deferred): `app/core/mfa_lockout.py` Redis-backed counter, 5 failures → 10 min lock, repeat offence → 30 min; wired into `mfa_verify`; `test_mfa_lockout.py` (4 tests passing)
+- **GitLab OAuth sign-in** (separate from the existing GitLab evidence integration): `auth_oauth.py` handles `/v1/auth/gitlab/*`; `gitlab_id` column on `User` via migration `0025_user_gitlab_id.py`; Account page now has GitLab connect/disconnect alongside GitHub; `/v1/auth/me` exposes `gitlab_id`; `DELETE /v1/auth/me/gitlab` disconnects
+- **OAuth link session fix**: `_oauth_link_redirect()` re-issues access + refresh tokens on successful link and redirects to `/auth/callback?next=/account?gitlab=linked` so connecting a provider mid-session never logs the user out; `AuthCallback.tsx` honours the `next` param
+- **GitLab token refresh service**: `app/services/gitlab_tokens.py` — stores `refresh_token` + `token_expires_at` in provider `config_json_encrypted`, exchanges expired tokens before each GitLab API call; wired into `gitlab_integration.py` + `gitlab_sync.py`; `test_gitlab_tokens.py` covers refresh + expiry paths
+- **Sync no longer triggers AWS scans**: `_trigger_scans_for_org` removed from `POST /v1/integrations/github/sync` and `POST /v1/integrations/gitlab/sync` — this was the "scans keep re-running by themselves" report. Sync now syncs evidence and stops there.
+- **Scan dedup**: `POST /v1/accounts/{id}/scan` checks for a `running` `scan_runs` row started within the last 30 min for the same account and returns it instead of queueing a duplicate (`{"job_id": <existing>, "deduped": true}`)
+- **Stuck-scan reaper**: `reap_stuck_scan_runs` Celery task marks `running` rows older than `max_age_minutes` as `error` with `scan interrupted (worker restart or timeout)`; fires on `worker_ready` with `max_age_minutes=0` to clear zombies after hot-reloads, and every 15 min via beat with the 30 min default; cleared 21 stuck rows on first deploy
+- **Login UX**: MFA verify returns `400` (not `401`) for "invalid code" / "session expired" so the auto-401-refresh interceptor doesn't bounce the user out mid-MFA; shared `formatApiError` helper; GitLab button added to Login + Signup
+- **Account page Posture Snapshot polish**: panel `self-stretch`es to match the account card height instead of leaving a dead gap; stat tiles centered with `text-[26px]` numbers; compliance rows collapsed to a single line (`label | bar | %`) with `h-1.5` bars; smaller header label and tighter padding so the panel fits without overflowing
+- **Add account button**: padding fix (`px-5 py-2.5`)
+
+**Remaining gaps after session 15:**
+
+1. `alembic upgrade head` — migrations 0019–0025 (run on next deploy; **0025 adds `users.gitlab_id`** and is required for GitLab sign-in)
+2. GitLab OAuth app must list both `/v1/auth/gitlab/callback` (login/link) and `/v1/integrations/gitlab/callback` (evidence) as redirect URIs, with scopes `read_user` + `read_api`
+3. End-to-end sandbox validation (deferred — needs throwaway AWS account)
+4. Hetzner deploy (deferred)
+5. Stripe (deferred)
+6. Re-scan production account to populate action-level `actions_json` after collector fix
+7. Some scan_runs still drop into `error` immediately on first start with no detail — needs root-cause once a stable AWS sandbox exists
 
 ### Phase 3 — GitHub integration (3 weeks)
 
