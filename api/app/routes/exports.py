@@ -147,8 +147,30 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
         "github.repo.no_branch_protection": ["CC7.1"],
     }
 
+    control_results: list[dict] = []
+    for ctrl_id, title, desc, ctrl_status, open_ct, exc_ct in sample_controls:
+        checks_for_ctrl = [c for c, ctrls in check_to_control.items() if ctrl_id in ctrls]
+        open_findings = [f for c in checks_for_ctrl for f in finding_by_check.get(c, []) if f["status"] == "open"]
+        control_results.append({
+            "control_id": ctrl_id,
+            "title": title,
+            "description": desc,
+            "guidance": "",
+            "status": ctrl_status,
+            "finding_count": open_ct,
+            "findings": open_findings,
+        })
+
+    from types import SimpleNamespace
+    from app.services.pdf_report import build_pdf
+
+    sample_acc = SimpleNamespace(label="ACME Corp Demo", account_id="123456789012")
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        pdf_bytes = build_pdf(sample_acc, framework, 90, now, control_results)
+        zf.writestr("report.pdf", pdf_bytes)
+
         # README
         passed = sum(1 for _, _, _, s, _, _ in sample_controls if s == "pass")
         failed = sum(1 for _, _, _, s, _, _ in sample_controls if s == "fail")
@@ -168,7 +190,7 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
             "",
             "START HERE",
             "-" * 40,
-            "1. Read report.pdf (not included in sample — real packs include it).",
+            "1. Read report.pdf for the auditor-facing summary.",
             "2. Open INDEX.csv for pass/fail per control.",
             "3. Drill into controls/[ID]/ for findings and exceptions.",
             "4. timeline.csv shows when findings opened or were excepted.",
@@ -176,6 +198,7 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
             "CONTENTS",
             "-" * 40,
             "README.txt             - this file",
+            "report.pdf             - formatted summary report",
             "INDEX.csv              - control status table",
             "control_status.csv     - same as INDEX.csv",
             "timeline.csv           - sample audit-period events",
@@ -250,6 +273,11 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
                 "successful_scans": 12,
                 "evidence_snapshots_in_period": 847,
                 "snapshot_types": {"iam_user": 24, "iam_role": 18, "s3_bucket": 6, "github_identity": 42},
+            },
+            "artifacts": {
+                "report.pdf": "Executive summary (included in this sample pack)",
+                "INDEX.csv": "Control status table",
+                "timeline.csv": "Audit-period events",
             },
         }
         zf.writestr("source_manifest.json", json.dumps(manifest, indent=2))
