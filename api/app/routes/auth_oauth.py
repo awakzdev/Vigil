@@ -8,13 +8,13 @@ import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.security import current_principal, issue_mfa_challenge_token, issue_refresh_token, issue_token
-from app.models import Org, User
+from app.models import AwsAccount, Org, User
 from app.routes.github_integration import handle_github_integration_callback, is_github_integration_state
 
 router = APIRouter()
@@ -78,16 +78,95 @@ def _oauth_link_redirect(user: User, provider: str) -> RedirectResponse:
     )
 
 
-def _link_error_redirect(error: str) -> RedirectResponse:
+def _link_error_redirect(provider: str, error: str) -> RedirectResponse:
+    """Redirect a link-flow failure back to /account — the user is logged in
+    and shouldn't be bounced to the sign-in page."""
+    return RedirectResponse(
+        f"{_frontend_url()}/account?provider={quote(provider, safe='')}&error={quote(error, safe='')}"
+    )
+
+
+def _is_link_state(state: str | None) -> bool:
+    return bool(state and state.startswith("link:"))
+
+
+def _callback_error(state: str | None, provider: str, error: str) -> RedirectResponse:
+    """Redirect an OAuth callback error to the right page based on flow.
+
+    Link flow → /account (user is logged in).
+    Login flow → /login (user is not).
+    """
+    if _is_link_state(state):
+        return _link_error_redirect(provider, error)
     return RedirectResponse(f"{_frontend_url()}/login?error={quote(error, safe='')}")
+
+
+def _claim_or_block(
+    db: Session,
+    current_user_id: str,
+    existing: User | None,
+    provider: str,
+    field: str,
+) -> RedirectResponse | None:
+    """Resolve a link-time conflict where another user already owns this IdP.
+
+    Returns None if there is no conflict, or if the conflicting user is an
+    orphan (no AWS accounts in their org) and we successfully claimed the IdP.
+    Returns a RedirectResponse if the conflict cannot be resolved.
+
+    An orphan's IdP is freed by either deleting the whole org (if they are
+    the only user there) or just nulling the IdP field (multi-user org).
+    """
+    if not existing or str(existing.id) == current_user_id:
+        return None
+
+    aws_count = db.scalar(
+        select(func.count()).select_from(AwsAccount).where(AwsAccount.org_id == existing.org_id)
+    ) or 0
+    if aws_count > 0:
+        return _link_error_redirect(provider, f"{provider}_already_linked")
+
+    users_in_org = db.scalar(
+        select(func.count()).select_from(User).where(User.org_id == existing.org_id)
+    ) or 0
+
+    if users_in_org <= 1:
+        # SQL-level delete: ORM cascade would try to SET users.org_id = NULL first
+        # (violating NOT NULL). DB-level ON DELETE CASCADE on User.org_id handles
+        # the dependent rows correctly.
+        orphan_org_id = existing.org_id
+        orphan_user_id = str(existing.id)
+        orphan_email = existing.email
+        db.expunge(existing)
+        db.execute(delete(Org).where(Org.id == orphan_org_id))
+        log.info(
+            "oauth.link.claimed_orphan_org",
+            provider=provider,
+            claimant_user_id=current_user_id,
+            orphan_user_id=orphan_user_id,
+            orphan_email=orphan_email,
+            orphan_org_id=str(orphan_org_id),
+        )
+    else:
+        setattr(existing, field, None)
+        db.flush()
+        log.info(
+            "oauth.link.freed_orphan_idp",
+            provider=provider,
+            claimant_user_id=current_user_id,
+            previous_owner_user_id=str(existing.id),
+        )
+
+    return None
 
 
 # ── Google ────────────────────────────────────────────────────────────────────
 
 @router.get("/google")
-def google_login():
+def google_login(link_token: str | None = None):
     if not settings.GOOGLE_CLIENT_ID:
         raise HTTPException(400, "Google OAuth not configured")
+    state = f"link:{link_token}" if _valid_link_token(link_token) else "login"
     params = {
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": _google_callback_uri(),
@@ -95,14 +174,20 @@ def google_login():
         "scope": "openid email profile",
         "access_type": "offline",
         "prompt": "select_account",
+        "state": state,
     }
     return RedirectResponse(f"{_GOOGLE_AUTH_URL}?{urlencode(params)}")
 
 
 @router.get("/google/callback")
-def google_callback(code: str | None = None, error: str | None = None, db: Session = Depends(get_db)):
+def google_callback(
+    code: str | None = None,
+    error: str | None = None,
+    state: str | None = None,
+    db: Session = Depends(get_db),
+):
     if error or not code:
-        return RedirectResponse(f"{_frontend_url()}/login?error=oauth_denied")
+        return _callback_error(state, "google", "oauth_denied")
 
     try:
         with httpx.Client(timeout=10) as client:
@@ -114,33 +199,60 @@ def google_callback(code: str | None = None, error: str | None = None, db: Sessi
                 "grant_type": "authorization_code",
             })
             if token_resp.status_code != 200:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                return _callback_error(state, "google", "oauth_failed")
 
             access_token = token_resp.json()["access_token"]
             info_resp = client.get(_GOOGLE_USERINFO_URL, headers={"Authorization": f"Bearer {access_token}"})
             if info_resp.status_code != 200:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                return _callback_error(state, "google", "oauth_failed")
 
         info = info_resp.json()
         email: str = info.get("email", "").lower()
         name: str = info.get("name") or email.split("@")[0]
+        google_id: str = str(info.get("sub") or "")
 
-        if not email:
-            return RedirectResponse(f"{_frontend_url()}/login?error=no_email")
+        if not email or not google_id:
+            return _callback_error(state, "google", "no_email")
 
-        user = db.scalar(select(User).where(User.email == email))
+        # link flow: attach google_id to existing account
+        if state and state.startswith("link:"):
+            link_token_val = state[5:]
+            try:
+                from jose import jwt as _jwt
+                payload = _jwt.decode(link_token_val, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
+                user_id = payload["sub"]
+            except Exception:
+                return _link_error_redirect("google", "bad_link_token")
+
+            existing = db.scalar(select(User).where(User.google_id == google_id))
+            blocked = _claim_or_block(db, user_id, existing, "google", "google_id")
+            if blocked:
+                return blocked
+
+            user = db.get(User, uuid.UUID(user_id))
+            if not user:
+                return _link_error_redirect("google", "not_found")
+            user.google_id = google_id
+            db.commit()
+            return _oauth_link_redirect(user, "google")
+
+        user = db.scalar(select(User).where(User.google_id == google_id))
+        if not user:
+            user = db.scalar(select(User).where(User.email == email))
+
         if not user:
             org = Org(id=uuid.uuid4(), name=name)
-            user = User(id=uuid.uuid4(), org_id=org.id, email=email, password_hash="")
+            user = User(id=uuid.uuid4(), org_id=org.id, email=email, password_hash="", google_id=google_id)
             db.add_all([org, user])
-            db.commit()
+        elif not user.google_id:
+            user.google_id = google_id
+        db.commit()
 
-        uid, oid = str(user.id), str(user.org_id)
         return _oauth_login_redirect(user)
 
     except Exception as e:
         log.exception("google.callback_error", error=str(e))
-        return RedirectResponse(f"{_frontend_url()}/login?error=server_error")
+        return _callback_error(state, "google", "server_error")
 
 
 # ── GitHub ────────────────────────────────────────────────────────────────────
@@ -170,7 +282,7 @@ def github_callback(
         return handle_github_integration_callback(code=code, state=state, error=error, db=db)
 
     if error or not code:
-        return RedirectResponse(f"{_frontend_url()}/login?error=oauth_denied")
+        return _callback_error(state, "github", "oauth_denied")
 
     try:
         with httpx.Client(timeout=10) as client:
@@ -185,17 +297,17 @@ def github_callback(
                 headers={"Accept": "application/json"},
             )
             if token_resp.status_code != 200:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                return _callback_error(state, "github", "oauth_failed")
 
             gh_token = token_resp.json().get("access_token")
             if not gh_token:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                return _callback_error(state, "github", "oauth_failed")
 
             auth_headers = {"Authorization": f"Bearer {gh_token}", "Accept": "application/json"}
 
             user_resp = client.get(_GITHUB_USER_URL, headers=auth_headers)
             if user_resp.status_code != 200:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                return _callback_error(state, "github", "oauth_failed")
 
             gh_user = user_resp.json()
             github_id = str(gh_user["id"])
@@ -219,15 +331,16 @@ def github_callback(
                 payload = _jwt.decode(link_token_val, s.JWT_SECRET, algorithms=[s.JWT_ALG])
                 user_id = payload["sub"]
             except Exception:
-                return _link_error_redirect("bad_link_token")
+                return _link_error_redirect("github", "bad_link_token")
 
             existing = db.scalar(select(User).where(User.github_id == github_id))
-            if existing and str(existing.id) != user_id:
-                return _link_error_redirect("github_already_linked")
+            blocked = _claim_or_block(db, user_id, existing, "github", "github_id")
+            if blocked:
+                return blocked
 
             user = db.get(User, uuid.UUID(user_id))
             if not user:
-                return _link_error_redirect("not_found")
+                return _link_error_redirect("github", "not_found")
 
             user.github_id = github_id
             db.commit()
@@ -240,7 +353,7 @@ def github_callback(
 
         if not user:
             if not email:
-                return RedirectResponse(f"{_frontend_url()}/login?error=no_email")
+                return _callback_error(state, "github", "no_email")
             name = gh_user.get("name") or gh_user.get("login") or email.split("@")[0]
             org = Org(id=uuid.uuid4(), name=name)
             user = User(id=uuid.uuid4(), org_id=org.id, email=email, password_hash="", github_id=github_id)
@@ -253,7 +366,7 @@ def github_callback(
 
     except Exception as e:
         log.exception("github.callback_error", error=str(e))
-        return RedirectResponse(f"{_frontend_url()}/login?error=server_error")
+        return _callback_error(state, "github", "server_error")
 
 
 # ── GitLab ────────────────────────────────────────────────────────────────────
@@ -281,32 +394,51 @@ def gitlab_callback(
     db: Session = Depends(get_db),
 ):
     if error or not code:
-        return RedirectResponse(f"{_frontend_url()}/login?error=oauth_denied")
+        return _callback_error(state, "gitlab", "oauth_denied")
 
     try:
         with httpx.Client(timeout=10) as client:
+            # Try form-body credentials first; fall back to HTTP Basic Auth on 401
+            # (RFC 6749 §2.3.1 — both are valid; some IdPs only accept one).
+            common_data = {
+                "code": code,
+                "grant_type": "authorization_code",
+                "redirect_uri": _gitlab_callback_uri(),
+            }
             token_resp = client.post(
                 f"{_GITLAB_COM}/oauth/token",
                 data={
+                    **common_data,
                     "client_id": settings.GITLAB_CLIENT_ID,
                     "client_secret": settings.GITLAB_CLIENT_SECRET,
-                    "code": code,
-                    "grant_type": "authorization_code",
-                    "redirect_uri": _gitlab_callback_uri(),
                 },
                 headers={"Accept": "application/json"},
             )
+            if token_resp.status_code == 401:
+                log.warning("gitlab.token.form_body_rejected", body=token_resp.text[:200])
+                token_resp = client.post(
+                    f"{_GITLAB_COM}/oauth/token",
+                    data=common_data,
+                    headers={"Accept": "application/json"},
+                    auth=(settings.GITLAB_CLIENT_ID, settings.GITLAB_CLIENT_SECRET),
+                )
             if token_resp.status_code != 200:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                log.warning(
+                    "gitlab.token.exchange_failed",
+                    status=token_resp.status_code,
+                    body=token_resp.text[:300],
+                )
+                return _callback_error(state, "gitlab", "oauth_failed")
 
             access_token = token_resp.json().get("access_token")
             if not access_token:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                return _callback_error(state, "gitlab", "oauth_failed")
 
             auth_headers = {"Authorization": f"Bearer {access_token}"}
             user_resp = client.get(f"{_GITLAB_COM}/api/v4/user", headers=auth_headers)
             if user_resp.status_code != 200:
-                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+                log.warning("gitlab.user_fetch_failed", status=user_resp.status_code)
+                return _callback_error(state, "gitlab", "oauth_failed")
 
             gl_user = user_resp.json()
             gitlab_id = str(gl_user["id"])
@@ -319,15 +451,16 @@ def gitlab_callback(
                 payload = _jwt.decode(link_token_val, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
                 user_id = payload["sub"]
             except Exception:
-                return _link_error_redirect("bad_link_token")
+                return _link_error_redirect("gitlab", "bad_link_token")
 
             existing = db.scalar(select(User).where(User.gitlab_id == gitlab_id))
-            if existing and str(existing.id) != user_id:
-                return _link_error_redirect("gitlab_already_linked")
+            blocked = _claim_or_block(db, user_id, existing, "gitlab", "gitlab_id")
+            if blocked:
+                return blocked
 
             user = db.get(User, uuid.UUID(user_id))
             if not user:
-                return _link_error_redirect("not_found")
+                return _link_error_redirect("gitlab", "not_found")
 
             user.gitlab_id = gitlab_id
             db.commit()
@@ -339,7 +472,7 @@ def gitlab_callback(
 
         if not user:
             if not email:
-                return RedirectResponse(f"{_frontend_url()}/login?error=no_email")
+                return _callback_error(state, "gitlab", "no_email")
             name = gl_user.get("name") or gl_user.get("username") or email.split("@")[0]
             org = Org(id=uuid.uuid4(), name=name)
             user = User(
@@ -358,4 +491,4 @@ def gitlab_callback(
 
     except Exception as e:
         log.exception("gitlab.callback_error", error=str(e))
-        return RedirectResponse(f"{_frontend_url()}/login?error=server_error")
+        return _callback_error(state, "gitlab", "server_error")

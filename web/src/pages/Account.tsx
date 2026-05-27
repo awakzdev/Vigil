@@ -8,6 +8,7 @@ interface Me {
   email: string;
   github_id: string | null;
   gitlab_id: string | null;
+  google_id: string | null;
   totp_enabled: boolean;
   has_password: boolean;
 }
@@ -20,7 +21,7 @@ interface MfaSetup {
 
 export default function Account() {
   const qc = useQueryClient();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
 
   const { data: me } = useQuery<Me>({
     queryKey: ["me"],
@@ -81,31 +82,51 @@ export default function Account() {
     changePw.mutate();
   }
 
-  // GitHub connect/disconnect
-  const [ghMsg, setGhMsg] = useState<{ ok: boolean; text: string } | null>(null);
-  const [glMsg, setGlMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // GitHub / GitLab / Google connect/disconnect — feedback as a single bottom toast.
+  const [toast, setToast] = useState<{ kind: "success" | "error"; text: string } | null>(null);
 
   useEffect(() => {
     const gh = params.get("github");
     const gl = params.get("gitlab");
+    const go = params.get("google");
     const err = params.get("error");
-    if (gh === "linked") setGhMsg({ ok: true, text: "GitHub connected." });
-    if (gl === "linked") setGlMsg({ ok: true, text: "GitLab connected." });
-    if (err === "github_already_linked") setGhMsg({ ok: false, text: "That GitHub account is already linked to another user." });
-    if (err === "gitlab_already_linked") setGlMsg({ ok: false, text: "That GitLab account is already linked to another user." });
-    if (err === "bad_link_token") {
-      setGhMsg({ ok: false, text: "Session expired. Try again." });
-      setGlMsg({ ok: false, text: "Session expired. Try again." });
+    if (!gh && !gl && !go && !err) return;
+
+    if (gh === "linked") setToast({ kind: "success", text: "GitHub connected" });
+    else if (gl === "linked") setToast({ kind: "success", text: "GitLab connected" });
+    else if (go === "linked") setToast({ kind: "success", text: "Google connected" });
+    else if (err) {
+      const friendly =
+        err === "github_already_linked" ? "That GitHub account is already linked to another user." :
+        err === "gitlab_already_linked" ? "That GitLab account is already linked to another user." :
+        err === "google_already_linked" ? "That Google account is already linked to another user." :
+        err === "bad_link_token" ? "Session expired. Try again." :
+        err === "oauth_denied" ? "Connection cancelled." :
+        err === "no_email" ? "Couldn't read your email from the provider." :
+        err === "not_found" ? "Account not found. Try again." :
+        "Couldn't connect. Try again.";
+      setToast({ kind: "error", text: friendly });
     }
-  }, [params]);
+
+    const cleaned = new URLSearchParams(params);
+    cleaned.delete("github");
+    cleaned.delete("gitlab");
+    cleaned.delete("google");
+    cleaned.delete("error");
+    cleaned.delete("provider");
+    setParams(cleaned, { replace: true });
+  }, [params, setParams]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), toast.kind === "error" ? 6000 : 4000);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   const disconnectGh = useMutation({
     mutationFn: () => api("/v1/auth/me/github", { method: "DELETE" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["me"] });
-      setGhMsg({ ok: true, text: "GitHub disconnected." });
-    },
-    onError: (e: Error) => setGhMsg({ ok: false, text: formatApiError(e) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
+    onError: (e: Error) => setToast({ kind: "error", text: formatApiError(e) }),
   });
 
   const sessionToken = token();
@@ -115,15 +136,22 @@ export default function Account() {
 
   const disconnectGl = useMutation({
     mutationFn: () => api("/v1/auth/me/gitlab", { method: "DELETE" }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["me"] });
-      setGlMsg({ ok: true, text: "GitLab disconnected." });
-    },
-    onError: (e: Error) => setGlMsg({ ok: false, text: formatApiError(e) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
+    onError: (e: Error) => setToast({ kind: "error", text: formatApiError(e) }),
   });
 
   const glConnectUrl = sessionToken
     ? `${BASE}/v1/auth/gitlab?link_token=${encodeURIComponent(sessionToken)}`
+    : null;
+
+  const disconnectGoogle = useMutation({
+    mutationFn: () => api("/v1/auth/me/google", { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["me"] }),
+    onError: (e: Error) => setToast({ kind: "error", text: formatApiError(e) }),
+  });
+
+  const googleConnectUrl = sessionToken
+    ? `${BASE}/v1/auth/google?link_token=${encodeURIComponent(sessionToken)}`
     : null;
 
   // MFA
@@ -178,12 +206,25 @@ export default function Account() {
     onError: (e: Error) => setMfaMsg({ ok: false, text: formatApiError(e) }),
   });
 
+  const signinMethodCount = me
+    ? (me.has_password ? 1 : 0) + (me.github_id ? 1 : 0) + (me.gitlab_id ? 1 : 0) + (me.google_id ? 1 : 0)
+    : 0;
+  const onlyOneMethod = me ? signinMethodCount === 1 : false;
+
   return (
     <div className="max-w-lg space-y-8">
       <div>
         <h1 className="text-xl font-semibold text-zinc-900">Account</h1>
         {me && <p className="text-sm text-zinc-500 mt-1">{me.email}</p>}
       </div>
+
+      {me && onlyOneMethod && (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong className="font-semibold">Only one sign-in method.</strong>{" "}
+          Set a password or connect another provider so you don't get locked out if{" "}
+          {me.has_password ? "you forget it" : me.github_id ? "GitHub access changes" : me.gitlab_id ? "GitLab access changes" : "Google access changes"}.
+        </div>
+      )}
 
       {/* Change / set password */}
       <section className="rounded-xl border border-zinc-200 bg-white px-6 py-6">
@@ -266,12 +307,6 @@ export default function Account() {
         </div>
 
         <div className="mt-5 border-t border-zinc-100 pt-5">
-          {ghMsg && (
-            <div className={`mb-4 rounded-lg px-3 py-2.5 text-sm ${ghMsg.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-600 border border-red-200"}`}>
-              {ghMsg.text}
-            </div>
-          )}
-
           {me?.github_id ? (
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2.5">
@@ -280,14 +315,20 @@ export default function Account() {
                 </svg>
                 <span className="text-sm text-zinc-700">Connected</span>
               </div>
-              <button
-                onClick={() => disconnectGh.mutate()}
-                disabled={disconnectGh.isPending || !me.has_password}
-                title={!me.has_password ? "Set a password before disconnecting your last sign-in method." : undefined}
-                className="shrink-0 text-sm text-red-600 hover:text-red-700 font-medium transition-colors disabled:opacity-60 disabled:hover:text-red-600"
-              >
-                {disconnectGh.isPending ? "Disconnecting…" : "Disconnect"}
-              </button>
+              {(() => {
+                const otherMethods = (me.has_password ? 1 : 0) + (me.gitlab_id ? 1 : 0) + (me.google_id ? 1 : 0);
+                const lastMethod = otherMethods === 0;
+                return (
+                  <button
+                    onClick={() => disconnectGh.mutate()}
+                    disabled={disconnectGh.isPending || lastMethod}
+                    title={lastMethod ? "Set a password or connect another sign-in method before disconnecting your last one." : undefined}
+                    className="shrink-0 text-sm text-red-600 hover:text-red-700 font-medium transition-colors disabled:opacity-60 disabled:hover:text-red-600"
+                  >
+                    {disconnectGh.isPending ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                );
+              })()}
             </div>
           ) : ghConnectUrl ? (
             <a
@@ -313,12 +354,6 @@ export default function Account() {
         </div>
 
         <div className="mt-5 border-t border-zinc-100 pt-5">
-          {glMsg && (
-            <div className={`mb-4 rounded-lg px-3 py-2.5 text-sm ${glMsg.ok ? "bg-green-50 text-green-700 border border-green-200" : "bg-red-50 text-red-600 border border-red-200"}`}>
-              {glMsg.text}
-            </div>
-          )}
-
           {me?.gitlab_id ? (
             <div className="flex items-center justify-between gap-4">
               <div className="flex items-center gap-2.5">
@@ -327,14 +362,20 @@ export default function Account() {
                 </svg>
                 <span className="text-sm text-zinc-700">Connected</span>
               </div>
-              <button
-                onClick={() => disconnectGl.mutate()}
-                disabled={disconnectGl.isPending || !me.has_password}
-                title={!me.has_password ? "Set a password before disconnecting your last sign-in method." : undefined}
-                className="shrink-0 text-sm text-red-600 hover:text-red-700 font-medium transition-colors disabled:opacity-60 disabled:hover:text-red-600"
-              >
-                {disconnectGl.isPending ? "Disconnecting…" : "Disconnect"}
-              </button>
+              {(() => {
+                const otherMethods = (me.has_password ? 1 : 0) + (me.github_id ? 1 : 0) + (me.google_id ? 1 : 0);
+                const lastMethod = otherMethods === 0;
+                return (
+                  <button
+                    onClick={() => disconnectGl.mutate()}
+                    disabled={disconnectGl.isPending || lastMethod}
+                    title={lastMethod ? "Set a password or connect another sign-in method before disconnecting your last one." : undefined}
+                    className="shrink-0 text-sm text-red-600 hover:text-red-700 font-medium transition-colors disabled:opacity-60 disabled:hover:text-red-600"
+                  >
+                    {disconnectGl.isPending ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                );
+              })()}
             </div>
           ) : glConnectUrl ? (
             <a
@@ -348,6 +389,59 @@ export default function Account() {
             </a>
           ) : (
             <p className="text-sm text-zinc-500">Sign in again to connect GitLab.</p>
+          )}
+        </div>
+      </section>
+
+      {/* Google */}
+      <section className="rounded-xl border border-zinc-200 bg-white px-6 py-6">
+        <div className="space-y-1.5">
+          <h2 className="text-sm font-semibold text-zinc-900">Google</h2>
+          <p className="text-xs leading-relaxed text-zinc-500">Connect Google Workspace to sign in without a password.</p>
+        </div>
+
+        <div className="mt-5 border-t border-zinc-100 pt-5">
+          {me?.google_id ? (
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2.5">
+                <svg className="w-5 h-5" viewBox="0 0 24 24" aria-hidden="true">
+                  <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                  <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                  <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.83z"/>
+                  <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+                </svg>
+                <span className="text-sm text-zinc-700">Connected</span>
+              </div>
+              {(() => {
+                const otherMethods = (me.has_password ? 1 : 0) + (me.github_id ? 1 : 0) + (me.gitlab_id ? 1 : 0);
+                const lastMethod = otherMethods === 0;
+                return (
+                  <button
+                    onClick={() => disconnectGoogle.mutate()}
+                    disabled={disconnectGoogle.isPending || lastMethod}
+                    title={lastMethod ? "Set a password or connect another sign-in method before disconnecting your last one." : undefined}
+                    className="shrink-0 text-sm text-red-600 hover:text-red-700 font-medium transition-colors disabled:opacity-60 disabled:hover:text-red-600"
+                  >
+                    {disconnectGoogle.isPending ? "Disconnecting…" : "Disconnect"}
+                  </button>
+                );
+              })()}
+            </div>
+          ) : googleConnectUrl ? (
+            <a
+              href={googleConnectUrl}
+              className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 px-4 py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
+            >
+              <svg className="w-4 h-4" viewBox="0 0 24 24" aria-hidden="true">
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
+                <path fill="#FBBC05" d="M5.84 14.1c-.22-.66-.35-1.36-.35-2.1s.13-1.44.35-2.1V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.83z"/>
+                <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
+              </svg>
+              Connect Google
+            </a>
+          ) : (
+            <p className="text-sm text-zinc-500">Sign in again to connect Google.</p>
           )}
         </div>
       </section>
@@ -510,6 +604,25 @@ export default function Account() {
           )}
         </div>
       </section>
+
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-full bg-zinc-900 px-4 py-2 shadow-lg shadow-black/10 ring-1 ring-white/5 animate-toast-in"
+        >
+          {toast.kind === "success" ? (
+            <svg className="h-3.5 w-3.5 shrink-0 text-emerald-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m5 10.5 3.5 3.5L15 7" />
+            </svg>
+          ) : (
+            <svg className="h-3.5 w-3.5 shrink-0 text-red-400" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M6 6l8 8M14 6l-8 8" />
+            </svg>
+          )}
+          <span className="text-sm font-medium text-white">{toast.text}</span>
+        </div>
+      )}
     </div>
   );
 }

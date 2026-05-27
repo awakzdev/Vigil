@@ -1,6 +1,6 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-27 (session 15)_
+_Last updated: 2026-05-27 (session 16)_
 
 ---
 
@@ -706,6 +706,23 @@ policy analysis, onboarding empty state.
 5. Stripe (deferred)
 6. Re-scan production account to populate action-level `actions_json` after collector fix
 7. Some scan_runs still drop into `error` immediately on first start with no detail — needs root-cause once a stable AWS sandbox exists
+
+**Session 16 additions (2026-05-27):**
+- **Google OAuth fully linkable** (was login-only): `users.google_id` column via migration `0026_user_google_id.py` (unique); `User` model + `MeOut` exposes `google_id`; `_remaining_signin_methods` counts Google so disconnect lockout works correctly; `DELETE /v1/auth/me/google` endpoint; Account page now has Connect Google / Disconnect Google section mirroring GitHub/GitLab
+- **Orphan-IdP auto-claim on link**: when linking a provider that's already owned by another user with no AWS accounts (an "orphan" from a prior login-flow signup), the orphan user/org is deleted and the IdP is freed onto the current user; uses SQL-level `DELETE FROM orgs WHERE id = ...` to leverage DB-level `ON DELETE CASCADE` on `User.org_id` — ORM `db.delete(org)` was crashing with NotNullViolation because the default relationship cascade tried to `SET users.org_id = NULL` before the delete
+- **Link-flow errors no longer bounce to `/login`**: state-aware `_callback_error(state, provider, error)` routes link failures to `/account?provider=<p>&error=<code>` (user stays logged in) and login failures to `/login?error=<code>`; provider hint in the URL lets the frontend target the right card's message
+- **Unified toast feedback**: replaced per-provider inline red banners and the success-only toast with a single dark-pill toast at bottom-center — emerald check for success (4s) and red `×` for errors (6s); applies to OAuth link/unlink + URL error params; "Only one sign-in method" warning banner shows on Account page when the user has just one way to log in
+- **GitLab token exchange hardened**: tries form-body credentials first, falls back to HTTP Basic Auth on 401 (RFC 6749 §2.3.1); both auth styles supported
+
+**Remaining gaps after session 16:**
+
+1. `alembic upgrade head` — migrations 0019–0026 (run on next deploy; **0026 adds `users.google_id`**, required for proper Google link/disconnect)
+2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
+3. Hetzner deploy (deferred)
+4. Stripe (deferred)
+5. Re-scan production account to populate action-level `actions_json` after collector fix
+6. Some scan_runs drop into `error` immediately on first start with no detail — root-cause once a stable AWS sandbox exists
+7. Login-flow orphan creation: signing in via GitLab/Google with an email that doesn't match an existing user still creates a brand-new user+org. Auto-claim only fires on the *link* flow. Consider gating login-flow signup behind explicit "create new account" intent (low priority — orphan-claim already mops up the symptom)
 
 ### Phase 3 — GitHub integration (3 weeks)
 

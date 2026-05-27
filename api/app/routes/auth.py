@@ -218,6 +218,7 @@ class MeOut(BaseModel):
     email: str
     github_id: str | None
     gitlab_id: str | None
+    google_id: str | None
     totp_enabled: bool
     has_password: bool
 
@@ -232,6 +233,7 @@ def get_me(principal: dict = Depends(current_principal), db: Session = Depends(g
         email=user.email,
         github_id=user.github_id,
         gitlab_id=user.gitlab_id,
+        google_id=user.google_id,
         totp_enabled=user.totp_enabled,
         has_password=bool(user.password_hash),
     )
@@ -267,6 +269,18 @@ def change_password(
     db.commit()
 
 
+def _remaining_signin_methods(user: User, *, excluding: str) -> int:
+    """Count sign-in methods that will remain after disconnecting `excluding`."""
+    count = 1 if user.password_hash else 0
+    if excluding != "github" and user.github_id:
+        count += 1
+    if excluding != "gitlab" and user.gitlab_id:
+        count += 1
+    if excluding != "google" and user.google_id:
+        count += 1
+    return count
+
+
 @router.delete("/me/github", status_code=204)
 def disconnect_github(
     principal: dict = Depends(current_principal),
@@ -275,8 +289,11 @@ def disconnect_github(
     user = db.get(User, uuid.UUID(principal["sub"]))
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-    if not user.password_hash:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "set a password before disconnecting GitHub")
+    if _remaining_signin_methods(user, excluding="github") == 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "set a password or connect another sign-in method before disconnecting GitHub",
+        )
     user.github_id = None
     db.commit()
 
@@ -289,7 +306,27 @@ def disconnect_gitlab(
     user = db.get(User, uuid.UUID(principal["sub"]))
     if not user:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
-    if not user.password_hash:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "set a password before disconnecting GitLab")
+    if _remaining_signin_methods(user, excluding="gitlab") == 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "set a password or connect another sign-in method before disconnecting GitLab",
+        )
     user.gitlab_id = None
+    db.commit()
+
+
+@router.delete("/me/google", status_code=status.HTTP_204_NO_CONTENT)
+def disconnect_google(
+    principal: dict = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, uuid.UUID(principal["sub"]))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    if _remaining_signin_methods(user, excluding="google") == 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "set a password or connect another sign-in method before disconnecting Google",
+        )
+    user.google_id = None
     db.commit()
