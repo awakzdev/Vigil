@@ -218,7 +218,9 @@
     "title": "Ensure IAM policies are attached only to groups or roles",
     "description": "By default, IAM users, groups, and roles have no access to AWS resources. Assigning policies directly to individual users is harder to manage at scale.",
     "guidance": "Remove directly-attached user policies and instead assign permissions via roles or groups.",
-    "checks": []
+    "checks": [
+      "iam.user.direct_policy_attachment"
+    ]
   },
   {
     "framework": "cis_aws_l1",

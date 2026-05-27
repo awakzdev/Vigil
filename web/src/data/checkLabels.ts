@@ -5,6 +5,7 @@ export const checkLabels: Record<string, string> = {
   "iam.root.usage": "Root account used recently",
   "iam.account.password_policy_weak": "Weak password policy",
   "iam.user.no_mfa": "MFA not enabled",
+  "iam.user.direct_policy_attachment": "Policy attached directly to user",
   "iam.user.inactive_90d": "Inactive user",
   "iam.access_key.unused_90d": "Unused access key",
   "iam.access_key.no_rotation_90d": "Long-lived access key",

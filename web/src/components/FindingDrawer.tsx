@@ -66,6 +66,26 @@ aws iam delete-login-profile --user-name <user>
 aws iam delete-user --user-name <user>`,
     risk: "Stale console users should be disabled or removed after ownership is confirmed.",
   },
+  "iam.user.direct_policy_attachment": {
+    why: "CIS expects permissions on IAM users to come from groups or roles — not policies attached directly to the user. Direct attachment is harder to audit, review, and revoke at scale.",
+    console: [
+      "Open IAM → Users → select the user",
+      'Click "Permissions" tab',
+      "Detach any managed policies attached directly to the user",
+      "Delete any inline user policies",
+      "Add the user to an IAM group or grant access via an assumable role instead",
+    ],
+    cli: `# List direct attachments
+aws iam list-attached-user-policies --user-name <user>
+aws iam list-user-policies --user-name <user>
+
+# Detach managed policy
+aws iam detach-user-policy --user-name <user> --policy-arn <policy-arn>
+
+# Delete inline policy
+aws iam delete-user-policy --user-name <user> --policy-name <policy-name>`,
+    risk: "Detaching policies may break scripts or console workflows that depend on user-scoped grants — confirm usage before removing.",
+  },
   "iam.access_key.unused_90d": {
     why: "Unused access keys are typically abandoned in scripts, CI config, or developer machines — often forgotten and never rotated. They're persistent credentials with no expiry.",
     console: ["Open IAM → Users → select the user", 'Click "Security credentials" tab', "Find the key under Access Keys", 'Click "Deactivate" first to verify nothing breaks, then "Delete"'],
@@ -1914,6 +1934,8 @@ type BlastRadiusData = {
   has_console_password?: boolean;
   days_inactive?: number | null;
   active_key_count?: number;
+  attached_policies?: { policy_arn: string; policy_name: string; policy_type?: string }[];
+  inline_policy_names?: string[];
   // security group fields
   group_id?: string;
   group_name?: string;
@@ -2047,6 +2069,12 @@ function buildVerdict(data: BlastRadiusData, checkId?: string): { text: string; 
   }
 
   if (resource_type === "iam_user") {
+    if (checkId === "iam.user.direct_policy_attachment") {
+      return {
+        text: "Move permissions to a group or role before detaching — confirm nothing still depends on these user-scoped grants.",
+        type: "caution",
+      };
+    }
     if (checkId === "iam.user.no_mfa") {
       return {
         text: "Safe to require — MFA applies to console sign-in only; IAM access keys and programmatic access are unchanged until keys are rotated separately.",
@@ -2556,13 +2584,32 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
 
         {/* User: summary */}
         {data.resource_type === "iam_user" && (
-          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
-            <div className="px-3 py-2 text-xs text-zinc-600">
-              {data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}
+          <div className="space-y-2">
+            <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
+              <div className="px-3 py-2 text-xs text-zinc-600">
+                {data.active_key_count} active access key{data.active_key_count !== 1 ? "s" : ""}
+              </div>
+              {data.has_console_password && (
+                <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-600">
+                  Has console password
+                </div>
+              )}
             </div>
-            {data.has_console_password && (
-              <div className="border-t border-zinc-200 px-3 py-2 text-xs text-zinc-600">
-                Has console password
+            {((data.attached_policies?.length ?? 0) > 0 || (data.inline_policy_names?.length ?? 0) > 0) && (
+              <div>
+                <div className="mb-2 text-sm font-semibold text-zinc-700">Direct policy attachments</div>
+                <div className="space-y-1.5">
+                  {(data.attached_policies ?? []).map((pol) => (
+                    <div key={pol.policy_arn} className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-mono text-zinc-700">
+                      {pol.policy_name}
+                    </div>
+                  ))}
+                  {(data.inline_policy_names ?? []).map((name) => (
+                    <div key={name} className="rounded-md border border-violet-200 bg-violet-50 px-3 py-2 text-xs font-mono text-violet-800">
+                      {name} <span className="text-violet-600">(inline)</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </div>

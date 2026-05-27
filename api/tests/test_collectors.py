@@ -62,6 +62,16 @@ class TestCollectIam:
             service_error_code="NoSuchEntity",
             expected_params={"UserName": "alice"},
         )
+        stub.add_response(
+            "list_attached_user_policies",
+            {"AttachedPolicies": [], "IsTruncated": False},
+            {"UserName": "alice"},
+        )
+        stub.add_response(
+            "list_user_policies",
+            {"PolicyNames": [], "IsTruncated": False},
+            {"UserName": "alice"},
+        )
         # list_access_keys
         stub.add_response(
             "list_access_keys",

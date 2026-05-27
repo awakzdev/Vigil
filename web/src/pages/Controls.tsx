@@ -166,6 +166,9 @@ function controlTheme(control: ControlRow) {
 }
 
 function controlSummary(control: ControlRow): string {
+  if (control.check_ids.length === 0) {
+    return "Not automated in Vigil yet — CIS expects this control; map manually or wait for a future check.";
+  }
   if (control.status === "pass") {
     return "Passing — no open findings. Keep in the evidence pack for audit review.";
   }
@@ -301,6 +304,16 @@ function buildQuestionnaireDraft(control: ControlRow, periodDays: number): Quest
   const body = (control.narrative ?? control.description).trim();
   if (!body) return null;
 
+  if (control.check_ids.length === 0) {
+    return {
+      body,
+      notes: [
+        "Status: Not automated in Vigil — no mapped checks for this CIS control yet.",
+        "Answer manually for auditors (e.g. confirm IAM users have no directly attached policies).",
+      ],
+    };
+  }
+
   if (control.status === "no_data") {
     return {
       body,
@@ -334,7 +347,18 @@ function questionnaireDraftText(draft: QuestionnaireDraft) {
   return [draft.body, ...draft.notes].join("\n");
 }
 
-function questionnaireMeta(status: ControlRow["status"]) {
+function questionnaireMeta(control: ControlRow) {
+  if (control.check_ids.length === 0) {
+    return {
+      label: "Questionnaire template",
+      hint: "Not automated in Vigil — manual attestation for auditors.",
+      box: "border-zinc-200 bg-zinc-50/80",
+      labelColor: "text-zinc-600",
+      textColor: "text-zinc-800",
+      btn: "border-zinc-200 text-zinc-700 hover:bg-zinc-100",
+    };
+  }
+  const status = control.status;
   if (status === "pass") {
     return {
       label: "Questionnaire answer",
@@ -368,7 +392,7 @@ function questionnaireMeta(status: ControlRow["status"]) {
 function QuestionnaireAnswerBlock({ control, periodDays }: { control: ControlRow; periodDays: number }) {
   const [copied, setCopied] = useState(false);
   const draft = buildQuestionnaireDraft(control, periodDays);
-  const meta = questionnaireMeta(control.status);
+  const meta = questionnaireMeta(control);
 
   if (!draft) return null;
   const content = draft;
@@ -908,7 +932,7 @@ export default function Controls() {
                               <p className="text-sm leading-relaxed text-zinc-700">{controlSummary(ctrl)}</p>
                             )}
 
-                            {connectedAccount && hasScanned && (
+                            {connectedAccount && hasScanned && ctrl.check_ids.length > 0 && (
                               <div className={`${ctrl.narrative || ctrl.description ? "mt-4" : "mt-0"}`}>
                                 <EvidencePreviewPanel
                                   controlId={ctrl.control_id}
@@ -916,6 +940,13 @@ export default function Controls() {
                                   period={period}
                                 />
                               </div>
+                            )}
+
+                            {ctrl.check_ids.length === 0 && (
+                              <p className="mt-4 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-3 text-xs leading-relaxed text-zinc-600">
+                                No automated Vigil checks map to this CIS control yet — attest manually for auditors
+                                (e.g. confirm IAM users have policies only via groups or roles).
+                              </p>
                             )}
 
                             {ctrl.check_ids.length > 0 && (

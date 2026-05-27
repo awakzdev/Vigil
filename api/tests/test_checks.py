@@ -678,3 +678,28 @@ class TestPermGrantedVsUsed:
         mock_db.scalars.side_effect = scalars_side_effect
         drafts = iam_perm_granted_vs_used.run(mock_db, acc_id)
         assert drafts == []
+
+
+# --- iam.user.direct_policy_attachment ---
+
+class TestUserDirectPolicy:
+    def test_flags_user_with_attached_policy(self, mock_db):
+        from app.checks import iam_user_direct_policy
+        u = MagicMock()
+        u.arn = "arn:aws:iam::123:user/alice"
+        u.name = "alice"
+        u.attached_policies = [{"policy_arn": "arn:aws:iam::123:policy/ReadOnly", "policy_name": "ReadOnly"}]
+        u.inline_policies = {}
+        mock_db.scalars.return_value.all.return_value = [u]
+        drafts = iam_user_direct_policy.run(mock_db, uuid.uuid4())
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "iam.user.direct_policy_attachment"
+
+    def test_passes_user_with_no_direct_policies(self, mock_db):
+        from app.checks import iam_user_direct_policy
+        u = MagicMock()
+        u.attached_policies = []
+        u.inline_policies = {}
+        mock_db.scalars.return_value.all.return_value = [u]
+        drafts = iam_user_direct_policy.run(mock_db, uuid.uuid4())
+        assert drafts == []

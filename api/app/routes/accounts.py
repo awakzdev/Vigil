@@ -634,6 +634,8 @@ def blast_radius(
             "days_inactive": days_inactive,
             "active_key_count": len(active_keys),
             "keys": key_summary,
+            "attached_policies": user.attached_policies or [],
+            "inline_policy_names": list((user.inline_policies or {}).keys()),
             "warnings": warnings,
         }
 

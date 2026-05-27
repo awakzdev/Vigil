@@ -140,6 +140,17 @@ def control_evidence(
         db.scalars(select(CheckControl.check_id).where(CheckControl.control_id == ctrl.id)).all()
     )
 
+    if not check_ids:
+        return {
+            "control_id": ctrl.control_id,
+            "title": ctrl.title,
+            "check_ids": [],
+            "period_days": period,
+            "snapshot_count": 0,
+            "snapshots": [],
+            "note": "No automated Vigil checks are mapped to this control yet.",
+        }
+
     entity_types = _entity_types_for_check_ids(check_ids)
     since = datetime.now(timezone.utc) - timedelta(days=period)
 
@@ -209,4 +220,23 @@ def _entity_types_for_check_ids(check_ids: list[str]) -> list[str]:
             types.add("ebs_encryption_default")
         elif cid.startswith("rds."):
             types.add("rds_instance")
+        elif cid.startswith("dynamodb."):
+            types.add("dynamodb_table")
+        elif cid.startswith("lambda."):
+            types.add("lambda_function")
+        elif cid.startswith("acm."):
+            types.add("acm_certificate")
+        elif cid.startswith("secretsmanager."):
+            types.add("secrets_manager_secret")
+        elif cid.startswith("ssm."):
+            types.add("ssm_parameter")
+        elif cid.startswith("elb."):
+            types.add("elb_load_balancer")
+        elif cid.startswith("sns."):
+            types.add("sns_topic")
+        elif cid.startswith("sqs."):
+            types.add("sqs_queue")
+        elif cid.startswith("ec2.ami") or cid.startswith("ec2.ebs.snapshot"):
+            types.add("ebs_snapshot")
+            types.add("ec2_ami")
     return list(types)

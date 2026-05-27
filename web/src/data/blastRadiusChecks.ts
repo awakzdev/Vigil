@@ -7,6 +7,7 @@ export const BLAST_RADIUS_CHECKS = new Set([
   "iam.account.password_policy_weak",
   "iam.user.no_mfa",
   "iam.user.inactive_90d",
+  "iam.user.direct_policy_attachment",
   "iam.access_key.unused_90d",
   "iam.access_key.no_rotation_90d",
   "iam.access_key.multiple_active",

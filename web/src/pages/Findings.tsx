@@ -64,6 +64,7 @@ const checkDescriptions: Record<string, string> = {
   "iam.root.usage": "Root account should not be used for regular operations — use IAM users or roles instead.",
   "iam.account.password_policy_weak": "Strengthen the account password policy to enforce complexity and rotation.",
   "iam.user.no_mfa": "Require MFA for interactive IAM users.",
+  "iam.user.direct_policy_attachment": "Attach policies via groups or roles, not directly to users.",
   "iam.user.inactive_90d": "Disable or remove dormant IAM users.",
   "iam.access_key.unused_90d": "Deactivate stale access keys, then delete after validation.",
   "iam.access_key.no_rotation_90d": "Rotate active keys older than 90 days.",

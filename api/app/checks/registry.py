@@ -31,6 +31,7 @@ from app.checks import (
     iam_root_usage,
     iam_user_inactive,
     iam_user_no_mfa,
+    iam_user_direct_policy,
     kms_no_rotation,
     rds_no_encryption,
     rds_no_automated_backup,
@@ -87,6 +88,7 @@ ALL_CHECKS = [
     access_key_no_rotation,
     access_key_multiple_active,
     iam_user_no_mfa,
+    iam_user_direct_policy,
     # IAM roles / policies
     role_unassumed_90d,
     role_wildcard_action,

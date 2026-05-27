@@ -93,9 +93,9 @@ const secondaryBtn =
 const cardActionBtn =
   "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-700";
 const cardRescanBtn =
-  "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 text-xs font-semibold text-white shadow-sm shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex h-10 shrink-0 items-center gap-2 rounded-xl bg-indigo-500 px-6 text-sm font-semibold text-white shadow-md shadow-indigo-500/25 transition hover:bg-indigo-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
 const dangerBtn =
-  "inline-flex items-center rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 transition hover:border-red-300 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50";
+  "inline-flex items-center text-xs font-medium text-zinc-400 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50";
 
 function buildStatsMap(items: Finding[] | undefined): Map<string, FindingStats> {
   const map = new Map<string, FindingStats>();
@@ -226,7 +226,7 @@ function AccountCard({
             <AwsIcon />
           </div>
 
-          <div className="flex min-w-0 flex-1 items-end justify-between gap-2">
+          <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
             <div className="min-w-0 space-y-2">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <h2 className="truncate text-base font-medium leading-snug tracking-[-0.01em] text-zinc-900">
@@ -248,24 +248,31 @@ function AccountCard({
                   </span>
                 )}
               </div>
-
               {acc.account_id && (
-                <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 text-xs">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5 text-xs">
                   <span className="font-mono tabular-nums text-zinc-600">{acc.account_id}</span>
-                  {connected &&
-                    (isScanActive ? (
-                      <span className="shrink-0 font-medium text-indigo-600">
-                        {isRunning ? "Scanning now" : "Starting scan"}
-                      </span>
-                    ) : lastScan ? (
-                      <span className="shrink-0 text-zinc-500">Last scan {lastScan}</span>
-                    ) : null)}
+                  {connected && (isScanActive
+                    ? <span className="shrink-0 font-medium text-indigo-600">{isRunning ? "Scanning now" : "Starting scan"}</span>
+                    : lastScan ? <span className="shrink-0 text-zinc-500">Last scan {lastScan}</span> : null)}
                 </div>
               )}
-              {!connected && (
-                <p className="text-xs leading-normal text-zinc-500">Deploy the CloudFormation stack to connect.</p>
-              )}
+              {!connected && <p className="text-xs leading-normal text-zinc-500">Deploy the CloudFormation stack to connect.</p>}
             </div>
+
+            {hasStats && (
+              <div className="flex shrink-0 items-center gap-5 border-l border-zinc-100 pl-5">
+                {([
+                  { value: critHigh, label: "Crit + High", highlight: critHigh > 0 },
+                  { value: medium,   label: "Medium",      highlight: false },
+                  { value: open,     label: "Open",        highlight: true },
+                ] as const).map((s) => (
+                  <div key={s.label} className="flex flex-col items-center gap-0.5">
+                    <span className={`text-base font-semibold tabular-nums leading-none ${s.highlight ? "text-indigo-600" : "text-zinc-700"}`}>{s.value}</span>
+                    <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{s.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
 
             <div className="flex shrink-0 items-center gap-2">
               {connected && (
@@ -287,7 +294,7 @@ function AccountCard({
                       d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
                     />
                   </svg>
-                  {isScanActive ? (isRunning ? "Scanning…" : "Starting…") : "Re-scan"}
+                  {isScanActive ? (isRunning ? "Scanning…" : "Starting…") : "Scan"}
                 </button>
               )}
               <button
@@ -326,21 +333,6 @@ function AccountCard({
           <CfnPermissionsBanner cfnLaunchUrl={acc.cfn_launch_url} className="mt-2.5" />
         )}
 
-        {/* Posture strip — visible when scanned, no expand needed */}
-        {hasStats && (
-          <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-zinc-100 pt-3">
-            <MetricStrip>
-              <StatPill value={critHigh} label="Crit + high" highlight={critHigh > 0} />
-              <StatPill value={medium} label="Medium" />
-              <StatPill value={open} label="Open" href="/findings" highlight />
-            </MetricStrip>
-            <MetricStrip>
-              <ComplianceBadge pct={soc2.data} label="SOC 2" />
-              <ComplianceBadge pct={cis.data} label="CIS" />
-              <ComplianceBadge pct={iso.data} label="ISO" />
-            </MetricStrip>
-          </div>
-        )}
 
         {connected && !hasScanned && (
           <div className="mt-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-4 py-3 text-center text-xs text-zinc-500">
@@ -549,7 +541,7 @@ export default function Accounts() {
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-6">
-      <div className="flex flex-wrap items-start justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">AWS Accounts</h1>
           <p className="mt-1 text-sm text-zinc-500">

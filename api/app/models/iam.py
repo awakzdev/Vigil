@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import ForeignKey, String, DateTime, Boolean, JSON, UniqueConstraint
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -20,6 +21,8 @@ class IamUser(Base):
     password_last_used: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     has_console_password: Mapped[bool] = mapped_column(Boolean, default=False)
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    attached_policies: Mapped[list] = mapped_column(JSONB, default=list)
+    inline_policies: Mapped[dict] = mapped_column(JSONB, default=dict)
     last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

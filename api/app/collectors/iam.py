@@ -38,6 +38,7 @@ def collect_iam(db: Session, account: AwsAccount) -> dict:
             log.debug("collect_iam.user", username=u["UserName"], n=user_count)
             mfa_enabled = _has_mfa(iam, u["UserName"])
             has_pw = _has_console_password(iam, u["UserName"])
+            attached_policies, inline_policies = _user_policies(iam, u["UserName"])
             _upsert_user(
                 db,
                 account.id,
@@ -47,6 +48,8 @@ def collect_iam(db: Session, account: AwsAccount) -> dict:
                 password_last_used=u.get("PasswordLastUsed"),
                 has_console_password=has_pw,
                 mfa_enabled=mfa_enabled,
+                attached_policies=attached_policies,
+                inline_policies=inline_policies,
             )
             for k in iam.list_access_keys(UserName=u["UserName"]).get("AccessKeyMetadata", []):
                 key_count += 1
@@ -227,7 +230,32 @@ def _has_console_password(iam, username: str) -> bool:
         raise
 
 
-def _upsert_user(db: Session, account_id, *, arn, name, created, password_last_used, has_console_password, mfa_enabled):
+def _user_policies(iam, username: str) -> tuple[list, dict]:
+    attached_policies: list = []
+    inline_policies: dict = {}
+    try:
+        for pol in iam.list_attached_user_policies(UserName=username).get("AttachedPolicies", []):
+            pol_arn = pol["PolicyArn"]
+            attached_policies.append({
+                "policy_arn": pol_arn,
+                "policy_name": pol["PolicyName"],
+                "policy_type": "aws_managed" if pol_arn.startswith("arn:aws:iam::aws:") else "customer_managed",
+            })
+    except ClientError:
+        pass
+    try:
+        for pname in iam.list_user_policies(UserName=username).get("PolicyNames", []):
+            try:
+                doc = iam.get_user_policy(UserName=username, PolicyName=pname)
+                inline_policies[pname] = doc["PolicyDocument"]
+            except ClientError:
+                inline_policies[pname] = {}
+    except ClientError:
+        pass
+    return attached_policies, inline_policies
+
+
+def _upsert_user(db: Session, account_id, *, arn, name, created, password_last_used, has_console_password, mfa_enabled, attached_policies, inline_policies):
     stmt = pg_insert(IamUser).values(
         id=uuid.uuid4(),
         account_id=account_id,
@@ -237,6 +265,8 @@ def _upsert_user(db: Session, account_id, *, arn, name, created, password_last_u
         password_last_used=password_last_used,
         has_console_password=has_console_password,
         mfa_enabled=mfa_enabled,
+        attached_policies=attached_policies,
+        inline_policies=inline_policies,
         last_seen_at=_now(),
     )
     stmt = stmt.on_conflict_do_update(
@@ -247,6 +277,8 @@ def _upsert_user(db: Session, account_id, *, arn, name, created, password_last_u
             "password_last_used": stmt.excluded.password_last_used,
             "has_console_password": stmt.excluded.has_console_password,
             "mfa_enabled": stmt.excluded.mfa_enabled,
+            "attached_policies": stmt.excluded.attached_policies,
+            "inline_policies": stmt.excluded.inline_policies,
             "last_seen_at": stmt.excluded.last_seen_at,
         },
     )

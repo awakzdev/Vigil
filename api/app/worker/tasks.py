@@ -104,10 +104,15 @@ SESSION_18_STAT_KEYS = (
 
 
 def _cfn_permissions_likely_stale(stats: dict) -> bool:
+    """True only when the account clearly has baseline resources but *every*
+    session-18 collector returned zero — usually stale CFN, sometimes an empty
+    account with no Lambda/DynamoDB/etc. If any session-18 collector has data,
+    permissions are fine (empty counts just mean no resources)."""
     has_baseline = (stats.get("s3_buckets") or 0) > 0 or (stats.get("ec2_instances") or 0) > 0
     if not has_baseline:
         return False
-    return all((stats.get(k) or 0) == 0 for k in SESSION_18_STAT_KEYS)
+    hits = sum(1 for k in SESSION_18_STAT_KEYS if (stats.get(k) or 0) > 0)
+    return hits == 0
 
 
 def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
@@ -547,6 +552,9 @@ def run_scan(account_id: str) -> dict:
         }
         if _cfn_permissions_likely_stale(stats):
             final_stats["cfn_permissions_stale"] = True
+        final_stats["session_18_collectors_with_data"] = sum(
+            1 for k in SESSION_18_STAT_KEYS if (stats.get(k) or 0) > 0
+        )
         if check_errors:
             final_stats["check_errors"] = check_errors
         run.stats = final_stats
