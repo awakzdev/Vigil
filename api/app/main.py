@@ -1,3 +1,5 @@
+import time
+import uuid
 from contextlib import asynccontextmanager
 
 import structlog
@@ -65,7 +67,76 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
+class RequestLoggingMiddleware(BaseHTTPMiddleware):
+    """Attach a request-id to every request, log start+end with timing.
+
+    - Honours an inbound `X-Request-Id` header (proxy passthrough) if present
+      and well-formed; otherwise generates a UUID4.
+    - Echoes the id back on the response as `X-Request-Id` so clients can
+      correlate.
+    - Binds the id to structlog's contextvars so any log line emitted during
+      this request automatically carries `request_id=`.
+    - Emits a single `http.request` log line per request with method, path,
+      status, duration_ms, and remote_addr. Health checks are silenced.
+    """
+
+    _MAX_ID_LEN = 64
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        inbound = request.headers.get("x-request-id", "")
+        if inbound and 1 <= len(inbound) <= self._MAX_ID_LEN and inbound.replace("-", "").isalnum():
+            request_id = inbound
+        else:
+            request_id = uuid.uuid4().hex
+
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+
+        start = time.perf_counter()
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            return response
+        except Exception:
+            log.exception(
+                "http.request_failed",
+                method=request.method,
+                path=request.url.path,
+            )
+            raise
+        finally:
+            duration_ms = int((time.perf_counter() - start) * 1000)
+            # silence health-check noise
+            if request.url.path not in ("/healthz",):
+                log.info(
+                    "http.request",
+                    method=request.method,
+                    path=request.url.path,
+                    status=status_code,
+                    duration_ms=duration_ms,
+                    remote=_client_ip(request),
+                )
+            # tag the response so clients/proxies can correlate
+            try:
+                response.headers["X-Request-Id"] = request_id  # type: ignore[unbound-local]
+            except Exception:  # noqa: BLE001
+                pass
+            structlog.contextvars.unbind_contextvars("request_id")
+
+
+def _client_ip(request: Request) -> str | None:
+    # Trust X-Forwarded-For only in non-dev (when behind Caddy/Cloudflare).
+    if settings.APP_ENV != "dev":
+        fwd = request.headers.get("x-forwarded-for")
+        if fwd:
+            return fwd.split(",")[0].strip()
+    client = request.client
+    return client.host if client else None
+
+
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RequestLoggingMiddleware)
 
 
 @app.get("/healthz")

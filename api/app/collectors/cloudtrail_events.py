@@ -47,7 +47,7 @@ _MAX_EVENTS_PER_RUN = 1000
 
 
 def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
-    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-ct-events")
+    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-ct-events", aws_account=account, purpose="collect_cloudtrail_events")
     ct = sess.client("cloudtrail", region_name="us-east-1")
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=_LOOKBACK_DAYS)

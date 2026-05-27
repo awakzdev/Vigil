@@ -46,7 +46,7 @@ def _is_unrestricted(ip_ranges: list[dict], port: int) -> bool:
 
 
 def collect_vpc(db: Session, account: AwsAccount) -> dict:
-    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-vpc")
+    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-vpc", aws_account=account, purpose="collect_vpc")
     regions = _get_regions(sess)
     vpc_count = sg_count = 0
 

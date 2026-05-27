@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, String, DateTime, func, JSON, Integer
+from sqlalchemy import Boolean, ForeignKey, String, DateTime, func, JSON, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -36,3 +36,28 @@ class ScanRun(Base):
     error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
     findings_opened: Mapped[int] = mapped_column(Integer, default=0)
     findings_resolved: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AssumeRoleAudit(Base):
+    """One row per sts:AssumeRole call against a customer account.
+
+    Purpose: customer transparency ("show me when Vigil touched my account"),
+    forensic trail, and operational debugging (verify failures, throttles).
+    """
+
+    __tablename__ = "assume_role_audit"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    org_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("orgs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    aws_account_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("aws_accounts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    role_arn: Mapped[str | None] = mapped_column(String(700), nullable=True)
+    session_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    purpose: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    called_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

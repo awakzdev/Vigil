@@ -24,6 +24,10 @@ function oauthErrorMessage(code: string): string {
       return "That GitHub account is already linked to another user.";
     case "gitlab_already_linked":
       return "That GitLab account is already linked to another user.";
+    case "google_already_linked":
+      return "That Google account is already linked to another user.";
+    case "no_account_for_idp":
+      return "No account matches that sign-in. Sign up first, then connect this provider.";
     case "server_error":
       return "Sign-in failed on our side. Try again.";
     default:

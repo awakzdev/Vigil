@@ -241,11 +241,29 @@ def google_callback(
             user = db.scalar(select(User).where(User.email == email))
 
         if not user:
+            if not settings.ALLOW_SSO_SIGNUP:
+                log.warning("oauth.signup.blocked", provider="google", email=email, google_id=google_id)
+                return RedirectResponse(f"{_frontend_url()}/login?error=no_account_for_idp")
             org = Org(id=uuid.uuid4(), name=name)
             user = User(id=uuid.uuid4(), org_id=org.id, email=email, password_hash="", google_id=google_id)
             db.add_all([org, user])
+            log.info(
+                "oauth.signup.new_org",
+                provider="google",
+                email=email,
+                google_id=google_id,
+                org_id=str(org.id),
+                user_id=str(user.id),
+            )
         elif not user.google_id:
             user.google_id = google_id
+            log.info(
+                "oauth.idp_attached_by_email",
+                provider="google",
+                user_id=str(user.id),
+                email=email,
+                google_id=google_id,
+            )
         db.commit()
 
         return _oauth_login_redirect(user)
@@ -354,12 +372,30 @@ def github_callback(
         if not user:
             if not email:
                 return _callback_error(state, "github", "no_email")
+            if not settings.ALLOW_SSO_SIGNUP:
+                log.warning("oauth.signup.blocked", provider="github", email=email, github_id=github_id)
+                return RedirectResponse(f"{_frontend_url()}/login?error=no_account_for_idp")
             name = gh_user.get("name") or gh_user.get("login") or email.split("@")[0]
             org = Org(id=uuid.uuid4(), name=name)
             user = User(id=uuid.uuid4(), org_id=org.id, email=email, password_hash="", github_id=github_id)
             db.add_all([org, user])
+            log.info(
+                "oauth.signup.new_org",
+                provider="github",
+                email=email,
+                github_id=github_id,
+                org_id=str(org.id),
+                user_id=str(user.id),
+            )
         elif not user.github_id:
             user.github_id = github_id
+            log.info(
+                "oauth.idp_attached_by_email",
+                provider="github",
+                user_id=str(user.id),
+                email=email,
+                github_id=github_id,
+            )
 
         db.commit()
         return _oauth_login_redirect(user)
@@ -473,6 +509,9 @@ def gitlab_callback(
         if not user:
             if not email:
                 return _callback_error(state, "gitlab", "no_email")
+            if not settings.ALLOW_SSO_SIGNUP:
+                log.warning("oauth.signup.blocked", provider="gitlab", email=email, gitlab_id=gitlab_id)
+                return RedirectResponse(f"{_frontend_url()}/login?error=no_account_for_idp")
             name = gl_user.get("name") or gl_user.get("username") or email.split("@")[0]
             org = Org(id=uuid.uuid4(), name=name)
             user = User(
@@ -483,8 +522,23 @@ def gitlab_callback(
                 gitlab_id=gitlab_id,
             )
             db.add_all([org, user])
+            log.info(
+                "oauth.signup.new_org",
+                provider="gitlab",
+                email=email,
+                gitlab_id=gitlab_id,
+                org_id=str(org.id),
+                user_id=str(user.id),
+            )
         elif not user.gitlab_id:
             user.gitlab_id = gitlab_id
+            log.info(
+                "oauth.idp_attached_by_email",
+                provider="gitlab",
+                user_id=str(user.id),
+                email=email,
+                gitlab_id=gitlab_id,
+            )
 
         db.commit()
         return _oauth_login_redirect(user)

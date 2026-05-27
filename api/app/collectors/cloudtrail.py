@@ -20,7 +20,7 @@ def _now() -> datetime:
 
 
 def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
-    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-cloudtrail")
+    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-cloudtrail", aws_account=account, purpose="collect_cloudtrail")
     ct = sess.client("cloudtrail", region_name="us-east-1")
     count = 0
 

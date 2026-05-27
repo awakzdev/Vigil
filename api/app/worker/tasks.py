@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -381,46 +382,98 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
 
 @celery_app.task(name="app.worker.tasks.run_scan")
 def run_scan(account_id: str) -> dict:
-    db = SessionLocal()
-    acc = db.get(AwsAccount, uuid.UUID(account_id))
-    if not acc:
-        return {"error": "account not found"}
+    """Run a full scan for the given AwsAccount.
 
-    run = ScanRun(id=uuid.uuid4(), account_id=acc.id, status="running")
-    db.add(run)
-    db.commit()
+    Step-by-step error capture: each collector and check phase is tagged
+    with a `step` name. If anything raises, the failing step + truncated
+    traceback are stored in `scan_runs.error` + `scan_runs.stats.failed_at`.
+    Per-check failures don't fail the whole scan — they're recorded in
+    `stats.check_errors` and the remaining checks still run.
+    """
+    db = SessionLocal()
+    step = "bootstrap"
+    run: ScanRun | None = None
+    acc: AwsAccount | None = None
+    try:
+        try:
+            acc_uuid = uuid.UUID(account_id)
+        except ValueError:
+            log.warning("scan.bad_account_id", account_id=account_id)
+            return {"ok": False, "error": "invalid account id"}
+
+        acc = db.get(AwsAccount, acc_uuid)
+        if not acc:
+            log.warning("scan.account_not_found", account_id=account_id)
+            return {"ok": False, "error": "account not found"}
+
+        run = ScanRun(id=uuid.uuid4(), account_id=acc.id, status="running")
+        db.add(run)
+        db.commit()
+    except Exception:
+        # Bootstrap (DB connect, ScanRun insert) blew up — log and propagate.
+        # No scan_run row exists yet so Celery just marks the task failed.
+        log.exception("scan.bootstrap_failed", account_id=account_id, step=step)
+        db.close()
+        raise
 
     try:
-        stats = collect_iam(db, acc)
-        stats["s3_account_public_access_block"] = collect_s3_account_public_access_block(db, acc)
-        stats["s3_buckets"] = collect_s3(db, acc)
-        stats["kms_keys"] = collect_kms(db, acc)
-        stats["cloudtrail_trails"] = collect_cloudtrail(db, acc)
-        stats["cloudtrail_events"] = collect_cloudtrail_events(db, acc)
-        vpc_stats = collect_vpc(db, acc)
+        stats: dict = {}
+
+        def _step(name: str, fn):
+            nonlocal step
+            step = name
+            return fn()
+
+        stats.update(_step("collect_iam", lambda: collect_iam(db, acc)))
+        stats["s3_account_public_access_block"] = _step(
+            "collect_s3_public_access_block",
+            lambda: collect_s3_account_public_access_block(db, acc),
+        )
+        stats["s3_buckets"] = _step("collect_s3", lambda: collect_s3(db, acc))
+        stats["kms_keys"] = _step("collect_kms", lambda: collect_kms(db, acc))
+        stats["cloudtrail_trails"] = _step("collect_cloudtrail", lambda: collect_cloudtrail(db, acc))
+        stats["cloudtrail_events"] = _step("collect_cloudtrail_events", lambda: collect_cloudtrail_events(db, acc))
+        vpc_stats = _step("collect_vpc", lambda: collect_vpc(db, acc))
         stats["vpcs"] = vpc_stats.get("vpcs", 0)
         stats["security_groups"] = vpc_stats.get("security_groups", 0)
-        stats["guardduty_detectors"] = collect_guardduty(db, acc)
-        stats["rds_instances"] = collect_rds(db, acc)
-        ec2_stats = collect_ec2(db, acc)
+        stats["guardduty_detectors"] = _step("collect_guardduty", lambda: collect_guardduty(db, acc))
+        stats["rds_instances"] = _step("collect_rds", lambda: collect_rds(db, acc))
+        ec2_stats = _step("collect_ec2", lambda: collect_ec2(db, acc))
         stats["ec2_instances"] = ec2_stats.get("instances", 0)
         stats["ebs_volumes"] = ec2_stats.get("volumes", 0)
         stats["ebs_regions"] = ec2_stats.get("ebs_regions", 0)
-        stats["access_analyzers"] = collect_access_analyzer(db, acc)
-        stats["config_regions"] = collect_config_service(db, acc)
-        stats["securityhub_regions"] = collect_securityhub(db, acc)
+        stats["access_analyzers"] = _step("collect_access_analyzer", lambda: collect_access_analyzer(db, acc))
+        stats["config_regions"] = _step("collect_config_service", lambda: collect_config_service(db, acc))
+        stats["securityhub_regions"] = _step("collect_securityhub", lambda: collect_securityhub(db, acc))
 
+        step = "load_check_config"
         org_obj = db.get(Org, acc.org_id)
         check_cfg = (org_obj.settings or {}).get("checks", {}) if org_obj else {}
 
+        step = "run_checks"
         drafts = []
         check_ids_run: set[str] = set()
+        check_errors: list[dict] = []
         for mod in ALL_CHECKS:
             if check_cfg.get(mod.CHECK_ID, {}).get("enabled", True) is False:
                 continue
             check_ids_run.add(mod.CHECK_ID)
-            drafts.extend(mod.run(db, acc.id))
+            try:
+                drafts.extend(mod.run(db, acc.id))
+            except Exception as inner:  # noqa: BLE001
+                # One bad check shouldn't kill the whole scan. Record and continue.
+                log.exception(
+                    "scan.check_failed",
+                    check_id=mod.CHECK_ID,
+                    account_id=str(acc.id),
+                )
+                check_errors.append({
+                    "check_id": mod.CHECK_ID,
+                    "error_type": type(inner).__name__,
+                    "error": str(inner)[:300],
+                })
 
+        step = "persist_findings"
         opened, resolved = persist_findings(
             db,
             org_id=acc.org_id,
@@ -429,28 +482,64 @@ def run_scan(account_id: str) -> dict:
             check_ids_run=check_ids_run,
         )
 
+        step = "write_evidence_snapshots"
         snap_count = _write_evidence_snapshots(db, acc, run)
 
         run.status = "ok"
         run.finished_at = datetime.now(timezone.utc)
-        run.stats = stats | {"checks_run": list(check_ids_run), "drafts": len(drafts), "snapshots": snap_count}
+        final_stats = stats | {
+            "checks_run": list(check_ids_run),
+            "drafts": len(drafts),
+            "snapshots": snap_count,
+        }
+        if check_errors:
+            final_stats["check_errors"] = check_errors
+        run.stats = final_stats
         run.findings_opened = opened
         run.findings_resolved = resolved
         acc.last_scan_at = run.finished_at
         db.commit()
-        log.info("scan.complete", account_id=str(acc.id), opened=opened, resolved=resolved, snapshots=snap_count)
+        log.info(
+            "scan.complete",
+            account_id=str(acc.id),
+            opened=opened,
+            resolved=resolved,
+            snapshots=snap_count,
+            check_errors=len(check_errors),
+        )
 
         collect_perm_usage_task.delay(account_id)
 
         return {"ok": True, "opened": opened, "resolved": resolved, "snapshots": snap_count}
     except Exception as e:  # noqa: BLE001
         db.rollback()
-        run.status = "error"
-        run.error = str(e)[:1900]
-        run.finished_at = datetime.now(timezone.utc)
-        db.commit()
-        log.exception("scan.failed", account_id=str(acc.id))
-        return {"ok": False, "error": str(e)}
+        tb = traceback.format_exc()
+        # Re-fetch the run row (rollback may have detached it from the session)
+        try:
+            run = db.get(ScanRun, run.id) if run is not None else None
+        except Exception:  # noqa: BLE001
+            run = None
+        if run is not None:
+            run.status = "error"
+            run.finished_at = datetime.now(timezone.utc)
+            run.error = (f"{type(e).__name__} during {step}: {e}\n\n{tb}")[:1990]
+            existing = run.stats or {}
+            run.stats = existing | {
+                "failed_at": step,
+                "error_type": type(e).__name__,
+            }
+            try:
+                db.commit()
+            except Exception:  # noqa: BLE001
+                db.rollback()
+                log.exception("scan.error_persist_failed", account_id=str(acc.id) if acc else None)
+        log.exception(
+            "scan.failed",
+            account_id=str(acc.id) if acc else None,
+            step=step,
+            error_type=type(e).__name__,
+        )
+        return {"ok": False, "error": str(e), "step": step}
     finally:
         db.close()
 

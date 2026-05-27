@@ -18,7 +18,7 @@ from app.core.iam_usage import (
     used_services_from_usages,
 )
 from app.core.security import current_principal
-from app.models import AwsAccount, IamPermUsage, IamRole, ScanRun
+from app.models import AssumeRoleAudit, AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.cloudtrail import CloudTrailEvent
 from app.models.github import IdentityProvider, PullRequest, Repo
 from app.models.iam import IamAccessKey, IamUser
@@ -32,10 +32,6 @@ from app.models.org import Org
 
 router = APIRouter()
 settings = get_settings()
-
-CFN_TEMPLATE_URL = (
-    "https://amzn-demo-cloud-hygiene.s3.amazonaws.com/hygiene-readonly-role.yaml"
-)
 
 
 class AccountIn(BaseModel):
@@ -58,7 +54,7 @@ class VerifyIn(BaseModel):
 
 def _launch_url(external_id: str) -> str:
     params = {
-        "templateURL": CFN_TEMPLATE_URL,
+        "templateURL": settings.CFN_TEMPLATE_URL,
         "stackName": "VigilReadOnly",
         "param_ExternalId": external_id,
         "param_HygieneAccountPrincipal": settings.TRUST_PRINCIPAL_ARN,
@@ -113,7 +109,7 @@ def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Se
     acc = db.get(AwsAccount, uuid.UUID(account_id))
     if not acc or str(acc.org_id) != p["org_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
-    ok, aws_account_id, alias, err = verify_account(body.role_arn, acc.external_id)
+    ok, aws_account_id, alias, err = verify_account(body.role_arn, acc.external_id, aws_account=acc)
     if not ok:
         acc.status = "error"
         acc.last_error = err
@@ -182,6 +178,8 @@ class ScanRunOut(BaseModel):
     started_at: str
     finished_at: str | None
     error: str | None
+    failed_at: str | None = None  # which collector/phase failed (from stats.failed_at)
+    error_type: str | None = None  # exception class name
     findings_opened: int
     findings_resolved: int
 
@@ -199,15 +197,62 @@ def latest_scan_run(account_id: str, p=Depends(current_principal), db: Session =
     )
     if not run:
         return None
+    stats = run.stats or {}
     return ScanRunOut(
         id=str(run.id),
         status=run.status,
         started_at=run.started_at.isoformat(),
         finished_at=run.finished_at.isoformat() if run.finished_at else None,
         error=run.error,
+        failed_at=stats.get("failed_at"),
+        error_type=stats.get("error_type"),
         findings_opened=run.findings_opened or 0,
         findings_resolved=run.findings_resolved or 0,
     )
+
+
+class AssumeRoleAuditOut(BaseModel):
+    id: str
+    called_at: str
+    purpose: str | None
+    session_name: str | None
+    success: bool
+    error_code: str | None
+    error_message: str | None
+
+
+@router.get("/{account_id}/assume-role-audit", response_model=list[AssumeRoleAuditOut])
+def assume_role_audit(
+    account_id: str,
+    limit: int = Query(100, ge=1, le=500),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Customer-facing audit log: every sts:AssumeRole Vigil made against this account.
+
+    Returns the most recent `limit` events newest-first. Read-only.
+    """
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    rows = db.scalars(
+        select(AssumeRoleAudit)
+        .where(AssumeRoleAudit.aws_account_id == acc.id)
+        .order_by(AssumeRoleAudit.called_at.desc())
+        .limit(limit)
+    ).all()
+    return [
+        AssumeRoleAuditOut(
+            id=str(r.id),
+            called_at=r.called_at.isoformat(),
+            purpose=r.purpose,
+            session_name=r.session_name,
+            success=r.success,
+            error_code=r.error_code,
+            error_message=r.error_message,
+        )
+        for r in rows
+    ]
 
 
 def _actions_for_service(used_actions: list[str], service: str) -> list[str]:

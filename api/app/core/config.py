@@ -34,6 +34,22 @@ class Settings(BaseSettings):
     # Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     ENCRYPTION_KEY: str = "IqebDQNnegvXTO6n5gdTpVcZGXXE35Fcdh2hwT7oQxM="
 
+    # Public URL of the read-only CloudFormation template a customer launches
+    # in their own AWS account. Pin to a versioned S3 object or a tagged
+    # GitHub raw URL in production so a launched-yesterday stack and a
+    # launched-today stack reference the exact same template.
+    # Defaults are safe for dev; override in prod via env.
+    CFN_TEMPLATE_URL: str = (
+        "https://amzn-demo-cloud-hygiene.s3.amazonaws.com/hygiene-readonly-role.yaml"
+    )
+
+    # When True (default) hitting /v1/auth/{github,gitlab,google} *without*
+    # a link_token creates a new user+org if no existing user matches the
+    # IdP id or email. Set False to require explicit signup (recommended
+    # once you have paying customers — prevents accidental fragmentation
+    # when a user signs in via a personal IdP under a different email).
+    ALLOW_SSO_SIGNUP: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:
