@@ -1,32 +1,233 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { api } from "../api";
+import { useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { api, BASE, formatApiError, storeTokens } from "../api";
+
+interface LoginResponse {
+  access_token?: string | null;
+  refresh_token?: string | null;
+  org_id?: string | null;
+  mfa_required?: boolean;
+  mfa_token?: string | null;
+}
+
+const MFA_STORAGE_KEY = "vigil_mfa_token";
+
+function oauthErrorMessage(code: string): string {
+  switch (code) {
+    case "oauth_denied":
+      return "Sign-in cancelled.";
+    case "no_email":
+      return "Could not read your email from the provider — check account settings.";
+    case "bad_link_token":
+      return "Session expired while connecting. Sign in and try again.";
+    case "github_already_linked":
+      return "That GitHub account is already linked to another user.";
+    case "gitlab_already_linked":
+      return "That GitLab account is already linked to another user.";
+    case "server_error":
+      return "Sign-in failed on our side. Try again.";
+    default:
+      return "Sign-in failed. Try again.";
+  }
+}
+
+function storeMfaToken(token: string) {
+  sessionStorage.setItem(MFA_STORAGE_KEY, token);
+}
+
+function clearMfaToken() {
+  sessionStorage.removeItem(MFA_STORAGE_KEY);
+}
+
+function readStoredMfaToken(): string | null {
+  return sessionStorage.getItem(MFA_STORAGE_KEY);
+}
 
 export default function Login() {
   const nav = useNavigate();
+  const [params, setParams] = useSearchParams();
   const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [orgName, setOrgName] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [passwordError, setPasswordError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
+
+  useEffect(() => {
+    const token = params.get("mfa_token");
+    const oauthErr = params.get("error");
+    const next = new URLSearchParams(params);
+
+    if (token) {
+      beginMfa(token);
+      next.delete("mfa_token");
+      next.delete("error");
+      setParams(next, { replace: true });
+      return;
+    }
+
+    if (oauthErr) {
+      setErr(oauthErrorMessage(oauthErr));
+      next.delete("error");
+      setParams(next, { replace: true });
+      exitMfa();
+      return;
+    }
+
+    const stored = readStoredMfaToken();
+    if (stored) {
+      setMfaToken(stored);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- run when URL search params change
+  }, [params]);
+
+  function beginMfa(token: string) {
+    setMfaToken(token);
+    storeMfaToken(token);
+    setErr(null);
+    setMfaCode("");
+  }
+
+  function exitMfa() {
+    setMfaToken(null);
+    clearMfaToken();
+    setMfaCode("");
+    setErr(null);
+  }
+
+  async function completeLogin(res: LoginResponse) {
+    if (res.mfa_required && res.mfa_token) {
+      beginMfa(res.mfa_token);
+      return;
+    }
+    if (!res.access_token) {
+      throw new Error("missing access token");
+    }
+    clearMfaToken();
+    storeTokens(res.access_token, res.refresh_token ?? "");
+    nav("/findings");
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
+    setPasswordError(null);
+    if (!email.trim()) {
+      setErr("Enter your email address.");
+      return;
+    }
+    if (!password) {
+      setPasswordError("Enter your password.");
+      return;
+    }
+    if (mode === "signup" && password.length < 12) {
+      setPasswordError("Password must be at least 12 characters.");
+      return;
+    }
+    if (mode === "signup" && !orgName.trim()) {
+      setErr("Enter your organization name.");
+      return;
+    }
     setLoading(true);
     try {
       const path = mode === "login" ? "/v1/auth/login" : "/v1/auth/signup";
       const body = mode === "login" ? { email, password } : { email, password, org_name: orgName };
-      const res = await api<{ access_token: string; refresh_token: string }>(path, { method: "POST", body: JSON.stringify(body) });
-      localStorage.setItem("token", res.access_token);
-      if (res.refresh_token) localStorage.setItem("refresh_token", res.refresh_token);
-      nav("/findings");
+      const res = await api<LoginResponse>(path, { method: "POST", body: JSON.stringify(body) });
+      await completeLogin(res);
     } catch (e) {
-      setErr((e as Error).message);
+      setErr(formatApiError(e));
     } finally {
       setLoading(false);
     }
+  }
+
+  async function submitMfa(e: React.FormEvent) {
+    e.preventDefault();
+    if (!mfaToken) return;
+    setErr(null);
+    setLoading(true);
+    try {
+      const res = await api<{ access_token: string; refresh_token: string }>("/v1/auth/mfa/verify", {
+        method: "POST",
+        body: JSON.stringify({ mfa_token: mfaToken, code: mfaCode }),
+      });
+      clearMfaToken();
+      storeTokens(res.access_token, res.refresh_token);
+      nav("/findings");
+    } catch (e) {
+      const msg = formatApiError(e);
+      if (/expired|sign in again/i.test(msg)) {
+        exitMfa();
+      } else if (/too many failed attempts|try again in/i.test(msg)) {
+        exitMfa();
+      }
+      setErr(msg);
+      setMfaCode("");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (mfaToken) {
+    return (
+      <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-sm">
+          <div className="flex items-center justify-center gap-3 mb-8">
+            <img src="/favicon.png" alt="Vigil" className="w-16 h-16 object-contain" />
+            <span className="text-white text-xl font-semibold tracking-tight">Vigil</span>
+          </div>
+
+          <div className="bg-white rounded-2xl shadow-2xl p-8">
+            <h1 className="text-lg font-semibold text-zinc-900 mb-1">Two-factor authentication</h1>
+            <p className="text-sm text-zinc-500 mb-6">
+              Enter the 6-digit code from your authenticator app.
+            </p>
+
+            <form onSubmit={submitMfa} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-zinc-700 mb-1.5">Authentication code</label>
+                <input
+                  className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm tracking-[0.3em] text-center font-mono focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="000000"
+                  maxLength={6}
+                  value={mfaCode}
+                  onChange={e => setMfaCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                  required
+                  autoFocus
+                />
+              </div>
+
+              {err && (
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2.5 text-sm text-red-600">
+                  {err}
+                </div>
+              )}
+
+              <button
+                className="w-full bg-zinc-900 hover:bg-zinc-800 text-white rounded-lg py-2.5 text-sm font-medium transition-colors disabled:opacity-60"
+                disabled={loading || mfaCode.length !== 6}
+              >
+                {loading ? "Verifying…" : "Continue"}
+              </button>
+            </form>
+
+            <button
+              type="button"
+              className="mt-4 w-full text-sm text-zinc-500 hover:text-zinc-700 transition-colors"
+              onClick={exitMfa}
+            >
+              Back to sign in
+            </button>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -45,7 +246,7 @@ export default function Login() {
             {mode === "login" ? "Sign in to your workspace" : "Start monitoring your AWS IAM posture"}
           </p>
 
-          <form onSubmit={submit} className="space-y-4">
+          <form noValidate onSubmit={submit} className="space-y-4">
             {mode === "signup" && (
               <div>
                 <label className="block text-xs font-medium text-zinc-700 mb-1.5">Organization name</label>
@@ -66,19 +267,26 @@ export default function Login() {
                 placeholder="Email address"
                 value={email}
                 onChange={e => setEmail(e.target.value)}
-                required
               />
             </div>
             <div>
               <label className="block text-xs font-medium text-zinc-700 mb-1.5">Password</label>
               <input
-                className="w-full border border-zinc-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 focus:border-transparent transition"
+                className={`w-full rounded-lg border px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:border-transparent transition ${
+                  passwordError
+                    ? "border-red-300 focus:ring-red-500"
+                    : "border-zinc-200 focus:ring-zinc-900"
+                }`}
                 type="password"
                 placeholder="••••••••"
                 value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
+                onChange={e => { setPassword(e.target.value); setPasswordError(null); }}
               />
+              {passwordError ? (
+                <p className="mt-1.5 text-xs text-red-600">{passwordError}</p>
+              ) : mode === "signup" ? (
+                <p className="mt-1.5 text-xs text-zinc-400">At least 12 characters.</p>
+              ) : null}
             </div>
 
             {err && (
@@ -102,7 +310,7 @@ export default function Login() {
             </div>
 
             <a
-              href="http://localhost:8000/v1/auth/google"
+              href={`${BASE}/v1/auth/google`}
               className="w-full flex items-center justify-center gap-2.5 border border-zinc-200 rounded-lg py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24">
@@ -115,7 +323,7 @@ export default function Login() {
             </a>
 
             <a
-              href="http://localhost:8000/v1/auth/github"
+              href={`${BASE}/v1/auth/github`}
               className="w-full flex items-center justify-center gap-2.5 border border-zinc-200 rounded-lg py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
             >
               <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
@@ -124,11 +332,21 @@ export default function Login() {
               Continue with GitHub
             </a>
 
+            <a
+              href={`${BASE}/v1/auth/gitlab`}
+              className="w-full flex items-center justify-center gap-2.5 border border-zinc-200 rounded-lg py-2.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
+            >
+              <svg className="w-4 h-4 text-[#e24329]" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor">
+                <path d="M22.65 14.39L12 22.13 1.35 14.39a.84.84 0 0 1-.3-.94l1.22-3.78 2.44-7.51A.42.42 0 0 1 4.82 2a.43.43 0 0 1 .58 0 .42.42 0 0 1 .11.18l2.44 7.49h8.1l2.44-7.51a.42.42 0 0 1 .11-.18.43.43 0 0 1 .58 0 .42.42 0 0 1 .11.18l2.44 7.51L23 13.45a.84.84 0 0 1-.35.94z"/>
+              </svg>
+              Continue with GitLab
+            </a>
+
             <div className="text-center">
               <button
                 type="button"
                 className="text-sm text-zinc-500 hover:text-zinc-700 transition-colors"
-                onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(null); }}
+                onClick={() => { setMode(mode === "login" ? "signup" : "login"); setErr(null); setPasswordError(null); }}
               >
                 {mode === "login" ? "Don't have an account? Sign up" : "Already have an account? Sign in"}
               </button>

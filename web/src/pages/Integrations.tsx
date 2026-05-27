@@ -75,7 +75,7 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
           </div>
         </div>
         <span
-          className={`mt-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ${
+          className={`mt-0.5 inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium ring-1 ${
             isSyncing
               ? "bg-indigo-50 text-indigo-700 ring-indigo-200"
               : connected
@@ -89,8 +89,8 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
       </div>
 
       {isSyncing && (
-        <div className="mt-4 flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/70 px-3 py-2 text-sm text-indigo-800">
-          <Spinner className="h-3.5 w-3.5 text-indigo-500" />
+        <div className="mt-5 flex items-center gap-3 rounded-lg border border-indigo-100 bg-indigo-50/70 px-4 py-3.5 text-sm leading-relaxed text-indigo-800">
+          <Spinner className="h-4 w-4 shrink-0 text-indigo-500" />
           <span>Collecting evidence from {name}…</span>
         </div>
       )}
@@ -110,10 +110,10 @@ function IntegrationCard({ name, description, icon, iconBg, href, provider, isLo
         </div>
       )}
 
-      <div className="mt-auto pt-3">
+      <div className={`mt-auto ${isSyncing ? "mt-6 border-t border-zinc-100 pt-5" : "pt-3"}`}>
         <Link
           to={href}
-          className="mt-3 inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-white px-5 py-1.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 hover:text-zinc-950"
+          className="inline-flex w-full items-center justify-center rounded-lg border border-zinc-300 bg-white px-5 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 hover:text-zinc-950"
         >
           {connected ? "Manage" : "Connect"}
         </Link>
@@ -168,7 +168,7 @@ export default function Integrations() {
 
       {showActivityBanner && (
         <div className="overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50/80">
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 px-4 py-3 text-sm text-indigo-800">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-5 py-4 text-sm leading-relaxed text-indigo-800">
             <Spinner className="h-4 w-4 shrink-0 text-indigo-500" />
             <span className="font-semibold">
               {[

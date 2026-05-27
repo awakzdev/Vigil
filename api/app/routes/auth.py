@@ -8,7 +8,16 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.passwords import hash_password, pwned_count, verify_password
 from app.core.ratelimit import limiter
-from app.core.security import current_principal, decode_refresh_token, issue_mfa_challenge_token, issue_refresh_token, issue_token
+from app.core.mfa_lockout import check_mfa_lock, clear_mfa_lockout, record_mfa_failure
+from app.core.security import (
+    current_principal,
+    decode_mfa_challenge_token,
+    decode_refresh_token,
+    issue_mfa_challenge_token,
+    issue_refresh_token,
+    issue_token,
+)
+from app.core.totp import new_secret, provisioning_uri, qr_png_data_url, verify_totp
 from app.models import Org, User
 
 router = APIRouter()
@@ -41,6 +50,25 @@ class TokenOut(BaseModel):
     org_id: str
 
 
+class LoginOut(BaseModel):
+    access_token: str | None = None
+    refresh_token: str | None = None
+    org_id: str | None = None
+    mfa_required: bool = False
+    mfa_token: str | None = None
+
+
+def _login_response(user: User) -> LoginOut:
+    uid, oid = str(user.id), str(user.org_id)
+    if user.totp_enabled:
+        return LoginOut(mfa_required=True, mfa_token=issue_mfa_challenge_token(uid, oid))
+    return LoginOut(
+        access_token=issue_token(uid, oid),
+        refresh_token=issue_refresh_token(uid, oid),
+        org_id=oid,
+    )
+
+
 class RefreshIn(BaseModel):
     refresh_token: str
 
@@ -63,14 +91,112 @@ def signup(request: Request, body: SignupIn, db: Session = Depends(get_db)):
     return TokenOut(access_token=issue_token(uid, oid), refresh_token=issue_refresh_token(uid, oid), org_id=oid)
 
 
-@router.post("/login", response_model=TokenOut)
+@router.post("/login", response_model=LoginOut)
 @limiter.limit("10/minute")
 def login(request: Request, body: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email))
-    if not user or not verify_password(body.password, user.password_hash):
+    if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
+    return _login_response(user)
+
+
+class MfaVerifyIn(BaseModel):
+    mfa_token: str
+    code: str
+
+
+@router.post("/mfa/verify", response_model=TokenOut)
+@limiter.limit("30/minute")
+def mfa_verify(request: Request, body: MfaVerifyIn, db: Session = Depends(get_db)):
+    payload = decode_mfa_challenge_token(body.mfa_token)
+    user_id = payload["sub"]
+    check_mfa_lock(user_id)
+    user = db.get(User, uuid.UUID(user_id))
+    if not user or not user.totp_enabled or not user.totp_secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "MFA not configured")
+    if not verify_totp(user.totp_secret, body.code):
+        record_mfa_failure(user_id)
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid code")
+    clear_mfa_lockout(user_id)
     uid, oid = str(user.id), str(user.org_id)
-    return TokenOut(access_token=issue_token(uid, oid), refresh_token=issue_refresh_token(uid, oid), org_id=oid)
+    return TokenOut(
+        access_token=issue_token(uid, oid),
+        refresh_token=issue_refresh_token(uid, oid),
+        org_id=oid,
+    )
+
+
+class MfaCodeIn(BaseModel):
+    code: str
+
+
+class MfaSetupOut(BaseModel):
+    secret: str
+    provisioning_uri: str
+    qr_data_url: str | None = None
+
+
+@router.post("/me/mfa/setup", response_model=MfaSetupOut)
+def mfa_setup(principal: dict = Depends(current_principal), db: Session = Depends(get_db)):
+    user = db.get(User, uuid.UUID(principal["sub"]))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    if user.totp_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "MFA is already enabled")
+    secret = new_secret()
+    user.totp_secret = secret
+    db.commit()
+    uri = provisioning_uri(user.email, secret)
+    return MfaSetupOut(
+        secret=secret,
+        provisioning_uri=uri,
+        qr_data_url=qr_png_data_url(uri),
+    )
+
+
+@router.post("/me/mfa/enable", status_code=204)
+def mfa_enable(
+    body: MfaCodeIn,
+    principal: dict = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, uuid.UUID(principal["sub"]))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    if user.totp_enabled:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "MFA is already enabled")
+    if not user.totp_secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "call setup first")
+    if not verify_totp(user.totp_secret, body.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid code")
+    user.totp_enabled = True
+    db.commit()
+
+
+class MfaDisableIn(BaseModel):
+    code: str
+    password: str | None = None
+
+
+@router.post("/me/mfa/disable", status_code=204)
+def mfa_disable(
+    body: MfaDisableIn,
+    principal: dict = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, uuid.UUID(principal["sub"]))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    if not user.totp_enabled or not user.totp_secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "MFA is not enabled")
+    if not verify_totp(user.totp_secret, body.code):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid code")
+    if user.password_hash:
+        if not body.password or not verify_password(body.password, user.password_hash):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "password incorrect")
+    user.totp_enabled = False
+    user.totp_secret = None
+    db.commit()
 
 
 @router.post("/refresh", response_model=TokenOut)
@@ -91,6 +217,7 @@ class MeOut(BaseModel):
     id: str
     email: str
     github_id: str | None
+    gitlab_id: str | None
     totp_enabled: bool
     has_password: bool
 
@@ -104,6 +231,7 @@ def get_me(principal: dict = Depends(current_principal), db: Session = Depends(g
         id=str(user.id),
         email=user.email,
         github_id=user.github_id,
+        gitlab_id=user.gitlab_id,
         totp_enabled=user.totp_enabled,
         has_password=bool(user.password_hash),
     )
@@ -150,4 +278,18 @@ def disconnect_github(
     if not user.password_hash:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "set a password before disconnecting GitHub")
     user.github_id = None
+    db.commit()
+
+
+@router.delete("/me/gitlab", status_code=status.HTTP_204_NO_CONTENT)
+def disconnect_gitlab(
+    principal: dict = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    user = db.get(User, uuid.UUID(principal["sub"]))
+    if not user:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "user not found")
+    if not user.password_hash:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "set a password before disconnecting GitLab")
+    user.gitlab_id = None
     db.commit()

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import uuid
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 import structlog
@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
-from app.core.security import current_principal, issue_refresh_token, issue_token
+from app.core.security import current_principal, issue_mfa_challenge_token, issue_refresh_token, issue_token
 from app.models import Org, User
 from app.routes.github_integration import handle_github_integration_callback, is_github_integration_state
 
@@ -30,6 +30,8 @@ _GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 _GITHUB_USER_URL = "https://api.github.com/user"
 _GITHUB_EMAIL_URL = "https://api.github.com/user/emails"
 
+_GITLAB_COM = "https://gitlab.com"
+
 
 def _google_callback_uri() -> str:
     return f"{settings.API_PUBLIC_URL}/v1/auth/google/callback"
@@ -39,9 +41,45 @@ def _github_callback_uri() -> str:
     return f"{settings.API_PUBLIC_URL}/v1/auth/github/callback"
 
 
+def _gitlab_callback_uri() -> str:
+    return f"{settings.API_PUBLIC_URL}/v1/auth/gitlab/callback"
+
+
 def _frontend_url() -> str:
     base = settings.API_PUBLIC_URL.replace(":8000", ":5173")
     return base
+
+
+def _valid_link_token(link_token: str | None) -> bool:
+    return bool(link_token and link_token not in ("null", "undefined"))
+
+
+def _oauth_login_redirect(user: User) -> RedirectResponse:
+    uid, oid = str(user.id), str(user.org_id)
+    if user.totp_enabled:
+        mfa_token = issue_mfa_challenge_token(uid, oid)
+        return RedirectResponse(f"{_frontend_url()}/login?mfa_token={quote(mfa_token, safe='')}")
+    token = issue_token(uid, oid)
+    refresh = issue_refresh_token(uid, oid)
+    return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}&refresh_token={refresh}")
+
+
+def _oauth_link_redirect(user: User, provider: str) -> RedirectResponse:
+    """Re-issue session after linking an IdP — skips MFA (link_token already proved identity)."""
+    uid, oid = str(user.id), str(user.org_id)
+    access = issue_token(uid, oid)
+    refresh = issue_refresh_token(uid, oid)
+    next_path = f"/account?{provider}=linked"
+    return RedirectResponse(
+        f"{_frontend_url()}/auth/callback?"
+        f"token={quote(access, safe='')}&"
+        f"refresh_token={quote(refresh, safe='')}&"
+        f"next={quote(next_path, safe='')}"
+    )
+
+
+def _link_error_redirect(error: str) -> RedirectResponse:
+    return RedirectResponse(f"{_frontend_url()}/login?error={quote(error, safe='')}")
 
 
 # ── Google ────────────────────────────────────────────────────────────────────
@@ -98,9 +136,7 @@ def google_callback(code: str | None = None, error: str | None = None, db: Sessi
             db.commit()
 
         uid, oid = str(user.id), str(user.org_id)
-        token = issue_token(uid, oid)
-        refresh = issue_refresh_token(uid, oid)
-        return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}&refresh_token={refresh}")
+        return _oauth_login_redirect(user)
 
     except Exception as e:
         log.exception("google.callback_error", error=str(e))
@@ -113,7 +149,7 @@ def google_callback(code: str | None = None, error: str | None = None, db: Sessi
 def github_login(link_token: str | None = None):
     if not settings.GITHUB_CLIENT_ID:
         raise HTTPException(400, "GitHub OAuth not configured")
-    state = f"link:{link_token}" if link_token else "login"
+    state = f"link:{link_token}" if _valid_link_token(link_token) else "login"
     params = {
         "client_id": settings.GITHUB_CLIENT_ID,
         "redirect_uri": _github_callback_uri(),
@@ -183,19 +219,19 @@ def github_callback(
                 payload = _jwt.decode(link_token_val, s.JWT_SECRET, algorithms=[s.JWT_ALG])
                 user_id = payload["sub"]
             except Exception:
-                return RedirectResponse(f"{_frontend_url()}/account?error=bad_link_token")
+                return _link_error_redirect("bad_link_token")
 
             existing = db.scalar(select(User).where(User.github_id == github_id))
             if existing and str(existing.id) != user_id:
-                return RedirectResponse(f"{_frontend_url()}/account?error=github_already_linked")
+                return _link_error_redirect("github_already_linked")
 
             user = db.get(User, uuid.UUID(user_id))
             if not user:
-                return RedirectResponse(f"{_frontend_url()}/account?error=not_found")
+                return _link_error_redirect("not_found")
 
             user.github_id = github_id
             db.commit()
-            return RedirectResponse(f"{_frontend_url()}/account?github=linked")
+            return _oauth_link_redirect(user, "github")
 
         # ── login/signup flow ─────────────────────────────────────────────────
         user = db.scalar(select(User).where(User.github_id == github_id))
@@ -213,11 +249,113 @@ def github_callback(
             user.github_id = github_id
 
         db.commit()
-        uid, oid = str(user.id), str(user.org_id)
-        token = issue_token(uid, oid)
-        refresh = issue_refresh_token(uid, oid)
-        return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}&refresh_token={refresh}")
+        return _oauth_login_redirect(user)
 
     except Exception as e:
         log.exception("github.callback_error", error=str(e))
+        return RedirectResponse(f"{_frontend_url()}/login?error=server_error")
+
+
+# ── GitLab ────────────────────────────────────────────────────────────────────
+
+@router.get("/gitlab")
+def gitlab_login(link_token: str | None = None):
+    if not settings.GITLAB_CLIENT_ID:
+        raise HTTPException(400, "GitLab OAuth not configured")
+    state = f"link:{link_token}" if _valid_link_token(link_token) else "login"
+    params = {
+        "client_id": settings.GITLAB_CLIENT_ID,
+        "redirect_uri": _gitlab_callback_uri(),
+        "response_type": "code",
+        "scope": "read_user",
+        "state": state,
+    }
+    return RedirectResponse(f"{_GITLAB_COM}/oauth/authorize?{urlencode(params)}")
+
+
+@router.get("/gitlab/callback")
+def gitlab_callback(
+    code: str | None = None,
+    error: str | None = None,
+    state: str | None = None,
+    db: Session = Depends(get_db),
+):
+    if error or not code:
+        return RedirectResponse(f"{_frontend_url()}/login?error=oauth_denied")
+
+    try:
+        with httpx.Client(timeout=10) as client:
+            token_resp = client.post(
+                f"{_GITLAB_COM}/oauth/token",
+                data={
+                    "client_id": settings.GITLAB_CLIENT_ID,
+                    "client_secret": settings.GITLAB_CLIENT_SECRET,
+                    "code": code,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": _gitlab_callback_uri(),
+                },
+                headers={"Accept": "application/json"},
+            )
+            if token_resp.status_code != 200:
+                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+
+            access_token = token_resp.json().get("access_token")
+            if not access_token:
+                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+
+            auth_headers = {"Authorization": f"Bearer {access_token}"}
+            user_resp = client.get(f"{_GITLAB_COM}/api/v4/user", headers=auth_headers)
+            if user_resp.status_code != 200:
+                return RedirectResponse(f"{_frontend_url()}/login?error=oauth_failed")
+
+            gl_user = user_resp.json()
+            gitlab_id = str(gl_user["id"])
+            email = (gl_user.get("email") or "").lower()
+
+        if state and state.startswith("link:"):
+            link_token_val = state[5:]
+            try:
+                from jose import jwt as _jwt
+                payload = _jwt.decode(link_token_val, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
+                user_id = payload["sub"]
+            except Exception:
+                return _link_error_redirect("bad_link_token")
+
+            existing = db.scalar(select(User).where(User.gitlab_id == gitlab_id))
+            if existing and str(existing.id) != user_id:
+                return _link_error_redirect("gitlab_already_linked")
+
+            user = db.get(User, uuid.UUID(user_id))
+            if not user:
+                return _link_error_redirect("not_found")
+
+            user.gitlab_id = gitlab_id
+            db.commit()
+            return _oauth_link_redirect(user, "gitlab")
+
+        user = db.scalar(select(User).where(User.gitlab_id == gitlab_id))
+        if not user and email:
+            user = db.scalar(select(User).where(User.email == email))
+
+        if not user:
+            if not email:
+                return RedirectResponse(f"{_frontend_url()}/login?error=no_email")
+            name = gl_user.get("name") or gl_user.get("username") or email.split("@")[0]
+            org = Org(id=uuid.uuid4(), name=name)
+            user = User(
+                id=uuid.uuid4(),
+                org_id=org.id,
+                email=email,
+                password_hash="",
+                gitlab_id=gitlab_id,
+            )
+            db.add_all([org, user])
+        elif not user.gitlab_id:
+            user.gitlab_id = gitlab_id
+
+        db.commit()
+        return _oauth_login_redirect(user)
+
+    except Exception as e:
+        log.exception("gitlab.callback_error", error=str(e))
         return RedirectResponse(f"{_frontend_url()}/login?error=server_error")

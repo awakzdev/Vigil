@@ -57,6 +57,16 @@ def issue_mfa_challenge_token(sub: str, org_id: str) -> str:
     return jwt.encode(payload, settings.JWT_SECRET, algorithm=settings.JWT_ALG)
 
 
+def decode_mfa_challenge_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, settings.JWT_SECRET, algorithms=[settings.JWT_ALG])
+    except JWTError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "MFA session expired — sign in again")
+    if payload.get("type") != "mfa_challenge":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "not an mfa challenge token")
+    return payload
+
+
 def current_principal(creds: HTTPAuthorizationCredentials = Depends(bearer)) -> dict:
     if not creds:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="missing token")

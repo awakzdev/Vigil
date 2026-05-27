@@ -18,6 +18,38 @@ export function clearTokens() {
   localStorage.removeItem("refresh_token");
 }
 
+function parseApiError(_status: number, body: string): string {
+  let text = body.trim().replace(/^\d{3}:\s*/, "");
+  try {
+    const json = JSON.parse(text) as { detail?: unknown };
+    const detail = json.detail;
+    if (typeof detail === "string") return detail;
+    if (Array.isArray(detail)) {
+      return detail
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object" && "msg" in item) {
+            return String((item as { msg: unknown }).msg);
+          }
+          return String(item);
+        })
+        .join("; ");
+    }
+  } catch {
+    // not JSON — fall through
+  }
+  if (text.startsWith("{")) return "Something went wrong. Try again.";
+  return text || "Something went wrong. Try again.";
+}
+
+/** Turn API/ thrown errors into user-facing copy (no status codes or JSON blobs). */
+export function formatApiError(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const msg = parseApiError(0, raw);
+  if (!msg) return "Something went wrong. Try again.";
+  return msg.charAt(0).toUpperCase() + msg.slice(1);
+}
+
 let _refreshing: Promise<string | null> | null = null;
 
 async function tryRefresh(): Promise<string | null> {
@@ -53,7 +85,7 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
   if (t) headers["Authorization"] = `Bearer ${t}`;
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
 
-  if (res.status === 401) {
+  if (res.status === 401 && t) {
     const newToken = await tryRefresh();
     if (newToken) {
       const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
@@ -65,7 +97,7 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
       }
       if (!retry.ok) {
         const body = await retry.text();
-        throw new Error(`${retry.status}: ${body}`);
+        throw new Error(parseApiError(retry.status, body));
       }
       if (retry.status === 204) return undefined as T;
       return retry.json();
@@ -75,9 +107,14 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
     throw new Error("session expired");
   }
 
+  if (res.status === 401) {
+    const body = await res.text();
+    throw new Error(parseApiError(res.status, body));
+  }
+
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`${res.status}: ${body}`);
+    throw new Error(parseApiError(res.status, body));
   }
   if (res.status === 204) return undefined as T;
   return res.json();

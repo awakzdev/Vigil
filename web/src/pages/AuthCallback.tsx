@@ -2,6 +2,11 @@ import { useEffect, useRef } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { storeTokens } from "../api";
 
+function safeNext(raw: string | null): string {
+  if (!raw || !raw.startsWith("/") || raw.startsWith("//")) return "/accounts";
+  return raw;
+}
+
 export default function AuthCallback() {
   const nav = useNavigate();
   const [params] = useSearchParams();
@@ -14,10 +19,11 @@ export default function AuthCallback() {
     const token = params.get("token");
     const refreshToken = params.get("refresh_token");
     const error = params.get("error");
+    const next = safeNext(params.get("next"));
 
     if (token) {
       storeTokens(token, refreshToken ?? "");
-      nav("/accounts", { replace: true });
+      nav(next, { replace: true });
     } else {
       nav(`/login?error=${error ?? "unknown"}`, { replace: true });
     }

@@ -18,6 +18,7 @@ from app.core.security import current_principal
 from app.models.aws_account import AwsAccount
 from app.models.github import IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection
 from app.services.gitlab_sync import provider_config, set_provider_config, sync_gitlab_provider
+from app.services.gitlab_tokens import GitLabReconnectRequired, apply_oauth_tokens, ensure_gitlab_token
 
 router = APIRouter()
 settings = get_settings()
@@ -165,10 +166,8 @@ def _provider_out(db: Session, provider: IdentityProvider) -> GitLabProviderOut:
     )
 
 
-def _gitlab_headers(provider: IdentityProvider) -> dict[str, str]:
-    token = provider_config(provider).get("access_token")
-    if not token:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "GitLab provider is missing an access token")
+def _gitlab_headers(db: Session, provider: IdentityProvider) -> dict[str, str]:
+    token = ensure_gitlab_token(db, provider)
     return {"Authorization": f"Bearer {token}"}
 
 
@@ -231,7 +230,8 @@ def gitlab_callback(
             )
             if token_resp.status_code != 200:
                 return RedirectResponse(f"{_frontend_url()}/integrations/gitlab?error=oauth_failed")
-            access_token = token_resp.json().get("access_token")
+            token_data = token_resp.json()
+            access_token = token_data.get("access_token")
             if not access_token:
                 return RedirectResponse(f"{_frontend_url()}/integrations/gitlab?error=oauth_failed")
 
@@ -251,13 +251,15 @@ def gitlab_callback(
             db.add(provider)
         set_provider_config(
             provider,
-            {
-                **(provider_config(provider)),
-                "access_token": access_token,
-                "username": gl_user.get("username"),
-                "gitlab_user_id": str(gl_user.get("id")),
-                "base_url": base_url if base_url != "https://gitlab.com" else None,
-            },
+            apply_oauth_tokens(
+                {
+                    **(provider_config(provider)),
+                    "username": gl_user.get("username"),
+                    "gitlab_user_id": str(gl_user.get("id")),
+                    "base_url": base_url if base_url != "https://gitlab.com" else None,
+                },
+                token_data,
+            ),
         )
         provider.status = "connected"
         db.commit()
@@ -280,14 +282,17 @@ def list_gitlab_groups(p=Depends(current_principal), db: Session = Depends(get_d
     provider = _provider_for_org(db, p["org_id"])
     if not provider:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "GitLab is not connected")
-    api = _api_base(provider)
-    with httpx.Client(headers=_gitlab_headers(provider), timeout=20) as client:
-        groups_resp = client.get(f"{api}/groups", params={"per_page": 100, "min_access_level": 20})
-        groups_resp.raise_for_status()
-        groups = groups_resp.json() if isinstance(groups_resp.json(), list) else []
-        user_resp = client.get(f"{api}/user")
-        user_resp.raise_for_status()
-        username = user_resp.json().get("username", "")
+    try:
+        api = _api_base(provider)
+        with httpx.Client(headers=_gitlab_headers(db, provider), timeout=20) as client:
+            groups_resp = client.get(f"{api}/groups", params={"per_page": 100, "min_access_level": 20})
+            groups_resp.raise_for_status()
+            groups = groups_resp.json() if isinstance(groups_resp.json(), list) else []
+            user_resp = client.get(f"{api}/user")
+            user_resp.raise_for_status()
+            username = user_resp.json().get("username", "")
+    except GitLabReconnectRequired as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     result = [GitLabGroupOut(full_path=g["full_path"], name=g["name"]) for g in groups]
     if username:
         result.insert(0, GitLabGroupOut(full_path=username, name=f"{username} (personal)"))
@@ -299,16 +304,19 @@ def list_gitlab_repos(namespace: str, p=Depends(current_principal), db: Session 
     provider = _provider_for_org(db, p["org_id"])
     if not provider:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "GitLab is not connected")
-    api = _api_base(provider)
-    with httpx.Client(headers=_gitlab_headers(provider), timeout=20) as client:
-        projects = []
-        group_resp = client.get(f"{api}/groups/{namespace}/projects", params={"per_page": 100, "include_subgroups": "true", "archived": "false"})
-        if group_resp.status_code == 200 and isinstance(group_resp.json(), list):
-            projects = group_resp.json()
-        if not projects:
-            user_resp = client.get(f"{api}/users/{namespace}/projects", params={"per_page": 100})
-            if user_resp.status_code == 200 and isinstance(user_resp.json(), list):
-                projects = user_resp.json()
+    try:
+        api = _api_base(provider)
+        with httpx.Client(headers=_gitlab_headers(db, provider), timeout=20) as client:
+            projects = []
+            group_resp = client.get(f"{api}/groups/{namespace}/projects", params={"per_page": 100, "include_subgroups": "true", "archived": "false"})
+            if group_resp.status_code == 200 and isinstance(group_resp.json(), list):
+                projects = group_resp.json()
+            if not projects:
+                user_resp = client.get(f"{api}/users/{namespace}/projects", params={"per_page": 100})
+                if user_resp.status_code == 200 and isinstance(user_resp.json(), list):
+                    projects = user_resp.json()
+    except GitLabReconnectRequired as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     return [
         GitLabRepoOut(
             path_with_namespace=p["path_with_namespace"],
@@ -349,9 +357,17 @@ def sync_gitlab(body: GitLabSyncIn, p=Depends(current_principal), db: Session = 
         raise HTTPException(status.HTTP_404_NOT_FOUND, "GitLab is not connected")
     try:
         stats = sync_gitlab_provider(db, provider, body.group_id)
+    except GitLabReconnectRequired as e:
+        provider.status = "error"
+        db.commit()
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
     except httpx.HTTPStatusError as e:
         provider.status = "error"
         db.commit()
+        if e.response is not None and e.response.status_code == 401:
+            body = e.response.text.lower()
+            if "invalid_token" in body or "expired" in body:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, str(GitLabReconnectRequired())) from e
         detail = e.response.text[:500] if e.response is not None else str(e)
         raise HTTPException(status.HTTP_400_BAD_REQUEST, f"GitLab sync failed: {detail}") from e
     except ValueError as e:

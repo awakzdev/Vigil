@@ -204,10 +204,13 @@ def sync_gitlab_provider(
     provider: IdentityProvider,
     group_id: str | None = None,
 ) -> GitLabSyncStats:
+    from app.services.gitlab_tokens import GitLabReconnectRequired, ensure_gitlab_token
+
     config = provider_config(provider)
-    token = config.get("access_token")
-    if not token:
-        raise ValueError("GitLab provider is missing an access token")
+    try:
+        token = ensure_gitlab_token(db, provider)
+    except GitLabReconnectRequired:
+        raise
 
     api = _api_base(config)
     now = datetime.now(timezone.utc)
