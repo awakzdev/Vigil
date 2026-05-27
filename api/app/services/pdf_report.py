@@ -25,29 +25,35 @@ _FRAMEWORK_LABELS = {
     "iso27001": "ISO 27001:2022 Annex A",
 }
 
-_FRAMEWORK_BADGE = {
-    "soc2": "SOC 2 Evidence Report",
-    "cis_aws_l1": "CIS AWS Evidence Report",
-    "iso27001": "ISO 27001 Evidence Report",
+_FRAMEWORK_PACK_BADGE = {
+    "soc2": "SOC 2 Evidence Pack",
+    "cis_aws_l1": "CIS AWS Evidence Pack",
+    "iso27001": "ISO 27001 Evidence Pack",
 }
 
 _CONTROL_STATUS = {
-    "pass": {"label": "PASS", "fill": (220, 252, 231), "text": (21, 128, 61)},
-    "fail": {"label": "NEEDS REVIEW", "fill": (254, 243, 199), "text": (180, 83, 9)},
-    "no_data": {"label": "NO DATA", "fill": (244, 244, 245), "text": (113, 113, 122)},
+    "pass": {"label": "Pass", "fill": (236, 253, 245), "text": (22, 101, 52), "border": (167, 243, 208)},
+    "fail": {"label": "Needs review", "fill": (255, 251, 235), "text": (180, 83, 9), "border": (253, 230, 138)},
+    "no_data": {"label": "No data", "fill": (250, 250, 250), "text": (113, 113, 122), "border": (228, 228, 231)},
 }
 
 _EVIDENCE_STATUS = {
-    "complete": {"label": "COMPLETE", "fill": (219, 234, 254), "text": (29, 78, 216)},
-    "partial": {"label": "PARTIAL", "fill": (254, 243, 199), "text": (180, 83, 9)},
-    "missing": {"label": "MISSING", "fill": (244, 244, 245), "text": (113, 113, 122)},
+    "complete": {"label": "Complete", "fill": (239, 246, 255), "text": (29, 78, 216), "border": (191, 219, 254)},
+    "partial": {"label": "Partial", "fill": (255, 251, 235), "text": (180, 83, 9), "border": (253, 230, 138)},
+    "missing": {"label": "Missing", "fill": (250, 250, 250), "text": (113, 113, 122), "border": (228, 228, 231)},
 }
 
-_SEVERITY_COLOR = {
-    "critical": (185, 28, 28),
-    "high": (220, 38, 38),
-    "medium": (217, 119, 6),
-    "low": (113, 113, 122),
+_SEVERITY_STYLE = {
+    "critical": {"fill": (254, 226, 226), "text": (185, 28, 28), "border": (252, 165, 165)},
+    "high": {"fill": (254, 226, 226), "text": (220, 38, 38), "border": (252, 165, 165)},
+    "medium": {"fill": (254, 243, 199), "text": (180, 83, 9), "border": (253, 230, 138)},
+    "low": {"fill": (244, 244, 245), "text": (113, 113, 122), "border": (212, 212, 216)},
+}
+
+_SUMMARY_ACCENTS = {
+    "pass": (34, 197, 94),
+    "review": (245, 158, 11),
+    "neutral": (161, 161, 170),
 }
 
 
@@ -57,14 +63,31 @@ def _s(text: str) -> str:
     return text.encode("latin-1", errors="replace").decode("latin-1")
 
 
+def _truncate_middle(text: str, max_len: int = 58) -> str:
+    if len(text) <= max_len:
+        return text
+    keep = (max_len - 3) // 2
+    return text[:keep] + "..." + text[-keep:]
+
+
+def _short_objective(title: str, max_len: int = 44) -> str:
+    t = _s(title)
+    if "—" in t:
+        parts = t.split("-", 1)
+        if len(parts) > 1 and parts[1].strip():
+            t = parts[1].strip()
+    elif " - " in t:
+        t = t.split(" - ", 1)[-1].strip()
+    return t[: max_len - 3] + "..." if len(t) > max_len else t
+
+
 class VigilReportPDF(FPDF):
-    def __init__(self, report_id: str, generated_at: datetime):
+    def __init__(self, report_id: str):
         super().__init__()
         self.report_id = report_id
-        self.generated_at = generated_at
 
     def footer(self) -> None:
-        self.set_y(-16)
+        self.set_y(-20)
         self.set_draw_color(228, 228, 231)
         self.line(self.l_margin, self.get_y(), self.w - self.r_margin, self.get_y())
         self.ln(2)
@@ -86,27 +109,47 @@ class VigilReportPDF(FPDF):
             0,
             3,
             _s(
-                "This report is evidence generated from read-only source-system APIs. "
-                "It supports audit review but is not a guarantee of compliance or certification."
+                "This report supports audit review but is not a guarantee of compliance or certification."
             ),
             align="C",
         )
+        self.set_y(-8)
+        self.set_font("Helvetica", "", 7)
+        self.set_text_color(161, 161, 170)
+        self.cell(0, 3, _s(f"Page {self.page_no()}/{{nb}}"), align="R")
 
 
-def _draw_pill(pdf: FPDF, label: str, style: dict[str, tuple[int, int, int]], w: float = 0, h: float = 5.5) -> None:
-    fill = style["fill"]
-    text = style["text"]
-    pdf.set_fill_color(*fill)
-    pdf.set_text_color(*text)
-    pdf.set_font("Helvetica", "B", 7)
-    if w <= 0:
-        w = pdf.get_string_width(label) + 6
-    x = pdf.get_x()
-    y = pdf.get_y()
-    pdf.rect(x, y + 0.3, w, h, style="F")
-    pdf.set_xy(x, y + 1.0)
-    pdf.cell(w, 4, label, align="C")
-    pdf.set_xy(x + w, y)
+def _ensure_space(pdf: FPDF, needed: float) -> None:
+    if pdf.get_y() + needed > pdf.h - pdf.b_margin:
+        pdf.add_page()
+
+
+def _section_heading(pdf: FPDF, title: str, needed_after: float = 24) -> None:
+    _ensure_space(pdf, needed_after + 10)
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.set_text_color(24, 24, 27)
+    pdf.cell(0, 8, _s(title), new_x="LMARGIN", new_y="NEXT")
+    pdf.ln(2)
+
+
+def _draw_pill(
+    pdf: FPDF,
+    label: str,
+    style: dict[str, Any],
+    w: float | None = None,
+    h: float = 5.5,
+) -> None:
+    pdf.set_font("Helvetica", "", 8)
+    if w is None:
+        w = pdf.get_string_width(_s(label)) + 8
+    x, y = pdf.get_x(), pdf.get_y()
+    pdf.set_draw_color(*style["border"])
+    pdf.set_fill_color(*style["fill"])
+    pdf.rect(x, y + 0.2, w, h, style="FD")
+    pdf.set_xy(x, y + 1.1)
+    pdf.set_text_color(*style["text"])
+    pdf.cell(w, 3.5, _s(label), align="C")
+    pdf.set_xy(x + w + 1.5, y)
 
 
 def _draw_summary_card(
@@ -116,23 +159,58 @@ def _draw_summary_card(
     w: float,
     h: float,
     value: str,
-    label: str,
+    title: str,
+    subtitle: str,
     accent: tuple[int, int, int],
 ) -> None:
-    pdf.set_xy(x, y)
     pdf.set_fill_color(255, 255, 255)
     pdf.set_draw_color(228, 228, 231)
     pdf.rect(x, y, w, h, style="FD")
     pdf.set_fill_color(*accent)
-    pdf.rect(x, y, 2.5, h, style="F")
-    pdf.set_xy(x + 5, y + 4)
-    pdf.set_font("Helvetica", "B", 16)
+    pdf.rect(x, y, 2, h, style="F")
+    pdf.set_xy(x + 5, y + 3)
+    pdf.set_font("Helvetica", "B", 15)
     pdf.set_text_color(24, 24, 27)
-    pdf.cell(w - 7, 8, value, new_x="LMARGIN", new_y="NEXT")
-    pdf.set_x(x + 5)
-    pdf.set_font("Helvetica", "", 8)
-    pdf.set_text_color(82, 82, 91)
-    pdf.cell(w - 7, 4, _s(label))
+    pdf.cell(w - 8, 7, _s(value))
+    pdf.set_xy(x + 5, y + 10)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(63, 63, 70)
+    pdf.cell(w - 8, 4, _s(title))
+    pdf.set_xy(x + 5, y + 14)
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(113, 113, 122)
+    sub = _s(subtitle)
+    if pdf.get_string_width(sub) > w - 8:
+        sub = sub[: int((w - 8) / 1.8)] + "..."
+    pdf.cell(w - 8, 3.5, sub)
+
+
+def _draw_meta_card(pdf: FPDF, fields: list[tuple[str, str]], cols: int = 3) -> None:
+    row_count = (len(fields) + cols - 1) // cols
+    card_h = 8 + row_count * 11
+    y0 = pdf.get_y()
+    pdf.set_fill_color(249, 250, 251)
+    pdf.set_draw_color(228, 228, 231)
+    pdf.rect(pdf.l_margin, y0, pdf.epw, card_h, style="FD")
+    col_w = pdf.epw / cols
+    for i, (label, value) in enumerate(fields):
+        col = i % cols
+        row = i // cols
+        x = pdf.l_margin + 5 + col * col_w
+        y = y0 + 5 + row * 11
+        pdf.set_xy(x, y)
+        pdf.set_font("Helvetica", "", 7)
+        pdf.set_text_color(113, 113, 122)
+        pdf.cell(col_w - 8, 3.5, _s(label))
+        pdf.set_xy(x, y + 4)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(39, 39, 42)
+        val = _s(value)
+        max_w = col_w - 10
+        if pdf.get_string_width(val) > max_w:
+            val = _truncate_middle(val, 42)
+        pdf.cell(col_w - 8, 4, val)
+    pdf.set_y(y0 + card_h + 6)
 
 
 def _resource_label(arn: str) -> str:
@@ -162,6 +240,164 @@ def _fmt_date(iso: str | None) -> str:
         return iso[:10]
 
 
+def _draw_artifact_chip(pdf: FPDF, path: str, link: bool = True) -> None:
+    pdf.set_font("Courier", "", 7)
+    label = _s(path)
+    w = min(pdf.get_string_width(label) + 6, pdf.epw - 12)
+    x, y = pdf.get_x(), pdf.get_y()
+    pdf.set_fill_color(244, 244, 245)
+    pdf.set_draw_color(212, 212, 216)
+    pdf.rect(x, y, w, 5, style="FD")
+    if link:
+        pdf.link(x, y, w, 5, path)
+    pdf.set_xy(x + 3, y + 0.8)
+    pdf.set_text_color(82, 82, 91)
+    pdf.cell(w - 6, 3.5, label)
+    pdf.set_xy(x, y + 6.5)
+
+
+def _draw_finding_row(pdf: FPDF, finding: dict[str, Any], width: float) -> None:
+    sev = (finding.get("severity") or "medium").lower()
+    sev_style = _SEVERITY_STYLE.get(sev, _SEVERITY_STYLE["medium"])
+    arn = finding.get("resource_arn") or ""
+    resource = _resource_label(arn)
+
+    y0 = pdf.get_y()
+    pdf.set_fill_color(255, 255, 255)
+    pdf.set_draw_color(235, 235, 235)
+    pdf.rect(pdf.l_margin + 2, y0, width - 4, 18, style="FD")
+
+    pdf.set_xy(pdf.l_margin + 5, y0 + 2)
+    _draw_pill(pdf, sev.capitalize(), sev_style, w=16, h=5)
+
+    pdf.set_xy(pdf.l_margin + 24, y0 + 2.5)
+    pdf.set_font("Helvetica", "B", 8)
+    pdf.set_text_color(39, 39, 42)
+    pdf.cell(0, 4, _s(resource), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_x(pdf.l_margin + 24)
+    pdf.set_font("Helvetica", "", 8)
+    pdf.set_text_color(63, 63, 70)
+    issue = _s(finding.get("title") or "")
+    pdf.multi_cell(width - 28, 4, issue[:120])
+
+    pdf.set_x(pdf.l_margin + 24)
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(113, 113, 122)
+    pdf.cell(
+        0,
+        3.5,
+        _s(f"Resource: {_truncate_middle(arn, 72)}"),
+        new_x="LMARGIN",
+        new_y="NEXT",
+    )
+    pdf.set_x(pdf.l_margin + 24)
+    pdf.cell(
+        0,
+        3.5,
+        _s(
+            f"First seen {_fmt_date(finding.get('first_seen'))}  |  "
+            f"Last seen {_fmt_date(finding.get('last_seen'))}"
+        ),
+        new_x="LMARGIN",
+        new_y="NEXT",
+    )
+    pdf.set_y(y0 + 20)
+
+
+def _draw_review_card(pdf: FPDF, control: dict[str, Any]) -> None:
+    findings = control.get("findings") or []
+    est_h = max(56, 44 + min(len(findings), 3) * 22)
+    _ensure_space(pdf, est_h + 8)
+
+    y0 = pdf.get_y()
+    pdf.set_fill_color(252, 252, 253)
+    pdf.set_draw_color(228, 228, 231)
+    pdf.rect(pdf.l_margin, y0, pdf.epw, est_h, style="FD")
+    pdf.set_fill_color(245, 158, 11)
+    pdf.rect(pdf.l_margin, y0, 2, est_h, style="F")
+
+    pdf.set_xy(pdf.l_margin + 6, y0 + 5)
+    pdf.set_font("Helvetica", "B", 11)
+    pdf.set_text_color(24, 24, 27)
+    pdf.cell(0, 5, _s(f"{control['control_id']}  {control['title']}"), new_x="LMARGIN", new_y="NEXT")
+
+    pdf.set_x(pdf.l_margin + 6)
+    _draw_pill(pdf, "Needs review", _CONTROL_STATUS["fail"], w=26)
+    pdf.ln(7)
+
+    pdf.set_x(pdf.l_margin + 6)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(82, 82, 91)
+    pdf.cell(0, 4, "Objective", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(pdf.l_margin + 6)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(63, 63, 70)
+    pdf.multi_cell(pdf.epw - 12, 4.5, _s(control["description"][:300]))
+
+    pdf.ln(2)
+    pdf.set_x(pdf.l_margin + 6)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(82, 82, 91)
+    pdf.cell(0, 4, "Reason", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(pdf.l_margin + 6)
+    pdf.set_font("Helvetica", "", 9)
+    pdf.set_text_color(113, 63, 18)
+    pdf.multi_cell(pdf.epw - 12, 4.5, _s(control.get("review_reason") or control.get("status_note", "")))
+
+    counts = _severity_counts(findings)
+    if counts:
+        pdf.ln(2)
+        pdf.set_x(pdf.l_margin + 6)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(82, 82, 91)
+        pdf.cell(0, 4, "Findings by severity", new_x="LMARGIN", new_y="NEXT")
+        pdf.set_x(pdf.l_margin + 6)
+        parts = [f"{k.capitalize()} {v}" for k, v in sorted(counts.items())]
+        pdf.set_font("Helvetica", "", 8)
+        pdf.set_text_color(63, 63, 70)
+        pdf.cell(0, 4, ", ".join(parts), new_x="LMARGIN", new_y="NEXT")
+
+    if findings:
+        pdf.ln(3)
+        pdf.set_x(pdf.l_margin + 6)
+        pdf.set_font("Helvetica", "B", 9)
+        pdf.set_text_color(82, 82, 91)
+        pdf.cell(0, 4, "Top findings", new_x="LMARGIN", new_y="NEXT")
+        for f in findings[:3]:
+            _draw_finding_row(pdf, f, pdf.epw - 8)
+        if len(findings) > 3:
+            pdf.set_x(pdf.l_margin + 8)
+            pdf.set_font("Helvetica", "I", 8)
+            pdf.set_text_color(113, 113, 122)
+            pdf.cell(
+                0,
+                4,
+                _s(
+                    f"+ {len(findings) - 3} more findings included in "
+                    f"controls/{control['control_id']}/findings.json"
+                ),
+                new_x="LMARGIN",
+                new_y="NEXT",
+            )
+
+    pdf.ln(2)
+    pdf.set_x(pdf.l_margin + 6)
+    pdf.set_font("Helvetica", "B", 9)
+    pdf.set_text_color(82, 82, 91)
+    pdf.cell(0, 4, "Evidence artifacts", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_x(pdf.l_margin + 8)
+    for artifact in (
+        f"controls/{control['control_id']}/findings.json",
+        f"controls/{control['control_id']}/snapshots.json",
+        f"controls/{control['control_id']}/exceptions.json",
+        f"controls/{control['control_id']}/summary.json",
+    ):
+        _draw_artifact_chip(pdf, artifact)
+
+    pdf.set_y(max(y0 + est_h, pdf.get_y()) + 8)
+
+
 def build_pdf(
     acc: AwsAccount,
     framework: str,
@@ -174,72 +410,64 @@ def build_pdf(
     report_id: str | None = None,
 ) -> bytes:
     rid = report_id or "SAMPLE"
-    pdf = VigilReportPDF(rid, generated_at)
-    pdf.set_auto_page_break(auto=True, margin=18)
-    pdf.set_margins(16, 16, 16)
+    pdf = VigilReportPDF(rid)
+    pdf.alias_nb_pages()
+    pdf.set_auto_page_break(auto=True, margin=22)
+    pdf.set_margins(18, 18, 18)
     pdf.add_page()
 
-    # Header wordmark + badge
-    pdf.set_fill_color(24, 24, 27)
-    pdf.rect(pdf.l_margin, pdf.get_y(), 28, 10, style="F")
-    pdf.set_xy(pdf.l_margin + 4, pdf.get_y() + 2.5)
-    pdf.set_font("Helvetica", "B", 11)
-    pdf.set_text_color(255, 255, 255)
-    pdf.cell(20, 5, "Vigil")
+    pack_badge = _FRAMEWORK_PACK_BADGE.get(framework, "Compliance Evidence Pack")
+    period_end = generated_at.date()
+    period_start = since.date() if since else period_end
+    sources = evidence_sources or ["AWS IAM", "AWS CloudTrail", "AWS Config"]
+    sources_display = ", ".join(sources)
 
-    badge = _FRAMEWORK_BADGE.get(framework, "Compliance Evidence Report")
-    pdf.set_xy(pdf.l_margin + 34, pdf.get_y() - 2.5)
-    pdf.set_fill_color(238, 242, 255)
+    # Header
+    header_y = pdf.get_y()
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.set_text_color(24, 24, 27)
+    pdf.cell(40, 7, "Vigil")
+
+    badge_x = pdf.w - pdf.r_margin - 52
+    pdf.set_xy(badge_x, header_y)
+    pdf.set_font("Helvetica", "B", 8)
     pdf.set_text_color(67, 56, 202)
-    pdf.set_font("Helvetica", "B", 9)
-    badge_w = pdf.get_string_width(badge) + 8
-    pdf.rect(pdf.l_margin + 34, pdf.get_y(), badge_w, 7, style="F")
-    pdf.set_xy(pdf.l_margin + 38, pdf.get_y() + 1.5)
-    pdf.cell(badge_w - 8, 4, _s(badge))
+    pdf.set_fill_color(238, 242, 255)
+    pdf.set_draw_color(199, 210, 254)
+    pdf.rect(badge_x, header_y, 52, 14, style="FD")
+    pdf.set_xy(badge_x + 3, header_y + 2)
+    pdf.cell(46, 4, _s(pack_badge))
+    pdf.set_xy(badge_x + 3, header_y + 7)
+    pdf.set_font("Helvetica", "", 7)
+    pdf.set_text_color(99, 102, 241)
+    pdf.cell(46, 4, "Read-only source evidence")
 
-    pdf.ln(12)
-    pdf.set_font("Helvetica", "B", 24)
+    pdf.ln(10)
+    pdf.set_font("Helvetica", "B", 26)
     pdf.set_text_color(24, 24, 27)
     pdf.cell(0, 10, "Compliance Evidence Report", new_x="LMARGIN", new_y="NEXT")
     pdf.set_font("Helvetica", "", 10)
     pdf.set_text_color(82, 82, 91)
     pdf.cell(0, 5, _s(_FRAMEWORK_LABELS.get(framework, framework.upper())), new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(3)
-
-    # Metadata card
-    card_y = pdf.get_y()
-    card_h = 28
-    pdf.set_fill_color(249, 250, 251)
-    pdf.set_draw_color(228, 228, 231)
-    pdf.rect(pdf.l_margin, card_y, pdf.epw, card_h, style="FD")
-    period_end = generated_at.date()
-    period_start = since.date() if since else period_end
-    sources = evidence_sources or ["AWS IAM", "AWS CloudTrail", "AWS Config"]
-    meta_rows = [
-        ("Account", f"{_s(acc.label)} ({acc.account_id or 'unknown'})"),
-        ("Audit period", f"{period_start} to {period_end} ({period_days} days)"),
-        ("Generated", generated_at.strftime("%Y-%m-%d %H:%M UTC")),
-        ("Evidence sources", ", ".join(sources)),
-        ("Report ID", rid),
-    ]
-    col_w = pdf.epw / 2
-    for i, (label, value) in enumerate(meta_rows):
-        col = i % 2
-        row = i // 2
-        x = pdf.l_margin + 4 + col * col_w
-        y = card_y + 4 + row * 8
-        pdf.set_xy(x, y)
-        pdf.set_font("Helvetica", "B", 8)
-        pdf.set_text_color(113, 113, 122)
-        pdf.cell(26, 4, _s(label.upper()))
-        pdf.set_font("Helvetica", "", 9)
-        pdf.set_text_color(39, 39, 42)
-        pdf.cell(col_w - 30, 4, _s(value))
-    pdf.set_y(card_y + card_h + 4)
+    pdf.ln(4)
 
     pdf.set_draw_color(212, 212, 216)
     pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
     pdf.ln(6)
+
+    # Metadata
+    _draw_meta_card(
+        pdf,
+        [
+            ("Account", f"{_s(acc.label)} ({acc.account_id or 'unknown'})"),
+            ("Audit period", f"{period_start} to {period_end} ({period_days} days)"),
+            ("Generated", generated_at.strftime("%Y-%m-%d %H:%M UTC")),
+            ("Evidence sources", sources_display),
+            ("Report ID", rid),
+            ("Collection mode", "Read-only API collection"),
+        ],
+        cols=3,
+    )
 
     # Executive summary
     passed = sum(1 for r in control_results if r["status"] == "pass")
@@ -248,19 +476,27 @@ def build_pdf(
     total = len(control_results)
     score_pct = round((passed / total) * 100) if total else 0
 
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(24, 24, 27)
-    pdf.cell(0, 7, "Executive Summary", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-
+    _section_heading(pdf, "Executive Summary", needed_after=30)
     card_w = (pdf.epw - 9) / 4
-    card_h = 22
+    card_h = 24
     y0 = pdf.get_y()
-    _draw_summary_card(pdf, pdf.l_margin, y0, card_w, card_h, f"{score_pct}%", "Pass rate", (34, 197, 94))
-    _draw_summary_card(pdf, pdf.l_margin + card_w + 3, y0, card_w, card_h, str(passed), "Passed controls", (34, 197, 94))
-    _draw_summary_card(pdf, pdf.l_margin + 2 * (card_w + 3), y0, card_w, card_h, str(failed), "Needs review", (239, 68, 68))
-    _draw_summary_card(pdf, pdf.l_margin + 3 * (card_w + 3), y0, card_w, card_h, str(no_data), "No data", (161, 161, 170))
-    pdf.set_y(y0 + card_h + 8)
+    _draw_summary_card(
+        pdf, pdf.l_margin, y0, card_w, card_h,
+        f"{score_pct}%", "Pass rate", f"{passed} of {total} controls passing", _SUMMARY_ACCENTS["pass"],
+    )
+    _draw_summary_card(
+        pdf, pdf.l_margin + card_w + 3, y0, card_w, card_h,
+        str(passed), "Passed controls", "No open mapped findings", _SUMMARY_ACCENTS["pass"],
+    )
+    _draw_summary_card(
+        pdf, pdf.l_margin + 2 * (card_w + 3), y0, card_w, card_h,
+        str(failed), "Needs review", "Open findings mapped to controls", _SUMMARY_ACCENTS["review"],
+    )
+    _draw_summary_card(
+        pdf, pdf.l_margin + 3 * (card_w + 3), y0, card_w, card_h,
+        str(no_data), "No data", "Not evaluated or unmapped", _SUMMARY_ACCENTS["neutral"],
+    )
+    pdf.set_y(y0 + card_h + 6)
 
     pdf.set_font("Helvetica", "", 9)
     pdf.set_text_color(82, 82, 91)
@@ -268,33 +504,31 @@ def build_pdf(
         pdf.epw,
         4.5,
         _s(
-            "Control status reflects open findings mapped to each control. "
-            "Evidence status reflects whether source-system snapshots were collected for that control, "
-            "independent of pass/fail."
+            "Control status reflects open findings. Evidence status reflects whether source snapshots "
+            "were collected for that control, independent of pass or fail."
         ),
     )
-    pdf.ln(4)
+    pdf.ln(5)
 
-    # Control table
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(24, 24, 27)
-    pdf.cell(0, 7, "Control Overview", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-
-    col_w = [20, 68, 28, 28, 18]
-    pdf.set_fill_color(39, 39, 42)
-    pdf.set_text_color(255, 255, 255)
+    # Control overview table
+    _section_heading(pdf, "Control Overview", needed_after=20)
+    col_w = [18, 58, 30, 30, 16]
+    pdf.set_fill_color(248, 250, 252)
+    pdf.set_draw_color(228, 228, 231)
+    pdf.set_text_color(63, 63, 70)
     pdf.set_font("Helvetica", "B", 8)
-    for i, h in enumerate(["Control", "Title", "Status", "Evidence", "Open"]):
-        pdf.cell(col_w[i], 8, h, border=0, fill=True, align="C" if i >= 2 else "L")
+    headers = ["Control", "Objective", "Control Status", "Evidence Status", "Open Findings"]
+    for i, h in enumerate(headers):
+        align = "C" if i >= 2 else "L"
+        pdf.cell(col_w[i], 8, _s(h), border="B", fill=True, align=align)
     pdf.ln()
 
     for idx, r in enumerate(control_results):
-        if pdf.get_y() > 255:
+        if pdf.get_y() > 258:
             pdf.add_page()
-        row_h = 8
+        row_h = 9
         fill = idx % 2 == 0
-        bg = (249, 250, 251) if fill else (255, 255, 255)
+        bg = (255, 255, 255) if fill else (252, 252, 253)
         pdf.set_fill_color(*bg)
         y_row = pdf.get_y()
 
@@ -302,19 +536,17 @@ def build_pdf(
         pdf.set_text_color(39, 39, 42)
         pdf.cell(col_w[0], row_h, _s(r["control_id"]), border=0, fill=fill)
 
-        title = _s(r["title"])
-        if len(title) > 52:
-            title = title[:49] + "..."
         pdf.set_font("Helvetica", "", 8)
-        pdf.cell(col_w[1], row_h, title, border=0, fill=fill)
+        pdf.set_text_color(63, 63, 70)
+        pdf.cell(col_w[1], row_h, _short_objective(r["title"], 40), border=0, fill=fill)
 
         ctrl_style = _CONTROL_STATUS.get(r["status"], _CONTROL_STATUS["no_data"])
-        pdf.set_xy(pdf.l_margin + col_w[0] + col_w[1] + 2, y_row + 1.2)
-        _draw_pill(pdf, ctrl_style["label"], ctrl_style, w=col_w[2] - 4)
+        pdf.set_xy(pdf.l_margin + col_w[0] + col_w[1] + 1, y_row + 1.5)
+        _draw_pill(pdf, ctrl_style["label"], ctrl_style, w=col_w[2] - 2)
 
         ev_style = _EVIDENCE_STATUS.get(r.get("evidence_status", "missing"), _EVIDENCE_STATUS["missing"])
-        pdf.set_xy(pdf.l_margin + col_w[0] + col_w[1] + col_w[2] + 2, y_row + 1.2)
-        _draw_pill(pdf, ev_style["label"], ev_style, w=col_w[3] - 4)
+        pdf.set_xy(pdf.l_margin + col_w[0] + col_w[1] + col_w[2] + 1, y_row + 1.5)
+        _draw_pill(pdf, ev_style["label"], ev_style, w=col_w[3] - 2)
 
         pdf.set_xy(pdf.l_margin + sum(col_w[:4]), y_row)
         pdf.set_font("Helvetica", "B", 8)
@@ -322,149 +554,35 @@ def build_pdf(
         pdf.cell(col_w[4], row_h, str(r["finding_count"]), border=0, fill=fill, align="C")
         pdf.ln(row_h)
 
-    pdf.ln(6)
+    pdf.ln(8)
 
     # Controls requiring review
     review_controls = [r for r in control_results if r["status"] == "fail"]
     if review_controls:
-        pdf.set_font("Helvetica", "B", 14)
-        pdf.set_text_color(24, 24, 27)
-        pdf.cell(0, 8, "Controls Requiring Review", new_x="LMARGIN", new_y="NEXT")
-        pdf.ln(2)
-
+        _section_heading(pdf, "Controls Requiring Review", needed_after=40)
         for r in review_controls:
-            if pdf.get_y() > 230:
-                pdf.add_page()
+            _draw_review_card(pdf, r)
 
-            card_y = pdf.get_y()
-            pdf.set_draw_color(228, 228, 231)
-            pdf.line(pdf.l_margin, card_y, pdf.w - pdf.r_margin, card_y)
-            pdf.ln(3)
-
-            pdf.set_x(pdf.l_margin + 2)
-            pdf.set_font("Helvetica", "B", 11)
-            pdf.set_text_color(24, 24, 27)
-            pdf.cell(0, 6, _s(f"{r['control_id']}  {r['title']}"), new_x="LMARGIN", new_y="NEXT")
-
-            pdf.set_x(pdf.l_margin + 4)
-            _draw_pill(pdf, "NEEDS REVIEW", _CONTROL_STATUS["fail"], w=28)
-            pdf.ln(6)
-
-            pdf.set_x(pdf.l_margin + 4)
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.set_text_color(113, 113, 122)
-            pdf.cell(18, 4, "OBJECTIVE")
-            pdf.set_font("Helvetica", "", 9)
-            pdf.set_text_color(63, 63, 70)
-            pdf.multi_cell(pdf.epw - 8, 4.5, _s(r["description"][:280]))
-
-            pdf.set_x(pdf.l_margin + 4)
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.set_text_color(113, 113, 122)
-            pdf.cell(18, 4, "REASON")
-            pdf.set_font("Helvetica", "", 9)
-            pdf.set_text_color(180, 83, 9)
-            pdf.multi_cell(pdf.epw - 8, 4.5, _s(r.get("review_reason") or r.get("status_note", "")))
-
-            counts = _severity_counts(r.get("findings") or [])
-            if counts:
-                pdf.set_x(pdf.l_margin + 4)
-                pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(113, 113, 122)
-                pdf.cell(0, 4, "FINDINGS BY SEVERITY", new_x="LMARGIN", new_y="NEXT")
-                pdf.set_x(pdf.l_margin + 4)
-                pdf.set_font("Helvetica", "", 8)
-                pdf.set_text_color(63, 63, 70)
-                parts = [f"{k.upper()}: {v}" for k, v in sorted(counts.items())]
-                pdf.cell(0, 4, "  |  ".join(parts), new_x="LMARGIN", new_y="NEXT")
-
-            findings = r.get("findings") or []
-            if findings:
-                pdf.ln(2)
-                pdf.set_x(pdf.l_margin + 4)
-                pdf.set_font("Helvetica", "B", 8)
-                pdf.set_text_color(113, 113, 122)
-                pdf.cell(0, 4, "TOP FINDINGS", new_x="LMARGIN", new_y="NEXT")
-                for f in findings[:5]:
-                    pdf.ln(1)
-                    pdf.set_x(pdf.l_margin + 6)
-                    sev = (f.get("severity") or "medium").lower()
-                    pdf.set_font("Helvetica", "B", 8)
-                    pdf.set_text_color(*_SEVERITY_COLOR.get(sev, (113, 113, 122)))
-                    pdf.cell(14, 4, f"[{sev.upper()}]")
-                    pdf.set_font("Helvetica", "B", 8)
-                    pdf.set_text_color(39, 39, 42)
-                    pdf.cell(0, 4, _resource_label(f.get("resource_arn", "")), new_x="LMARGIN", new_y="NEXT")
-                    pdf.set_x(pdf.l_margin + 20)
-                    pdf.set_font("Helvetica", "", 8)
-                    pdf.set_text_color(63, 63, 70)
-                    pdf.multi_cell(pdf.epw - 24, 4, _s(f"Issue: {f.get('title', '')}"))
-                    pdf.set_x(pdf.l_margin + 20)
-                    pdf.set_font("Helvetica", "", 7)
-                    pdf.set_text_color(113, 113, 122)
-                    pdf.cell(
-                        0,
-                        3.5,
-                        _s(
-                            f"Resource: {f.get('resource_arn', '')}  |  "
-                            f"First seen: {_fmt_date(f.get('first_seen'))}  |  "
-                            f"Last seen: {_fmt_date(f.get('last_seen'))}"
-                        ),
-                        new_x="LMARGIN",
-                        new_y="NEXT",
-                    )
-                if len(findings) > 5:
-                    pdf.set_x(pdf.l_margin + 20)
-                    pdf.set_font("Helvetica", "I", 8)
-                    pdf.set_text_color(113, 113, 122)
-                    pdf.cell(
-                        0,
-                        4,
-                        _s(f"+ {len(findings) - 5} more findings in controls/{r['control_id']}/findings.json"),
-                        new_x="LMARGIN",
-                        new_y="NEXT",
-                    )
-
-            pdf.ln(2)
-            pdf.set_x(pdf.l_margin + 4)
-            pdf.set_font("Helvetica", "B", 8)
-            pdf.set_text_color(113, 113, 122)
-            pdf.cell(0, 4, "EVIDENCE ARTIFACTS", new_x="LMARGIN", new_y="NEXT")
-            pdf.set_x(pdf.l_margin + 6)
-            pdf.set_font("Helvetica", "", 8)
-            pdf.set_text_color(29, 78, 216)
-            for artifact in (
-                f"controls/{r['control_id']}/findings.json",
-                f"controls/{r['control_id']}/snapshots.json",
-                f"controls/{r['control_id']}/exceptions.json",
-                f"controls/{r['control_id']}/summary.json",
-            ):
-                pdf.cell(0, 4, artifact, new_x="LMARGIN", new_y="NEXT")
-                pdf.set_x(pdf.l_margin + 6)
-
-            pdf.ln(4)
-            pdf.set_draw_color(228, 228, 231)
-            pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
-            pdf.ln(4)
-
-    # Evidence sources section
-    if pdf.get_y() > 240:
-        pdf.add_page()
-    pdf.ln(4)
-    pdf.set_font("Helvetica", "B", 13)
-    pdf.set_text_color(24, 24, 27)
-    pdf.cell(0, 7, "Evidence Sources", new_x="LMARGIN", new_y="NEXT")
-    pdf.ln(2)
-    pdf.set_font("Helvetica", "", 9)
-    pdf.set_text_color(63, 63, 70)
-    for line in [
+    # Evidence sources
+    _ensure_space(pdf, 50)
+    _section_heading(pdf, "Evidence Sources", needed_after=40)
+    y0 = pdf.get_y()
+    source_lines = [
         *sources,
-        "Generated from read-only API access (no write permissions)",
-        "Raw JSON evidence included in ZIP under controls/<control_id>/",
-        "Timeline and source manifest included as timeline.csv and source_manifest.json",
-    ]:
-        pdf.set_x(pdf.l_margin + 2)
-        pdf.cell(4, 5, "-")
-        pdf.multi_cell(pdf.epw - 6, 5, _s(line))
+        "Read-only API access",
+        "Raw JSON evidence included in ZIP",
+        "Timeline included as timeline.csv",
+        "Source manifest included as source_manifest.json",
+    ]
+    card_h = 8 + len(source_lines) * 5.5
+    pdf.set_fill_color(249, 250, 251)
+    pdf.set_draw_color(228, 228, 231)
+    pdf.rect(pdf.l_margin, y0, pdf.epw, card_h, style="FD")
+    for i, line in enumerate(source_lines):
+        pdf.set_xy(pdf.l_margin + 6, y0 + 5 + i * 5.5)
+        pdf.set_font("Helvetica", "", 9)
+        pdf.set_text_color(63, 63, 70)
+        pdf.cell(4, 4, "-")
+        pdf.cell(0, 4, _s(line), new_x="LMARGIN", new_y="NEXT")
 
     return bytes(pdf.output())
