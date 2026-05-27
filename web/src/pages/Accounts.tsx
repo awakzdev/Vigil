@@ -45,6 +45,24 @@ function useComplianceScore(framework: string, accountId: string | null, enabled
   });
 }
 
+function averageCompliance(...scores: (number | null | undefined)[]): number | null {
+  const valid = scores.filter((s): s is number => s != null);
+  if (valid.length === 0) return null;
+  return Math.round(valid.reduce((sum, s) => sum + s, 0) / valid.length);
+}
+
+function formatFrameworkCompliance(
+  soc2: number | null | undefined,
+  cis: number | null | undefined,
+  iso: number | null | undefined
+): string | null {
+  const parts: string[] = [];
+  if (soc2 != null) parts.push(`SOC2 ${soc2}%`);
+  if (cis != null) parts.push(`CIS ${cis}%`);
+  if (iso != null) parts.push(`ISO ${iso}%`);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 function scanAgeMs(iso: string | null): number | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -134,6 +152,7 @@ function shortExternalId(value: string): string {
 
 function CopyableExternalId({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
+  const display = shortExternalId(value);
   async function copy() {
     await navigator.clipboard.writeText(value);
     setCopied(true);
@@ -144,9 +163,12 @@ function CopyableExternalId({ value }: { value: string }) {
       type="button"
       onClick={copy}
       title={copied ? "Copied!" : value}
-      className="font-mono text-indigo-600 underline decoration-indigo-200 underline-offset-2 transition hover:text-indigo-700"
+      className={`inline-block text-left font-mono text-xs underline decoration-indigo-200 underline-offset-2 transition-colors hover:text-indigo-700 ${
+        copied ? "text-emerald-600 decoration-emerald-200" : "text-indigo-600"
+      }`}
+      style={{ width: `${Math.max(display.length, 6)}ch` }}
     >
-      {copied ? "copied" : shortExternalId(value)}
+      {copied ? "Copied" : display}
     </button>
   );
 }
@@ -155,7 +177,7 @@ const cardClass =
   "overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04)] transition-[box-shadow,border-color] duration-200 hover:border-zinc-300 hover:shadow-[0_2px_8px_rgba(0,0,0,0.07),0_8px_20px_rgba(0,0,0,0.05)]";
 
 const expandBtn =
-  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-100/90 text-zinc-400 transition-all duration-200 hover:bg-zinc-200/70 hover:text-zinc-600 active:scale-95 disabled:opacity-50";
+  "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-zinc-200/70 bg-white text-zinc-500 shadow-sm transition-all duration-200 hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-700 hover:shadow active:scale-[0.98] disabled:opacity-50";
 
 const secondaryBtn =
   "inline-flex items-center rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50";
@@ -173,7 +195,7 @@ function MetadataField({
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex min-w-0 items-start gap-1.5">
+    <div className="flex shrink-0 items-start gap-1.5">
       <span className="mt-px shrink-0 text-zinc-400">{icon}</span>
       <div className="min-w-0">
         <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">{label}</p>
@@ -299,7 +321,7 @@ function FindingsMetricsPanel({ stats }: { stats: FindingStats }) {
 
   return (
     <>
-      <div className="hidden sm:grid sm:grid-cols-3 sm:gap-x-2.5">
+      <div className="hidden sm:grid sm:grid-cols-3 sm:gap-x-2">
         {metrics.map((m) => (
           <span
             key={m.label}
@@ -319,7 +341,7 @@ function FindingsMetricsPanel({ stats }: { stats: FindingStats }) {
           </span>
         ))}
       </div>
-      <div className="flex items-center gap-2.5 sm:hidden">
+      <div className="flex items-center gap-2 sm:hidden">
         <PostureMetric value={stats.critHigh} label="Crit" accent="critical" />
         <PostureMetric value={stats.medium} label="Med" />
         <PostureMetric value={stats.open} label="Open" />
@@ -427,6 +449,7 @@ function AccountCard({
 
   const soc2 = useComplianceScore("soc2", acc.id, connected && hasScanned);
   const cis = useComplianceScore("cis_aws_l1", acc.id, connected && hasScanned);
+  const iso = useComplianceScore("iso27001", acc.id, connected && hasScanned);
 
   const remove = useMutation({
     mutationFn: () => api(`/v1/accounts/${acc.id}`, { method: "DELETE" }),
@@ -439,8 +462,8 @@ function AccountCard({
   const scanFailed = scanStatus === "error";
   const posture = derivePosture(connected, scanFailed, isScanActive, hasScanned ? stats : undefined);
   const hasStats = connected && hasScanned && !!stats;
-  const complianceAvg =
-    soc2.data != null && cis.data != null ? Math.round((soc2.data + cis.data) / 2) : soc2.data ?? cis.data;
+  const complianceAvg = averageCompliance(soc2.data, cis.data, iso.data);
+  const complianceDetail = formatFrameworkCompliance(soc2.data, cis.data, iso.data);
 
   return (
     <div
@@ -492,7 +515,7 @@ function AccountCard({
           className={`flex shrink-0 items-center gap-2.5 border-t px-3 py-2.5 lg:border-t-0 lg:border-l lg:py-3 lg:pl-3 lg:pr-3 ${sectionDivider}`}
         >
           {hasStats && stats && (
-            <div className="rounded-lg bg-zinc-50/80 px-2 py-1.5 ring-1 ring-inset ring-zinc-100/60 transition-colors group-hover:bg-zinc-50">
+            <div className="rounded-lg bg-zinc-50/80 px-1.5 py-1.5 ring-1 ring-inset ring-zinc-100/60 transition-colors group-hover:bg-zinc-50">
               <FindingsMetricsPanel stats={stats} />
             </div>
           )}
@@ -522,17 +545,17 @@ function AccountCard({
             type="button"
             onClick={onToggle}
             disabled={isScanActive}
-            className={expandBtn}
+            className={`${expandBtn} ${expanded ? "bg-zinc-50 text-zinc-700 ring-1 ring-zinc-200/80" : ""}`}
             aria-expanded={expanded}
             aria-label={expanded ? "Collapse details" : "Expand details"}
           >
             <svg
-              className={`h-3.5 w-3.5 transition-transform duration-200 ease-out ${expanded ? "rotate-180" : ""}`}
+              className={`h-4 w-4 transition-transform duration-200 ease-out ${expanded ? "rotate-180" : ""}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
             >
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.25} d="M19 9l-7 7-7-7" />
             </svg>
           </button>
         </div>
@@ -675,37 +698,34 @@ function AccountCard({
                   )}
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 lg:gap-x-6">
-                  <MetadataField
-                    icon={
-                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
-                      </svg>
-                    }
-                    label="External ID"
-                  >
-                    <CopyableExternalId value={acc.external_id} />
-                  </MetadataField>
-
-                  {hasScanned && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                  <div className="flex items-start gap-3">
                     <MetadataField
                       icon={
                         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
                         </svg>
                       }
-                      label="Compliance"
+                      label="External ID"
                     >
-                      <span className="tabular-nums font-medium text-zinc-800">
-                        {complianceAvg != null ? `${complianceAvg}% iSo` : "—"}
-                      </span>
-                      {soc2.data != null && cis.data != null && (
-                        <span className="ml-1.5 text-zinc-500">
-                          SOC 2 {soc2.data}% · CIS {cis.data}%
-                        </span>
-                      )}
+                      <CopyableExternalId value={acc.external_id} />
                     </MetadataField>
-                  )}
+
+                    {hasScanned && (
+                      <MetadataField
+                        icon={
+                          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                          </svg>
+                        }
+                        label="Compliance"
+                      >
+                        <span className="tabular-nums text-zinc-600">
+                          {complianceDetail ?? "—"}
+                        </span>
+                      </MetadataField>
+                    )}
+                  </div>
 
                   <div className="flex flex-wrap items-center gap-1 sm:ml-auto">
                     <button
@@ -789,11 +809,41 @@ function PostureSummary({
     label: string;
     value: number;
     accent?: "warning" | "risk";
+    icon?: React.ReactNode;
+    gradient: string;
   }[] = [
-    { label: "Connected", value: connected.length },
-    { label: "Open findings", value: totalOpen },
-    { label: "Critical + high", value: totalCrit, accent: totalCrit > 0 ? "warning" : undefined },
-    { label: "Accounts at risk", value: needsAttention, accent: needsAttention > 0 ? "risk" : undefined },
+    {
+      label: "Connected",
+      value: connected.length,
+      gradient: "from-white to-sky-50/40",
+    },
+    {
+      label: "Open findings",
+      value: totalOpen,
+      gradient: "from-white to-zinc-50/90",
+    },
+    {
+      label: "Critical + high",
+      value: totalCrit,
+      accent: totalCrit > 0 ? "warning" : undefined,
+      gradient: totalCrit > 0 ? "from-orange-50/50 to-orange-50/20" : "from-white to-zinc-50/90",
+      icon: (
+        <svg className={`h-3.5 w-3.5 ${totalCrit > 0 ? "text-orange-500" : "text-zinc-400"}`} fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+      ),
+    },
+    {
+      label: "Accounts at risk",
+      value: needsAttention,
+      accent: needsAttention > 0 ? "risk" : undefined,
+      gradient: needsAttention > 0 ? "from-orange-50/60 to-amber-50/30" : "from-white to-zinc-50/90",
+      icon: (
+        <svg className={`h-3.5 w-3.5 ${needsAttention > 0 ? "text-orange-500" : "text-zinc-400"}`} fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24" aria-hidden>
+          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126z" />
+        </svg>
+      ),
+    },
   ];
 
   return (
@@ -801,20 +851,16 @@ function PostureSummary({
       {tiles.map((t) => (
         <div
           key={t.label}
-          className={`rounded-xl border bg-white px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[box-shadow,border-color] duration-200 hover:border-zinc-300 hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] ${
+          className={`rounded-xl border bg-gradient-to-br px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[box-shadow,border-color] duration-200 hover:border-zinc-300 hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] ${t.gradient} ${
             t.accent === "warning"
-              ? "border-orange-200/80 bg-orange-50/30 shadow-[0_1px_2px_rgba(234,88,12,0.06)] ring-1 ring-orange-100/80"
+              ? "border-orange-200/80 ring-1 ring-orange-100/80"
               : t.accent === "risk"
-                ? "border-orange-300/70 bg-orange-50/40 shadow-[0_0_12px_rgba(234,88,12,0.08)] ring-1 ring-orange-200/60"
+                ? "border-orange-300/70 ring-1 ring-orange-200/60"
                 : "border-zinc-200"
           }`}
         >
           <div className="flex items-center gap-1.5">
-            {t.accent && (
-              <svg className="h-3.5 w-3.5 shrink-0 text-orange-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            )}
+            {t.icon}
             <p className={`text-[10px] font-semibold uppercase tracking-wider ${t.accent ? "text-orange-600/80" : "text-zinc-400"}`}>
               {t.label}
             </p>
@@ -826,6 +872,9 @@ function PostureSummary({
           >
             {t.value}
           </p>
+          {t.accent === "risk" && t.value > 0 && (
+            <p className="mt-0.5 text-[10px] font-medium text-orange-600/70">Review recommended</p>
+          )}
         </div>
       ))}
     </div>
@@ -872,7 +921,7 @@ export default function Accounts() {
   }, [accs]);
 
   return (
-    <div className="mx-auto w-full max-w-6xl space-y-6">
+    <div className="mx-auto w-full max-w-7xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">AWS Accounts</h1>
