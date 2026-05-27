@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Vigil read-only IAM role. Grants the Vigil control plane the minimum
-  permissions to enumerate IAM, S3, and KMS configuration. No write
-  permissions. No AWS-managed SecurityAudit or ViewOnlyAccess attached.
+  Vigil read-only IAM role for compliance scanning. Enumerates AWS config
+  across IAM, storage, compute, networking, and security services. No write
+  access. Role retained on stack deletion.
 
 Parameters:
   VigilAccountPrincipal:
@@ -15,13 +15,16 @@ Parameters:
   RoleName:
     Type: String
     Default: VigilReadOnly
-    Description: Name of the IAM role created in this account.
+    Description: IAM role name. Do not change on stack updates.
 
 Resources:
   VigilRole:
     Type: AWS::IAM::Role
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       RoleName: !Ref RoleName
+      Description: Vigil read-only compliance scanner. No write access.
       MaxSessionDuration: 3600
       AssumeRolePolicyDocument:
         Version: "2012-10-17"
