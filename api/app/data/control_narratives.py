@@ -244,8 +244,102 @@ NARRATIVES: dict[str, str] = {
 }
 
 
+SHORT_ANSWERS: dict[str, str] = {
+    "CC6.1": "Logical access is restricted; Vigil continuously monitors IAM and integrated identity providers for MFA and dormant accounts.",
+    "CC6.2": "Credentials are issued only to authorized users; root keys, access key limits, and org MFA are verified each scan.",
+    "CC6.3": "Least-privilege access is enforced; wildcard IAM grants and unused permissions are flagged with policy evidence.",
+    "CC6.6": "External access paths are controlled via permission-usage analysis, security group checks, and branch protection evidence.",
+    "CC6.7": "Encryption at rest is verified for S3, KMS, EBS, and RDS using collected configuration snapshots.",
+    "CC6.8": "Malware and threat detection controls include GuardDuty, Security Hub, IMDSv2, and VPC flow log checks.",
+    "CC7.1": "Infrastructure changes require review; branch protection, CODEOWNERS, and PR merge evidence is collected from GitHub/GitLab.",
+    "CC7.2": "Security monitoring is active; CloudTrail, Config, GuardDuty, and Security Hub status are verified each scan.",
+    "CC8.1": "Infrastructure changes are tracked via CloudTrail events correlated with merged pull requests where SCM is connected.",
+    "CIS 1.5": "Root account MFA is verified from the IAM account summary at each scan.",
+    "CIS 1.10": "Console IAM users without MFA devices are enumerated and reported as findings.",
+    "CIS 2.1": "Multi-region CloudTrail enablement is verified from trail configuration snapshots.",
+    "CIS 2.2": "CloudTrail log file validation status is collected for every trail.",
+    "A.9.2.1": "User registration and de-registration evidence comes from IAM inventory and integrated identity rosters.",
+    "A.12.4.1": "Event logging controls include CloudTrail, VPC flow logs, and S3 access logging verification.",
+}
+
+
+KNOWN_GAPS: dict[str, list[str]] = {
+    "CC6.1": ["Physical access to data centers is out of scope — attest separately for colo/on-prem."],
+    "CC6.2": ["Password complexity policy minimum length is not fully automated — confirm in IAM password policy."],
+    "CC7.1": ["Emergency break-glass deploys outside SCM are not captured unless logged in CloudTrail."],
+    "CC8.1": ["Changes made directly in the AWS Console without a linked PR appear in CloudTrail only."],
+    "CIS 1.20": ["AWS Support role existence is checked; support plan enrollment is manual attestation."],
+    "CIS 1.16": ["Vigil automates policy attachment checks; manual attestation still needed for business justification."],
+}
+
+
+def _narrative_key(framework: str, control_id: str) -> str:
+    if framework == "cis_aws_l1":
+        return f"CIS {control_id}"
+    return control_id
+
+
+def _short_answer(framework: str, control_id: str, long_text: str | None) -> str | None:
+    key = _narrative_key(framework, control_id)
+    if key in SHORT_ANSWERS:
+        return SHORT_ANSWERS[key]
+    if control_id in SHORT_ANSWERS:
+        return SHORT_ANSWERS[control_id]
+    if not long_text:
+        return None
+    sentence = long_text.split(". ")[0].strip()
+    return sentence + "." if sentence and not sentence.endswith(".") else sentence
+
+
+def evidence_refs_from_checks(check_ids: list[str]) -> list[str]:
+    if not check_ids:
+        return ["No automated Vigil checks mapped — manual attestation required."]
+    refs: list[str] = []
+    seen_groups: set[str] = set()
+    for cid in sorted(check_ids):
+        prefix = cid.split(".")[0]
+        group_hint = {
+            "iam": "IAM inventory snapshots (users, roles, keys, policies)",
+            "s3": "S3 bucket configuration snapshots",
+            "kms": "KMS key configuration snapshots",
+            "cloudtrail": "CloudTrail trail configuration snapshots",
+            "github": "GitHub org/repo/PR evidence from integration sync",
+            "gitlab": "GitLab project/merge request evidence from integration sync",
+            "ec2": "EC2 instance and security group snapshots",
+            "rds": "RDS instance configuration snapshots",
+            "guardduty": "GuardDuty detector status snapshots",
+            "aws": "AWS account-level service status snapshots",
+            "vpc": "VPC and flow log snapshots",
+        }.get(prefix, f"Resource snapshots for `{prefix}` checks")
+        if group_hint not in seen_groups:
+            refs.append(group_hint)
+            seen_groups.add(group_hint)
+        refs.append(f"Finding/check: `{cid}` — evaluated each scan")
+    if len(refs) > 8:
+        return refs[:7] + [f"+ {len(check_ids) - 7} additional mapped checks"]
+    return refs
+
+
 def narrative_for(framework: str, control_id: str) -> str | None:
     """Resolve questionnaire narrative; CIS controls use ``CIS {id}`` keys in NARRATIVES."""
-    if framework == "cis_aws_l1":
-        return NARRATIVES.get(f"CIS {control_id}") or NARRATIVES.get(control_id)
-    return NARRATIVES.get(control_id)
+    key = _narrative_key(framework, control_id)
+    return NARRATIVES.get(key) or NARRATIVES.get(control_id)
+
+
+def narrative_detail_for(
+    framework: str,
+    control_id: str,
+    check_ids: list[str] | None = None,
+) -> dict[str, object]:
+    """Structured narrative for Compliance UI and questionnaire export."""
+    key = _narrative_key(framework, control_id)
+    long_answer = narrative_for(framework, control_id)
+    gaps = list(KNOWN_GAPS.get(key, KNOWN_GAPS.get(control_id, [])))
+    if not check_ids:
+        gaps.insert(0, "No automated checks mapped — this control requires manual attestation in Vigil.")
+    return {
+        "short_answer": _short_answer(framework, control_id, long_answer),
+        "long_answer": long_answer,
+        "evidence_refs": evidence_refs_from_checks(check_ids or []),
+        "known_gaps": gaps,
+    }

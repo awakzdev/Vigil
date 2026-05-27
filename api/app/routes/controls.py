@@ -9,9 +9,10 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import current_principal
-from app.data.control_narratives import narrative_for
+from app.data.control_narratives import narrative_for, narrative_detail_for
 from app.models import Finding, AwsAccount, EvidenceSnapshot
 from app.models.control import Control, CheckControl
+from app.services.compliance_timeline import build_control_history
 
 router = APIRouter()
 
@@ -26,6 +27,10 @@ class ControlOut(BaseModel):
     description: str
     guidance: str | None
     narrative: str | None
+    short_answer: str | None = None
+    long_answer: str | None = None
+    evidence_refs: list[str] = []
+    known_gaps: list[str] = []
     check_ids: list[str]
     status: str          # pass | fail | no_data
     finding_count: int
@@ -98,6 +103,7 @@ def list_controls(
         else:
             ctrl_status = "no_data"
 
+        detail = narrative_detail_for(ctrl.framework, ctrl.control_id, check_ids)
         result.append(
             ControlOut(
                 id=str(ctrl.id),
@@ -106,7 +112,11 @@ def list_controls(
                 title=ctrl.title,
                 description=ctrl.description,
                 guidance=ctrl.guidance,
-                narrative=narrative_for(ctrl.framework, ctrl.control_id),
+                narrative=detail.get("long_answer") or narrative_for(ctrl.framework, ctrl.control_id),
+                short_answer=detail.get("short_answer"),
+                long_answer=detail.get("long_answer"),
+                evidence_refs=list(detail.get("evidence_refs") or []),
+                known_gaps=list(detail.get("known_gaps") or []),
                 check_ids=check_ids,
                 status=ctrl_status,
                 finding_count=len(hits),
@@ -180,6 +190,28 @@ def control_evidence(
             for s in snaps
         ],
     }
+
+
+@router.get("/{control_id}/history")
+def control_history(
+    control_id: str,
+    framework: str = Query(...),
+    account_id: str = Query(...),
+    days: int = Query(default=90, ge=7, le=365),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    if framework not in FRAMEWORKS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"framework must be one of {sorted(FRAMEWORKS)}")
+
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    try:
+        return build_control_history(db, acc.id, framework, control_id, days)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
 
 
 def _entity_types_for_check_ids(check_ids: list[str]) -> list[str]:

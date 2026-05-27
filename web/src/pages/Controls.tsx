@@ -16,6 +16,10 @@ type ControlRow = {
   description: string;
   guidance: string | null;
   narrative: string | null;
+  short_answer: string | null;
+  long_answer: string | null;
+  evidence_refs: string[];
+  known_gaps: string[];
   check_ids: string[];
   status: "pass" | "fail" | "no_data";
   finding_count: number;
@@ -309,46 +313,42 @@ function MappedChecksList({ checkIds }: { checkIds: string[] }) {
 type QuestionnaireDraft = { body: string; notes: string[] };
 
 function buildQuestionnaireDraft(control: ControlRow, periodDays: number): QuestionnaireDraft | null {
-  const body = (control.narrative ?? control.description).trim();
-  if (!body) return null;
+  const body = (control.long_answer ?? control.narrative ?? control.description).trim();
+  const short = control.short_answer?.trim();
+  if (!body && !short) return null;
+
+  const notes: string[] = [];
+  if (short && short !== body) {
+    notes.push(`Short answer: ${short}`);
+  }
+  if (control.evidence_refs.length > 0) {
+    notes.push(`Evidence: ${control.evidence_refs.slice(0, 3).join("; ")}`);
+  }
+  if (control.known_gaps.length > 0) {
+    notes.push(`Known gaps: ${control.known_gaps.join(" ")}`);
+  }
 
   if (control.check_ids.length === 0) {
-    return {
-      body,
-      notes: [
-        "Status: Not automated in Vigil — no mapped checks for this CIS control yet.",
-        "Answer manually for auditors (e.g. confirm IAM users have no directly attached policies).",
-      ],
-    };
+    notes.push("Status: Not automated in Vigil — no mapped checks for this CIS control yet.");
+    notes.push("Answer manually for auditors (e.g. confirm IAM users have no directly attached policies).");
+    return { body: body || short!, notes };
   }
 
   if (control.status === "no_data") {
-    return {
-      body,
-      notes: [
-        "Status: Not yet evaluated in Vigil (no scan data for mapped checks, or required sources are not connected).",
-        "Run a scan before submitting this answer to auditors.",
-      ],
-    };
+    notes.push("Status: Not yet evaluated in Vigil (no scan data for mapped checks, or required sources are not connected).");
+    notes.push("Run a scan before submitting this answer to auditors.");
+    return { body: body || short!, notes };
   }
 
   if (control.status === "pass") {
-    return {
-      body,
-      notes: [
-        `Status: Passing as of the latest Vigil scan (0 open findings mapped to ${control.control_id} in the last ${periodDays} days).`,
-      ],
-    };
+    notes.push(`Status: Passing as of the latest Vigil scan (0 open findings mapped to ${control.control_id} in the last ${periodDays} days).`);
+    return { body: body || short!, notes };
   }
 
-  return {
-    body,
-    notes: [
-      `Status: ${findingLabel(control.finding_count)} mapped to ${control.control_id} as of the latest scan.`,
-      "Edit before submitting to auditors — describe remediation in progress, compensating controls, or documented exceptions.",
-      "After remediation, re-scan and export the evidence pack for audit sampling.",
-    ],
-  };
+  notes.push(`Status: ${findingLabel(control.finding_count)} mapped to ${control.control_id} as of the latest scan.`);
+  notes.push("Edit before submitting to auditors — describe remediation in progress, compensating controls, or documented exceptions.");
+  notes.push("After remediation, re-scan and export the evidence pack for audit sampling.");
+  return { body: body || short!, notes };
 }
 
 function questionnaireDraftText(draft: QuestionnaireDraft) {
@@ -395,6 +395,41 @@ function questionnaireMeta(control: ControlRow) {
     textColor: "text-zinc-800",
     btn: "border-zinc-200 text-zinc-700 hover:bg-zinc-100",
   };
+}
+
+function NarrativeDetailBlock({ control }: { control: ControlRow }) {
+  if (!control.short_answer && !control.long_answer && !control.narrative) return null;
+
+  return (
+    <div className="space-y-3">
+      {control.short_answer && (
+        <div className="rounded-xl border border-zinc-200/80 bg-white/80 p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Short answer</p>
+          <p className="mt-1.5 text-sm leading-relaxed text-zinc-800">{control.short_answer}</p>
+        </div>
+      )}
+      {control.evidence_refs.length > 0 && (
+        <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Evidence references</p>
+          <ul className="mt-2 space-y-1">
+            {control.evidence_refs.map((ref) => (
+              <li key={ref} className="text-xs leading-relaxed text-zinc-700">{ref}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {control.known_gaps.length > 0 && (
+        <div className="rounded-xl border border-amber-200/80 bg-amber-50/30 p-4">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-800">Known gaps</p>
+          <ul className="mt-2 space-y-1">
+            {control.known_gaps.map((gap) => (
+              <li key={gap} className="text-xs leading-relaxed text-amber-950/90">{gap}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function QuestionnaireAnswerBlock({ control, periodDays }: { control: ControlRow; periodDays: number }) {
@@ -934,8 +969,11 @@ export default function Controls() {
 
                         {isExpanded && (
                           <div className={`border-t border-zinc-100/80 px-5 pb-5 pt-4 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
+                            <NarrativeDetailBlock control={ctrl} />
                             {(ctrl.narrative || ctrl.description) ? (
-                              <QuestionnaireAnswerBlock control={ctrl} periodDays={period} />
+                              <div className="mt-4">
+                                <QuestionnaireAnswerBlock control={ctrl} periodDays={period} />
+                              </div>
                             ) : (
                               <p className="text-sm leading-relaxed text-zinc-700">{controlSummary(ctrl)}</p>
                             )}
