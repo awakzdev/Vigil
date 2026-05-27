@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api";
 
 interface Account { id: string; label: string; account_id: string | null; status: string; }
@@ -230,6 +231,60 @@ function EventRow({ evt }: { evt: TimelineEvent }) {
   );
 }
 
+interface ComplianceEntry {
+  timestamp: string;
+  type: string;
+  control_id?: string;
+  control_title?: string;
+  detail: string;
+  check_id?: string;
+  resource_arn?: string;
+}
+
+interface ComplianceTimelineResponse {
+  framework: string;
+  period_days: number;
+  entries: ComplianceEntry[];
+  failing_controls: {
+    control_id: string;
+    title: string;
+    days_failing: number | null;
+    open_finding_count: number;
+  }[];
+  total_failing: number;
+}
+
+function complianceTypeLabel(type: string): string {
+  return type.replace(/_/g, " ");
+}
+
+function ComplianceEntryRow({ entry }: { entry: ComplianceEntry }) {
+  const isFail = entry.type.includes("fail") || entry.type === "finding_opened" || entry.type === "finding_detected";
+  const isPass = entry.type.includes("pass");
+
+  return (
+    <div
+      className={`rounded-xl border px-4 py-3 ${
+        isFail ? "border-red-200/80 bg-red-50/30" : isPass ? "border-emerald-200/80 bg-emerald-50/30" : "border-zinc-200 bg-white"
+      }`}
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        {entry.control_id && (
+          <span className="font-mono text-xs font-semibold text-zinc-800">{entry.control_id}</span>
+        )}
+        <span className="rounded-md bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-600">
+          {complianceTypeLabel(entry.type)}
+        </span>
+      </div>
+      {entry.control_title && (
+        <p className="mt-1 text-sm font-medium text-zinc-800">{entry.control_title}</p>
+      )}
+      <p className="mt-1 text-xs leading-relaxed text-zinc-600">{entry.detail}</p>
+      <p className="mt-1.5 text-[11px] text-zinc-400">{fmtTime(entry.timestamp)}</p>
+    </div>
+  );
+}
+
 const TIMELINE_WINDOWS = [
   { value: 7, label: "Last 7 days" },
   { value: 30, label: "Last 30 days" },
@@ -237,7 +292,19 @@ const TIMELINE_WINDOWS = [
 ] as const;
 
 export default function Timeline() {
+  const [params, setParams] = useSearchParams();
+  const initialView = params.get("view") === "compliance" ? "compliance" : "changes";
+  const [view, setView] = useState<"changes" | "compliance">(initialView);
+  const [framework, setFramework] = useState(params.get("framework") || "soc2");
   const [days, setDays] = useState(30);
+
+  function switchView(next: "changes" | "compliance") {
+    setView(next);
+    const nextParams = new URLSearchParams(params);
+    if (next === "compliance") nextParams.set("view", "compliance");
+    else nextParams.delete("view");
+    setParams(nextParams, { replace: true });
+  }
 
   const { data: accounts } = useQuery<Account[]>({
     queryKey: ["accounts"],
@@ -253,7 +320,14 @@ export default function Timeline() {
   const { data, isLoading, error } = useQuery<TimelineResponse>({
     queryKey: ["timeline", effectiveAccountId, days],
     queryFn: () => api(`/v1/accounts/${effectiveAccountId}/timeline?days=${days}&limit=200`),
-    enabled: !!effectiveAccountId,
+    enabled: !!effectiveAccountId && view === "changes",
+  });
+
+  const compliance = useQuery<ComplianceTimelineResponse>({
+    queryKey: ["compliance-timeline", effectiveAccountId, framework, days],
+    queryFn: () =>
+      api(`/v1/accounts/${effectiveAccountId}/compliance-timeline?framework=${framework}&days=${days}&limit=100`),
+    enabled: !!effectiveAccountId && view === "compliance",
   });
 
   const correlated = data?.events.filter(e => e.correlated_prs.length > 0) || [];
@@ -263,10 +337,33 @@ export default function Timeline() {
     <div className="mx-auto max-w-4xl space-y-5">
       {/* Header */}
       <div className="space-y-2">
-        <h1 className="text-2xl font-semibold text-zinc-900">Change Timeline</h1>
+        <h1 className="text-2xl font-semibold text-zinc-900">Timeline</h1>
         <p className="max-w-2xl text-sm leading-relaxed text-zinc-500">
-          AWS infrastructure changes from CloudTrail, with GitHub or GitLab pull requests highlighted when they merged within an hour of the same change.
+          {view === "changes"
+            ? "AWS infrastructure changes from CloudTrail, with GitHub or GitLab pull requests highlighted when they merged within an hour of the same change."
+            : "Control pass/fail history and finding lifecycle events — how long controls have been failing during the audit period."}
         </p>
+      </div>
+
+      <div className="inline-flex rounded-xl border border-zinc-200 bg-white p-1 shadow-sm">
+        <button
+          type="button"
+          onClick={() => switchView("changes")}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+            view === "changes" ? "bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200" : "text-zinc-500 hover:text-zinc-800"
+          }`}
+        >
+          Infrastructure
+        </button>
+        <button
+          type="button"
+          onClick={() => switchView("compliance")}
+          className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+            view === "compliance" ? "bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200" : "text-zinc-500 hover:text-zinc-800"
+          }`}
+        >
+          Compliance
+        </button>
       </div>
 
       {/* Filters */}
@@ -302,11 +399,34 @@ export default function Timeline() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
             </svg>
           </div>
+
+          {view === "compliance" && (
+            <div className="relative">
+              <select
+                value={framework}
+                onChange={(e) => setFramework(e.target.value)}
+                aria-label="Compliance framework"
+                className="h-[42px] appearance-none rounded-xl border border-zinc-200 bg-white pl-3 pr-8 text-sm font-semibold text-zinc-600 shadow-sm shadow-zinc-950/[0.03] outline-none transition hover:border-zinc-300 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
+              >
+                <option value="soc2">SOC 2</option>
+                <option value="cis_aws_l1">CIS AWS L1</option>
+                <option value="iso27001">ISO 27001</option>
+              </select>
+              <svg className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </div>
+          )}
         </div>
 
-        {data && (
+        {view === "changes" && data && (
           <span className="text-sm tabular-nums text-zinc-500">
             {total} event{total !== 1 ? "s" : ""} · {correlated.length} correlated
+          </span>
+        )}
+        {view === "compliance" && compliance.data && (
+          <span className="text-sm tabular-nums text-zinc-500">
+            {compliance.data.total_failing} failing control{compliance.data.total_failing !== 1 ? "s" : ""}
           </span>
         )}
       </div>
@@ -319,7 +439,7 @@ export default function Timeline() {
       )}
 
       {/* Loading */}
-      {isLoading && (
+      {(view === "changes" ? isLoading : compliance.isLoading) && (
         <div className="space-y-3">
           {[...Array(5)].map((_, i) => (
             <div key={i} className="h-16 rounded-xl bg-zinc-100 animate-pulse" />
@@ -328,12 +448,45 @@ export default function Timeline() {
       )}
 
       {/* Error */}
-      {error && (
+      {(view === "changes" ? error : compliance.error) && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
-          {String(error)}
+          {String(view === "changes" ? error : compliance.error)}
         </div>
       )}
 
+      {view === "compliance" && compliance.data && (
+        <div className="space-y-4">
+          {compliance.data.failing_controls.length > 0 && (
+            <div className="rounded-xl border border-red-200/80 bg-red-50/40 px-5 py-4">
+              <p className="text-sm font-semibold text-red-800">Currently failing</p>
+              <ul className="mt-2 space-y-1">
+                {compliance.data.failing_controls.slice(0, 8).map((c) => (
+                  <li key={c.control_id} className="text-xs text-red-900/90">
+                    <span className="font-mono font-semibold">{c.control_id}</span>
+                    {" — "}
+                    {c.open_finding_count} finding{c.open_finding_count === 1 ? "" : "s"}
+                    {c.days_failing != null ? ` · ${c.days_failing}d` : ""}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {compliance.data.entries.length === 0 ? (
+            <div className="rounded-xl border border-zinc-200 bg-white p-12 text-center text-sm text-zinc-500">
+              No compliance events in this window. Run a scan to build control history.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {compliance.data.entries.map((entry, i) => (
+                <ComplianceEntryRow key={`${entry.timestamp}-${entry.type}-${entry.control_id ?? i}`} entry={entry} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {view === "changes" && (
+        <>
       {/* Empty */}
       {data && total === 0 && (() => {
         const copy = emptyTimelineCopy(data.meta, days);
@@ -384,6 +537,8 @@ export default function Timeline() {
             <EventRow key={evt.event_id} evt={evt} />
           ))}
         </div>
+      )}
+        </>
       )}
     </div>
   );

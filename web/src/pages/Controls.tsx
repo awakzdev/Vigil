@@ -30,7 +30,26 @@ type EvidencePreview = {
   control_id: string;
   snapshot_count: number;
   period_days: number;
-  snapshots: { entity_type: string; taken_at: string }[];
+  snapshots: { id: string; entity_type: string; entity_id: string; taken_at: string; data?: Record<string, unknown> }[];
+};
+
+type EvidenceDiff = {
+  found: boolean;
+  message?: string;
+  change_count: number;
+  exposure_note: string | null;
+  snapshot_a: { taken_at: string | null };
+  snapshot_b: { taken_at: string | null };
+  changes: { field: string; before: unknown; after: unknown }[];
+};
+
+type ControlHistory = {
+  current_status: string;
+  failing_since: string | null;
+  days_failing: number | null;
+  open_finding_count: number;
+  segments: { status: string; from: string; to: string; duration_seconds: number }[];
+  events: { timestamp: string; type: string; detail: string }[];
 };
 
 const FRAMEWORKS = [
@@ -482,6 +501,165 @@ function QuestionnaireAnswerBlock({ control, periodDays }: { control: ControlRow
   );
 }
 
+function formatDuration(seconds: number): string {
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.round(seconds / 3600)}h`;
+  return `${Math.round(seconds / 86400)}d`;
+}
+
+function ControlHistoryPanel({
+  controlId,
+  framework,
+  accountId,
+  period,
+}: {
+  controlId: string;
+  framework: string;
+  accountId: string;
+  period: number;
+}) {
+  const navigate = useNavigate();
+  const history = useQuery({
+    queryKey: ["control-history", controlId, framework, accountId, period],
+    queryFn: () =>
+      api<ControlHistory>(
+        `/v1/controls/${encodeURIComponent(controlId)}/history?framework=${framework}&account_id=${accountId}&days=${period}`
+      ),
+  });
+
+  if (history.isLoading) {
+    return <p className="mt-4 text-xs text-zinc-400">Loading control history…</p>;
+  }
+  if (history.isError || !history.data) return null;
+
+  const h = history.data;
+  const failSegment = h.segments.find((s) => s.status === "fail");
+
+  return (
+    <div className="mt-4 rounded-xl border border-zinc-200/80 bg-white p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Control history</p>
+          {h.current_status === "fail" && h.days_failing != null && (
+            <p className="mt-1 text-sm font-semibold text-red-600">
+              Failing for {h.days_failing} day{h.days_failing === 1 ? "" : "s"}
+              {h.failing_since ? ` · since ${formatEvidenceDate(h.failing_since)}` : ""}
+            </p>
+          )}
+          {h.current_status === "pass" && (
+            <p className="mt-1 text-sm font-semibold text-emerald-700">Passing — no open mapped findings</p>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={() => navigate(`/timeline?view=compliance&framework=${framework}`)}
+          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
+        >
+          View compliance timeline →
+        </button>
+      </div>
+      {failSegment && (
+        <p className="mt-2 text-xs text-zinc-600">
+          Longest failing window in period: {formatDuration(failSegment.duration_seconds)}
+        </p>
+      )}
+      {h.events.length > 0 && (
+        <ul className="mt-3 max-h-40 space-y-1.5 overflow-y-auto border-t border-zinc-100 pt-3">
+          {h.events.slice(-5).reverse().map((evt) => (
+            <li key={`${evt.timestamp}-${evt.type}`} className="text-xs text-zinc-600">
+              <span className="font-mono text-zinc-400">{formatEvidenceDate(evt.timestamp)}</span>
+              {" · "}
+              <span className="font-medium text-zinc-700">{evt.type.replace(/_/g, " ")}</span>
+              {" — "}
+              {evt.detail}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function HistoricalDiffPanel({
+  accountId,
+  snapshots,
+  period,
+}: {
+  accountId: string;
+  snapshots: EvidencePreview["snapshots"];
+  period: number;
+}) {
+  const [entityKey, setEntityKey] = useState("");
+  const selected = useMemo(() => {
+    if (entityKey) {
+      return snapshots.find((s) => `${s.entity_type}:${s.entity_id}` === entityKey);
+    }
+    return snapshots[0];
+  }, [entityKey, snapshots]);
+
+  const diff = useQuery({
+    queryKey: ["evidence-diff", accountId, selected?.entity_type, selected?.entity_id, period],
+    queryFn: () => {
+      if (!selected) return Promise.resolve(null);
+      const atB = new Date().toISOString();
+      const atA = new Date(Date.now() - period * 86400_000).toISOString();
+      return api<EvidenceDiff>(
+        `/v1/accounts/${accountId}/evidence-diff?entity_type=${encodeURIComponent(selected.entity_type)}&entity_id=${encodeURIComponent(selected.entity_id)}&at_a=${encodeURIComponent(atA)}&at_b=${encodeURIComponent(atB)}`
+      );
+    },
+    enabled: !!selected,
+  });
+
+  if (snapshots.length === 0) return null;
+
+  return (
+    <div className="mt-4 rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Historical diff</p>
+      <p className="mt-1 text-xs text-zinc-600">Compare collected state at start vs end of the {period}-day audit window.</p>
+      {snapshots.length > 1 && selected && (
+        <select
+          value={`${selected.entity_type}:${selected.entity_id}`}
+          onChange={(e) => setEntityKey(e.target.value)}
+          className="mt-3 w-full rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs font-mono text-zinc-700"
+        >
+          {snapshots.slice(0, 20).map((s) => {
+            const key = `${s.entity_type}:${s.entity_id}`;
+            return (
+              <option key={key} value={key}>
+                {s.entity_type} — {s.entity_id.slice(0, 60)}
+              </option>
+            );
+          })}
+        </select>
+      )}
+      {diff.isLoading && <p className="mt-3 text-xs text-zinc-400">Computing diff…</p>}
+      {diff.data && !diff.data.found && (
+        <p className="mt-3 text-xs text-zinc-500">{diff.data.message ?? "No diff available."}</p>
+      )}
+      {diff.data?.found && (
+        <div className="mt-3 space-y-2">
+          {diff.data.exposure_note && (
+            <p className="text-xs font-medium text-amber-800">{diff.data.exposure_note}</p>
+          )}
+          {diff.data.changes.length === 0 ? (
+            <p className="text-xs text-emerald-700">No field changes detected in this window.</p>
+          ) : (
+            <ul className="max-h-48 space-y-2 overflow-y-auto">
+              {diff.data.changes.slice(0, 10).map((c) => (
+                <li key={c.field} className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs">
+                  <p className="font-mono font-semibold text-zinc-800">{c.field}</p>
+                  <p className="mt-1 text-red-600 line-through">{String(c.before ?? "—")}</p>
+                  <p className="text-emerald-700">{String(c.after ?? "—")}</p>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EvidencePreviewPanel({
   controlId,
   accountId,
@@ -534,6 +712,7 @@ function EvidencePreviewPanel({
           )}
         </div>
       )}
+      <HistoricalDiffPanel accountId={accountId} snapshots={snapshots} period={period} />
     </div>
   );
 }
@@ -982,6 +1161,12 @@ export default function Controls() {
                               <div className={`${ctrl.narrative || ctrl.description ? "mt-4" : "mt-0"}`}>
                                 <EvidencePreviewPanel
                                   controlId={ctrl.control_id}
+                                  accountId={connectedAccount.id}
+                                  period={period}
+                                />
+                                <ControlHistoryPanel
+                                  controlId={ctrl.control_id}
+                                  framework={framework}
                                   accountId={connectedAccount.id}
                                   period={period}
                                 />

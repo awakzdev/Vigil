@@ -19,6 +19,8 @@ from app.core.iam_usage import (
 )
 from app.core.security import current_principal
 from app.services.blast_radius_identity import blast_radius_identity
+from app.services.compliance_timeline import build_compliance_timeline
+from app.services.evidence_diff import build_evidence_diff
 from app.models import AssumeRoleAudit, AwsAccount, IamPermUsage, IamRole, ScanRun
 from app.models.cloudtrail import CloudTrailEvent
 from app.models.github import IdentityProvider, PullRequest, Repo
@@ -1433,6 +1435,59 @@ def blast_radius(
 
 
 _TIMELINE_CORRELATION_WINDOW = 3600  # ±60 minutes
+
+
+@router.get("/{account_id}/compliance-timeline")
+def get_compliance_timeline(
+    account_id: str,
+    framework: str = Query(default="soc2"),
+    days: int = Query(default=90, ge=7, le=365),
+    limit: int = Query(default=100, ge=1, le=500),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Control pass/fail history and finding lifecycle events for a framework."""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    if framework not in {"soc2", "cis_aws_l1", "iso27001"}:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid framework")
+
+    return build_compliance_timeline(db, acc.id, framework, days, limit)
+
+
+@router.get("/{account_id}/evidence-diff")
+def get_evidence_diff(
+    account_id: str,
+    entity_type: str = Query(...),
+    entity_id: str = Query(...),
+    at_a: str | None = Query(default=None, description="ISO datetime for earlier snapshot"),
+    at_b: str | None = Query(default=None, description="ISO datetime for later snapshot"),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Compare collected evidence for an entity between two points in time."""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    def _parse_dt(raw: str | None) -> datetime | None:
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid datetime: {raw}") from exc
+
+    return build_evidence_diff(
+        db,
+        acc.id,
+        entity_type,
+        entity_id,
+        at_a=_parse_dt(at_a),
+        at_b=_parse_dt(at_b),
+    )
 
 
 @router.get("/{account_id}/timeline")
