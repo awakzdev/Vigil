@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api";
 import ScanProgressBar from "../components/ScanProgressBar";
 import ConfirmDialog from "../components/ConfirmDialog";
@@ -19,14 +19,12 @@ type Finding = { id: string; account_id: string; severity: string; status: strin
 
 type FindingStats = { critHigh: number; medium: number; open: number };
 
-function AwsIcon({ className = "h-8 w-full" }: { className?: string }) {
-  return (
-    <img
-      src="/aws.png"
-      alt="AWS"
-      className={`object-contain object-center ${className}`}
-    />
-  );
+type PostureTone = "healthy" | "review" | "attention" | "failed" | "setup" | "scanning";
+
+type ScanFreshness = "scanning" | "fresh" | "recent" | "aging" | "stale" | "none";
+
+function AwsIcon({ className = "h-full w-full max-h-16 object-contain" }: { className?: string }) {
+  return <img src="/aws.png" alt="AWS" className={className} />;
 }
 
 type ControlRow = { status: string };
@@ -47,16 +45,87 @@ function useComplianceScore(framework: string, accountId: string | null, enabled
   });
 }
 
-function formatLastScan(iso: string | null) {
+function scanAgeMs(iso: string | null): number | null {
   if (!iso) return null;
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return null;
-  const ms = Date.now() - d.getTime();
+  return Date.now() - d.getTime();
+}
+
+function formatLastScan(iso: string | null) {
+  const ms = scanAgeMs(iso);
+  if (ms == null) return null;
   if (ms < 60_000) return "just now";
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
   if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  return new Date(iso!).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
+
+function scanFreshness(iso: string | null, isScanActive: boolean): ScanFreshness {
+  if (isScanActive) return "scanning";
+  const ms = scanAgeMs(iso);
+  if (ms == null) return "none";
+  if (ms < 3_600_000) return "fresh";
+  if (ms < 86_400_000) return "recent";
+  if (ms < 7 * 86_400_000) return "aging";
+  return "stale";
+}
+
+const FRESHNESS_META: Record<
+  ScanFreshness,
+  { dot: string; text: string; hint?: string }
+> = {
+  scanning: { dot: "bg-indigo-500 animate-pulse", text: "text-indigo-600" },
+  fresh: { dot: "bg-emerald-500", text: "text-zinc-600" },
+  recent: { dot: "bg-emerald-400", text: "text-zinc-600" },
+  aging: { dot: "bg-amber-400", text: "text-zinc-600", hint: "consider rescanning" },
+  stale: { dot: "bg-red-400", text: "text-zinc-600", hint: "outdated" },
+  none: { dot: "bg-zinc-300", text: "text-zinc-500" },
+};
+
+function derivePosture(
+  connected: boolean,
+  scanFailed: boolean,
+  isScanActive: boolean,
+  stats: FindingStats | undefined
+): { tone: PostureTone; label: string; detail: string } {
+  if (!connected) {
+    return { tone: "setup", label: "Setup needed", detail: "Deploy the read-only CloudFormation stack" };
+  }
+  if (isScanActive) {
+    return { tone: "scanning", label: "Scanning", detail: "Collecting evidence from AWS" };
+  }
+  if (scanFailed) {
+    return { tone: "failed", label: "Scan failed", detail: "Last scan did not complete — expand for details" };
+  }
+  if (!stats) {
+    return { tone: "setup", label: "Awaiting scan", detail: "Run a scan to assess security posture" };
+  }
+  if (stats.critHigh > 0) {
+    return {
+      tone: "attention",
+      label: "Needs attention",
+      detail: `${stats.critHigh} critical or high finding${stats.critHigh === 1 ? "" : "s"}`,
+    };
+  }
+  if (stats.medium > 0) {
+    return {
+      tone: "review",
+      label: "Review recommended",
+      detail: `${stats.medium} medium-severity finding${stats.medium === 1 ? "" : "s"}`,
+    };
+  }
+  return { tone: "healthy", label: "Healthy", detail: "No open critical or high findings" };
+}
+
+const POSTURE_STYLES: Record<PostureTone, string> = {
+  healthy: "bg-emerald-50 text-emerald-800 ring-emerald-200/80",
+  review: "bg-amber-50 text-amber-800 ring-amber-200/80",
+  attention: "bg-orange-50 text-orange-800 ring-orange-200/80",
+  failed: "bg-red-50 text-red-800 ring-red-200/80",
+  setup: "bg-zinc-100 text-zinc-700 ring-zinc-200/80",
+  scanning: "bg-indigo-50 text-indigo-800 ring-indigo-200/80",
+};
 
 function shortExternalId(value: string): string {
   if (value.length <= 14) return value;
@@ -65,13 +134,11 @@ function shortExternalId(value: string): string {
 
 function CopyableExternalId({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
-
   async function copy() {
     await navigator.clipboard.writeText(value);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }
-
   return (
     <button
       type="button"
@@ -85,16 +152,36 @@ function CopyableExternalId({ value }: { value: string }) {
 }
 
 const cardClass =
-  "overflow-hidden rounded-2xl border border-zinc-200/90 bg-white shadow-sm shadow-zinc-900/[0.03]";
+  "overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04)] transition-[box-shadow,border-color] duration-200 hover:border-zinc-300 hover:shadow-[0_2px_8px_rgba(0,0,0,0.07),0_8px_20px_rgba(0,0,0,0.05)]";
+
+const expandBtn =
+  "inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-zinc-100/90 text-zinc-400 transition-all duration-200 hover:bg-zinc-200/70 hover:text-zinc-600 active:scale-95 disabled:opacity-50";
 
 const secondaryBtn =
   "inline-flex items-center rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50";
-const cardActionBtn =
-  "inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-zinc-200 bg-white text-zinc-500 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-700";
-const cardRescanBtn =
-  "inline-flex h-10 shrink-0 items-center gap-2 rounded-xl bg-indigo-500 px-6 text-sm font-semibold text-white shadow-md shadow-indigo-500/25 transition hover:bg-indigo-600 active:scale-95 disabled:cursor-not-allowed disabled:opacity-50";
-const dangerBtn =
-  "inline-flex items-center text-xs font-medium text-zinc-400 transition hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50";
+
+const metaActionBtn =
+  "inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-zinc-600 transition hover:bg-zinc-100/80 hover:text-zinc-800 disabled:cursor-not-allowed disabled:opacity-50";
+
+function MetadataField({
+  icon,
+  label,
+  children,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex min-w-0 items-start gap-1.5">
+      <span className="mt-px shrink-0 text-zinc-400">{icon}</span>
+      <div className="min-w-0">
+        <p className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">{label}</p>
+        <div className="mt-0.5 text-xs leading-snug text-zinc-700">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 function buildStatsMap(items: Finding[] | undefined): Map<string, FindingStats> {
   const map = new Map<string, FindingStats>();
@@ -108,47 +195,185 @@ function buildStatsMap(items: Finding[] | undefined): Map<string, FindingStats> 
   return map;
 }
 
-function StatPill({ value, label, href, highlight }: { value: number | string; label: string; href?: string; highlight?: boolean }) {
-  const inner = (
-    <>
-      <div className={`text-base font-medium tabular-nums leading-none ${highlight ? "text-indigo-600" : "text-zinc-900"}`}>
-        {value}
-      </div>
-      <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</div>
-    </>
-  );
-  const cls = "min-w-[4.5rem] rounded-xl bg-zinc-50 px-3 py-2 text-center ring-1 ring-zinc-100 transition hover:border-indigo-200 hover:bg-indigo-50/50";
-  if (href) {
-    return <a href={href} className={cls}>{inner}</a>;
-  }
-  return <div className={cls}>{inner}</div>;
+function complianceRingColor(score: number): { arc: string; text: string } {
+  if (score >= 80) return { arc: "text-emerald-500", text: "text-emerald-700" };
+  if (score >= 40) return { arc: "text-amber-400", text: "text-amber-700" };
+  return { arc: "text-orange-500", text: "text-orange-600" };
 }
 
-function MetricStrip({ children, className }: { children: ReactNode; className?: string }) {
+function ComplianceRing({ score }: { score: number | null }) {
+  const size = 58;
+  const strokeWidth = 3;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  if (score == null) {
+    return (
+      <div className="flex flex-col items-center gap-0.5">
+        <div
+          className="flex items-center justify-center rounded-full border border-dashed border-zinc-200/80 bg-zinc-50/50"
+          style={{ width: size, height: size }}
+        >
+          <span className="text-xs font-medium text-zinc-300">—</span>
+        </div>
+        <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Compliance</span>
+      </div>
+    );
+  }
+
+  const colors = complianceRingColor(score);
+  const offset = circumference - (score / 100) * circumference;
+
   return (
-    <div className={`flex flex-wrap items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 ${className ?? ""}`}>
-      {children}
+    <div className="flex flex-col items-center gap-0.5">
+      <div className="relative" style={{ width: size, height: size }}>
+        <svg width={size} height={size} className="-rotate-90" aria-hidden>
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={strokeWidth}
+            className="text-zinc-200/80"
+          />
+          <circle
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={strokeWidth}
+            strokeDasharray={circumference}
+            strokeDashoffset={offset}
+            strokeLinecap="round"
+            className={colors.arc}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
+          <span className={`text-sm font-semibold tabular-nums leading-none ${colors.text}`}>
+            {score}%
+          </span>
+        </div>
+      </div>
+      <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Compliance</span>
     </div>
   );
 }
 
-function ComplianceBadge({ pct, label }: { pct: number | null | undefined; label: string }) {
-  if (pct == null) {
+const sectionDivider = "border-zinc-100/50";
+
+function PostureMetric({
+  value,
+  label,
+  accent,
+}: {
+  value: number;
+  label: string;
+  accent?: "critical" | "default";
+}) {
+  return (
+    <div className="flex min-w-[2.5rem] flex-col items-center gap-1">
+      <span
+        className={`text-lg font-semibold tabular-nums leading-none ${
+          accent === "critical" && value > 0 ? "text-orange-600" : "text-zinc-800"
+        }`}
+      >
+        {value}
+      </span>
+      <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">{label}</span>
+    </div>
+  );
+}
+
+function FindingsMetricsPanel({ stats }: { stats: FindingStats }) {
+  const metrics: {
+    value: number;
+    label: string;
+    accent?: "critical" | "default";
+  }[] = [
+    { value: stats.critHigh, label: "Critical", accent: "critical" },
+    { value: stats.medium, label: "Medium" },
+    { value: stats.open, label: "Open" },
+  ];
+
+  return (
+    <>
+      <div className="hidden sm:grid sm:grid-cols-3 sm:gap-x-2.5">
+        {metrics.map((m) => (
+          <span
+            key={m.label}
+            className={`text-center text-lg font-semibold tabular-nums leading-none transition-colors ${
+              m.accent === "critical" && m.value > 0 ? "text-orange-600" : "text-zinc-800"
+            }`}
+          >
+            {m.value}
+          </span>
+        ))}
+        {metrics.map((m) => (
+          <span
+            key={`${m.label}-label`}
+            className="mt-1 text-center text-[10px] font-medium uppercase tracking-wider text-zinc-400"
+          >
+            {m.label}
+          </span>
+        ))}
+      </div>
+      <div className="flex items-center gap-2.5 sm:hidden">
+        <PostureMetric value={stats.critHigh} label="Crit" accent="critical" />
+        <PostureMetric value={stats.medium} label="Med" />
+        <PostureMetric value={stats.open} label="Open" />
+      </div>
+    </>
+  );
+}
+
+function ScanFreshnessBadge({
+  iso,
+  isScanActive,
+}: {
+  iso: string | null;
+  isScanActive: boolean;
+}) {
+  const freshness = scanFreshness(iso, isScanActive);
+  const meta = FRESHNESS_META[freshness];
+  const ago = formatLastScan(iso);
+
+  if (freshness === "scanning") {
     return (
-      <div className="min-w-[3.75rem] rounded-xl border border-zinc-100 bg-zinc-50/50 px-2.5 py-2 text-center">
-        <div className="text-sm font-medium tabular-nums leading-none text-zinc-500/40">—</div>
-        <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className="flex items-center gap-1.5 text-xs text-indigo-600">
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
+        <span className="font-medium">Scan in progress</span>
       </div>
     );
   }
+
+  if (freshness === "none") {
+    return (
+      <div className={`flex items-center gap-1.5 text-xs ${meta.text}`}>
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
+        <span>No scan yet</span>
+      </div>
+    );
+  }
+
+  if (freshness === "fresh" || freshness === "recent") {
+    return (
+      <div className={`flex items-center gap-1.5 text-xs ${meta.text}`}>
+        <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
+        <span className="font-medium text-emerald-700">Fresh scan</span>
+        {ago && <span className="text-zinc-400">· {ago}</span>}
+      </div>
+    );
+  }
+
   return (
-    <a
-      href="/controls"
-      className="min-w-[3.75rem] rounded-xl border border-zinc-200/80 bg-white px-2.5 py-2 text-center shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50/40"
-    >
-      <div className="text-sm font-medium tabular-nums leading-none text-zinc-800">{pct}%</div>
-      <div className="mt-0.5 text-[10px] font-medium uppercase tracking-wide text-zinc-400">{label}</div>
-    </a>
+    <div className={`flex items-center gap-1.5 text-xs ${meta.text}`}>
+      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} />
+      <span className="font-medium text-amber-700">Scan outdated</span>
+      {ago && <span className="text-zinc-400">· {ago}</span>}
+      {meta.hint && <span className="text-zinc-400">· {meta.hint}</span>}
+    </div>
   );
 }
 
@@ -193,12 +418,15 @@ function AccountCard({
         method: "POST",
         body: JSON.stringify({ role_arn: roleArn }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      setShowUpdateArn(false);
+      setRoleArn("");
+    },
   });
 
   const soc2 = useComplianceScore("soc2", acc.id, connected && hasScanned);
   const cis = useComplianceScore("cis_aws_l1", acc.id, connected && hasScanned);
-  const iso = useComplianceScore("iso27001", acc.id, connected && hasScanned);
 
   const remove = useMutation({
     mutationFn: () => api(`/v1/accounts/${acc.id}`, { method: "DELETE" }),
@@ -208,117 +436,111 @@ function AccountCard({
     },
   });
 
-  const lastScan = formatLastScan(acc.last_scan_at);
-  const critHigh = stats?.critHigh ?? 0;
-  const medium = stats?.medium ?? 0;
-  const open = stats?.open ?? 0;
-  const hasStats = connected && hasScanned;
+  const scanFailed = scanStatus === "error";
+  const posture = derivePosture(connected, scanFailed, isScanActive, hasScanned ? stats : undefined);
+  const hasStats = connected && hasScanned && !!stats;
+  const complianceAvg =
+    soc2.data != null && cis.data != null ? Math.round((soc2.data + cis.data) / 2) : soc2.data ?? cis.data;
 
   return (
     <div
-      className={`${cardClass} ${!connected ? "border-l-[3px] border-l-amber-300" : ""} ${expanded ? "ring-2 ring-indigo-500/15" : ""}`}
+      className={`group ${cardClass} ${!connected ? "border-l-[3px] border-l-amber-400" : ""} ${
+        expanded ? "ring-2 ring-indigo-500/10" : ""
+      }`}
     >
-      <div className="px-4 py-3">
-        {/* Header row */}
-        <div className="flex items-center gap-2.5">
-          <div className="flex h-10 w-20 shrink-0 items-center justify-center rounded-xl bg-white px-2 ring-1 ring-zinc-200/90 shadow-sm">
-            <AwsIcon />
-          </div>
-
-          <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
-            <div className="min-w-0 space-y-2">
-              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                <h2 className="truncate text-base font-medium leading-snug tracking-[-0.01em] text-zinc-900">
-                  {acc.label}
-                </h2>
-                {!connected && (
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-wide text-amber-700">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                    Setup needed
-                  </span>
-                )}
-                {isScanActive && (
-                  <span className="inline-flex items-center gap-1 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium leading-none text-indigo-600">
-                    <svg className="h-2.5 w-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                    </svg>
-                    {isRunning ? "Scanning" : "Starting"}
-                  </span>
-                )}
+      <div className="flex flex-col lg:flex-row lg:items-stretch">
+        {/* LEFT — identity + compliance posture */}
+        <div className="flex min-w-0 flex-1 flex-col gap-3 px-3 py-2.5 sm:flex-row sm:items-stretch lg:py-3 lg:pl-3 lg:pr-3">
+          <div className="flex min-w-0 flex-1 items-stretch gap-4">
+            <div className="w-[4.25rem] shrink-0 self-stretch">
+              <div className="flex h-full min-h-[4.75rem] w-full items-center justify-center rounded-lg border border-orange-200/50 bg-[#FF9900]/[0.06] p-2.5">
+                <AwsIcon className="h-full w-full max-h-14 object-contain" />
               </div>
-              {acc.account_id && (
-                <div className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-0.5 text-xs">
-                  <span className="font-mono tabular-nums text-zinc-600">{acc.account_id}</span>
-                  {connected && (isScanActive
-                    ? <span className="shrink-0 font-medium text-indigo-600">{isRunning ? "Scanning now" : "Starting scan"}</span>
-                    : lastScan ? <span className="shrink-0 text-zinc-500">Last scan {lastScan}</span> : null)}
-                </div>
-              )}
-              {!connected && <p className="text-xs leading-normal text-zinc-500">Deploy the CloudFormation stack to connect.</p>}
             </div>
-
-            {hasStats && (
-              <div className="flex shrink-0 items-center gap-5 border-l border-zinc-100 pl-5">
-                {([
-                  { value: critHigh, label: "Crit + High", highlight: critHigh > 0 },
-                  { value: medium,   label: "Medium",      highlight: false },
-                  { value: open,     label: "Open",        highlight: true },
-                ] as const).map((s) => (
-                  <div key={s.label} className="flex flex-col items-center gap-0.5">
-                    <span className={`text-base font-semibold tabular-nums leading-none ${s.highlight ? "text-indigo-600" : "text-zinc-700"}`}>{s.value}</span>
-                    <span className="text-[10px] font-medium uppercase tracking-wide text-zinc-400">{s.label}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div className="flex shrink-0 items-center gap-2">
-              {connected && (
-                <button
-                  onClick={() => triggerScan(acc.id)}
-                  disabled={isScanActive}
-                  className={cardRescanBtn}
-                >
-                  <svg
-                    className={`h-3.5 w-3.5 ${isScanActive ? "animate-spin" : ""}`}
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                    />
-                  </svg>
-                  {isScanActive ? (isRunning ? "Scanning…" : "Starting…") : "Scan"}
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={onToggle}
-                className={cardActionBtn}
-                aria-expanded={expanded}
-                aria-label={expanded ? "Collapse details" : "Expand details"}
+            <div className="min-w-0 flex-1 self-center py-0.5 pl-0.5">
+              <span
+                className={`inline-flex items-center rounded-md px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide ring-1 ring-inset ${POSTURE_STYLES[posture.tone]}`}
               >
-                <svg
-                  className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                </svg>
-              </button>
+                {posture.label}
+              </span>
+              <h2 className="mt-1 truncate text-base font-semibold leading-tight tracking-tight text-zinc-900">
+                {acc.label}
+              </h2>
+              {acc.account_id && (
+                <p className="mt-0.5 font-mono text-[11px] tabular-nums text-zinc-500">{acc.account_id}</p>
+              )}
+              {connected ? (
+                <div className="mt-1">
+                  <ScanFreshnessBadge iso={acc.last_scan_at} isScanActive={isScanActive} />
+                </div>
+              ) : (
+                <p className="mt-1 text-[11px] leading-snug text-zinc-500">{posture.detail}</p>
+              )}
             </div>
           </div>
+          {connected && hasScanned && (
+            <div
+              className={`flex shrink-0 items-center justify-center border-t pt-3 sm:border-t-0 sm:border-l sm:pt-0 sm:pl-4 ${sectionDivider}`}
+            >
+              <ComplianceRing score={complianceAvg ?? null} />
+            </div>
+          )}
         </div>
 
-        {connected && isScanActive && (
+        {/* RIGHT — findings + actions */}
+        <div
+          className={`flex shrink-0 items-center gap-2.5 border-t px-3 py-2.5 lg:border-t-0 lg:border-l lg:py-3 lg:pl-3 lg:pr-3 ${sectionDivider}`}
+        >
+          {hasStats && stats && (
+            <div className="rounded-lg bg-zinc-50/80 px-2 py-1.5 ring-1 ring-inset ring-zinc-100/60 transition-colors group-hover:bg-zinc-50">
+              <FindingsMetricsPanel stats={stats} />
+            </div>
+          )}
+          {connected && (
+            <button
+              onClick={() => triggerScan(acc.id)}
+              disabled={isScanActive}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-indigo-500 px-3 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-600 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <svg
+                className={`h-3.5 w-3.5 ${isScanActive ? "animate-spin" : ""}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+                />
+              </svg>
+              {isScanActive ? (isRunning ? "Scanning…" : "Starting…") : "Scan"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onToggle}
+            disabled={isScanActive}
+            className={expandBtn}
+            aria-expanded={expanded}
+            aria-label={expanded ? "Collapse details" : "Expand details"}
+          >
+            <svg
+              className={`h-3.5 w-3.5 transition-transform duration-200 ease-out ${expanded ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      {connected && isScanActive && (
+        <div className="border-t border-zinc-100 px-4 pb-3 pt-2">
           <ScanProgressBar
-            className="mt-2.5"
             phase={isRunning ? "running" : "starting"}
             progress={scanProgress.progress}
             elapsedMs={scanProgress.elapsedMs}
@@ -326,17 +548,17 @@ function AccountCard({
             finishing={scanProgress.finishing}
             indeterminate={scanProgress.indeterminate}
           />
-        )}
+        </div>
+      )}
 
-        {connected && !hasScanned && (
-          <div className="mt-3 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/50 px-4 py-3 text-center text-xs text-zinc-500">
-            Run a scan to see findings and compliance scores.
-          </div>
-        )}
-      </div>
+      {connected && !hasScanned && !isScanActive && (
+        <div className="border-t border-zinc-100 bg-zinc-50/50 px-4 py-3 text-center text-xs text-zinc-500">
+          Run a scan to populate findings and compliance scores.
+        </div>
+      )}
 
       {expanded && (
-        <div className="border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5 text-xs">
+        <div className="border-t border-zinc-100/70 px-3 py-2 text-xs">
           {!connected ? (
             <div className="space-y-4">
               <div className="grid gap-3 sm:grid-cols-3">
@@ -349,7 +571,7 @@ function AccountCard({
                         href={acc.cfn_launch_url}
                         target="_blank"
                         rel="noreferrer"
-                        className="mt-1 inline-flex items-center gap-1 font-medium text-indigo-300 hover:text-zinc-800"
+                        className="mt-1 inline-flex items-center gap-1 font-medium text-indigo-600 hover:text-indigo-800"
                       >
                         Launch stack
                         <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -359,13 +581,9 @@ function AccountCard({
                     ),
                   },
                   { n: 2, title: "Copy RoleArn", body: <p className="mt-1 text-zinc-500">From stack Outputs tab</p> },
-                  {
-                    n: 3,
-                    title: "Verify",
-                    body: <p className="mt-1 text-zinc-500">Paste RoleArn below</p>,
-                  },
+                  { n: 3, title: "Verify", body: <p className="mt-1 text-zinc-500">Paste RoleArn below</p> },
                 ].map(({ n, title, body }) => (
-                  <div key={n} className="rounded-xl border border-zinc-200 bg-white p-3 p-3">
+                  <div key={n} className="rounded-lg border border-zinc-200 bg-white p-3">
                     <div className="flex h-5 w-5 items-center justify-center rounded-full border border-zinc-200 bg-zinc-50 text-[10px] font-medium text-zinc-500">
                       {n}
                     </div>
@@ -375,11 +593,11 @@ function AccountCard({
                 ))}
               </div>
               <p className="text-xs text-zinc-500">
-                External ID for stack: <CopyableExternalId value={acc.external_id} />
+                External ID: <CopyableExternalId value={acc.external_id} />
               </p>
               <div className="flex gap-2">
                 <input
-                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0 flex-1"
+                  className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
                   placeholder="arn:aws:iam::123456789012:role/VigilReadOnly"
                   value={roleArn}
                   onChange={(e) => setRoleArn(e.target.value)}
@@ -397,38 +615,36 @@ function AccountCard({
                   {(verify.error as Error).message}
                 </div>
               )}
-              <div className="flex justify-end border-t border-zinc-100 pt-3">
+              <div className="flex justify-end pt-1">
                 <button
-                  onClick={() => remove.mutate()}
+                  type="button"
+                  onClick={() => setShowRemoveConfirm(true)}
                   disabled={remove.isPending}
-                  className={dangerBtn}
+                  className="rounded-lg px-3 py-1.5 text-xs font-medium text-zinc-400 transition hover:bg-red-50 hover:text-red-600"
                 >
-                  {remove.isPending ? "Removing…" : "Remove account"}
+                  Remove account
                 </button>
               </div>
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className={scanStatus === "error" && scanRun.data?.error ? "space-y-2" : ""}>
               {scanStatus === "error" && scanRun.data?.error && (
-                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700">
+                <div className="mb-2 rounded-md border border-red-200/80 bg-red-50/80 px-2.5 py-1.5 text-red-700">
                   <span className="font-medium">Last scan failed</span>
                   {scanRun.data.error_type && <> ({scanRun.data.error_type})</>}
-                  <div className="mt-1 line-clamp-2 break-words">{scanRun.data.error}</div>
+                  <div className="mt-0.5 line-clamp-2 break-words">{scanRun.data.error}</div>
                 </div>
               )}
 
               {showUpdateArn ? (
-                <div className="rounded-xl border border-zinc-200 bg-white p-3 space-y-2 p-3">
-                  <p className="text-zinc-500">
+                <div className="space-y-2">
+                  <p className="text-zinc-600">
                     Paste the new RoleArn from stack Outputs. External ID:{" "}
-                    <CopyableExternalId value={acc.external_id} />.{" "}
-                    <a href={acc.cfn_launch_url} target="_blank" rel="noreferrer" className="text-indigo-600 hover:underline">
-                      Re-deploy stack
-                    </a>
+                    <CopyableExternalId value={acc.external_id} />.
                   </p>
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     <input
-                      className="min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 py-2 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 min-w-0 flex-1"
+                      className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-white px-2.5 py-1.5 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
                       placeholder="arn:aws:iam::123456789012:role/VigilReadOnly"
                       value={roleArn}
                       onChange={(e) => setRoleArn(e.target.value)}
@@ -436,42 +652,93 @@ function AccountCard({
                     <button
                       onClick={() => verify.mutate()}
                       disabled={verify.isPending || !roleArn}
-                      className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                      className="rounded-md bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
                     >
-                      {verify.isPending ? "…" : "Verify"}
+                      {verify.isPending ? "Verifying…" : "Verify"}
                     </button>
                     <button
-                      onClick={() => { setShowUpdateArn(false); setRoleArn(""); verify.reset(); }}
-                      className="rounded-lg px-2 py-2 text-zinc-400 hover:text-zinc-600"
+                      onClick={() => {
+                        setShowUpdateArn(false);
+                        setRoleArn("");
+                        verify.reset();
+                      }}
+                      className="rounded-md px-2.5 py-1.5 text-zinc-400 hover:text-zinc-600"
                     >
                       Cancel
                     </button>
                   </div>
                   {verify.isSuccess && <p className="text-emerald-600">Role ARN updated.</p>}
                   {verify.error && (
-                    <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700 py-1.5">
+                    <div className="rounded-md border border-red-200/80 bg-red-50/80 px-2.5 py-1.5 text-red-700">
                       {(verify.error as Error).message}
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-                  <button
-                    type="button"
-                    onClick={() => setShowUpdateArn(true)}
-                    disabled={isScanActive}
-                    className={secondaryBtn}
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-2 lg:gap-x-6">
+                  <MetadataField
+                    icon={
+                      <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                      </svg>
+                    }
+                    label="External ID"
                   >
-                    Update role
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowRemoveConfirm(true)}
-                    disabled={remove.isPending}
-                    className={dangerBtn}
-                  >
-                    {remove.isPending ? "Removing…" : "Remove account"}
-                  </button>
+                    <CopyableExternalId value={acc.external_id} />
+                  </MetadataField>
+
+                  {hasScanned && (
+                    <MetadataField
+                      icon={
+                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z" />
+                        </svg>
+                      }
+                      label="Compliance"
+                    >
+                      <span className="tabular-nums font-medium text-zinc-800">
+                        {complianceAvg != null ? `${complianceAvg}% iSo` : "—"}
+                      </span>
+                      {soc2.data != null && cis.data != null && (
+                        <span className="ml-1.5 text-zinc-500">
+                          SOC 2 {soc2.data}% · CIS {cis.data}%
+                        </span>
+                      )}
+                    </MetadataField>
+                  )}
+
+                  <div className="flex flex-wrap items-center gap-1 sm:ml-auto">
+                    <button
+                      type="button"
+                      onClick={() => setShowUpdateArn(true)}
+                      disabled={isScanActive}
+                      className={metaActionBtn}
+                    >
+                      Update IAM role
+                    </button>
+                    <span className="text-zinc-200" aria-hidden>
+                      ·
+                    </span>
+                    <a
+                      href={acc.cfn_launch_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className={metaActionBtn}
+                    >
+                      Re-deploy stack
+                    </a>
+                    <span className="text-zinc-200" aria-hidden>
+                      ·
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setShowRemoveConfirm(true)}
+                      disabled={remove.isPending}
+                      className="inline-flex items-center rounded-md px-2 py-1 text-xs font-medium text-zinc-400 transition hover:bg-red-50/80 hover:text-red-600"
+                    >
+                      {remove.isPending ? "Removing…" : "Remove"}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -482,13 +749,85 @@ function AccountCard({
       <ConfirmDialog
         open={showRemoveConfirm}
         title="Remove this account?"
-        description={`${acc.label} and all associated findings, scan history, and evidence will be permanently deleted. This cannot be undone.`}
+        description={
+          connected
+            ? hasScanned
+              ? `${acc.label} and all associated findings, scan history, and evidence will be permanently deleted. This cannot be undone.`
+              : `${acc.label} will be disconnected and removed. No findings or evidence have been collected yet. This cannot be undone.`
+            : `${acc.label} setup will be discarded. This account was never connected — no findings, scans, or evidence exist. This cannot be undone.`
+        }
         confirmLabel="Remove account"
         variant="danger"
         loading={remove.isPending}
         onCancel={() => !remove.isPending && setShowRemoveConfirm(false)}
         onConfirm={() => remove.mutate()}
       />
+    </div>
+  );
+}
+
+function PostureSummary({
+  accounts,
+  statsMap,
+}: {
+  accounts: Account[];
+  statsMap: Map<string, FindingStats>;
+}) {
+  const connected = accounts.filter((a) => a.status === "connected");
+  let totalOpen = 0;
+  let totalCrit = 0;
+  let needsAttention = 0;
+  for (const a of connected) {
+    const s = statsMap.get(a.id);
+    if (!s) continue;
+    totalOpen += s.open;
+    totalCrit += s.critHigh;
+    if (s.critHigh > 0) needsAttention += 1;
+  }
+
+  const tiles: {
+    label: string;
+    value: number;
+    accent?: "warning" | "risk";
+  }[] = [
+    { label: "Connected", value: connected.length },
+    { label: "Open findings", value: totalOpen },
+    { label: "Critical + high", value: totalCrit, accent: totalCrit > 0 ? "warning" : undefined },
+    { label: "Accounts at risk", value: needsAttention, accent: needsAttention > 0 ? "risk" : undefined },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {tiles.map((t) => (
+        <div
+          key={t.label}
+          className={`rounded-xl border bg-white px-4 py-3 shadow-[0_1px_2px_rgba(0,0,0,0.04)] transition-[box-shadow,border-color] duration-200 hover:border-zinc-300 hover:shadow-[0_2px_8px_rgba(0,0,0,0.06)] ${
+            t.accent === "warning"
+              ? "border-orange-200/80 bg-orange-50/30 shadow-[0_1px_2px_rgba(234,88,12,0.06)] ring-1 ring-orange-100/80"
+              : t.accent === "risk"
+                ? "border-orange-300/70 bg-orange-50/40 shadow-[0_0_12px_rgba(234,88,12,0.08)] ring-1 ring-orange-200/60"
+                : "border-zinc-200"
+          }`}
+        >
+          <div className="flex items-center gap-1.5">
+            {t.accent && (
+              <svg className="h-3.5 w-3.5 shrink-0 text-orange-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            )}
+            <p className={`text-[10px] font-semibold uppercase tracking-wider ${t.accent ? "text-orange-600/80" : "text-zinc-400"}`}>
+              {t.label}
+            </p>
+          </div>
+          <p
+            className={`mt-1 text-2xl font-semibold tabular-nums ${
+              t.accent ? "text-orange-600" : "text-zinc-900"
+            }`}
+          >
+            {t.value}
+          </p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -525,7 +864,6 @@ export default function Accounts() {
   const hasPending = accs.some((a) => a.status !== "connected");
   const didAutoExpand = useRef(false);
 
-  // Auto-expand once on first load with a single account
   useEffect(() => {
     if (!didAutoExpand.current && accs.length === 1) {
       setExpandedId(accs[0].id);
@@ -534,12 +872,12 @@ export default function Accounts() {
   }, [accs]);
 
   return (
-    <div className="mx-auto w-full max-w-4xl space-y-6">
+    <div className="mx-auto w-full max-w-6xl space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">AWS Accounts</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Manage connected accounts and scan schedules.
+            Connected accounts, scan freshness, and security posture at a glance.
           </p>
         </div>
         {accs.length > 0 && (
@@ -547,7 +885,7 @@ export default function Accounts() {
             onClick={() => create.mutate()}
             disabled={create.isPending || hasPending}
             title={hasPending ? "Finish setting up the pending account first" : undefined}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm font-semibold text-zinc-700 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -557,19 +895,21 @@ export default function Accounts() {
         )}
       </div>
 
+      {accs.length > 0 && <PostureSummary accounts={accs} statsMap={statsMap} />}
+
       {accs.length === 0 && !accounts.isLoading && (
-        <div className={`${cardClass} max-w-lg p-6`}>
-          <div className="flex h-10 w-20 items-center justify-center rounded-2xl bg-white px-2 ring-1 ring-zinc-200/90 shadow-sm">
+        <div className={`${cardClass} max-w-xl p-8`}>
+          <div className="flex h-11 w-14 items-center justify-center rounded-lg border border-zinc-200 bg-zinc-50 px-1.5">
             <AwsIcon />
           </div>
-          <h2 className="mt-4 text-lg font-medium tracking-[-0.01em] text-zinc-900">Connect your first AWS account</h2>
-          <p className="mt-1.5 text-sm leading-relaxed text-zinc-500">
+          <h2 className="mt-5 text-lg font-semibold tracking-tight text-zinc-900">Connect your first AWS account</h2>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-500">
             Deploy a read-only IAM role via CloudFormation. Vigil scans daily and maps findings to SOC 2 and CIS controls.
           </p>
           <button
             onClick={() => create.mutate()}
             disabled={create.isPending}
-            className="mt-5 rounded-xl bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/15 transition hover:bg-indigo-700 disabled:opacity-50"
+            className="mt-6 rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
           >
             {create.isPending ? "Setting up…" : "Connect account"}
           </button>
@@ -577,7 +917,7 @@ export default function Accounts() {
       )}
 
       {accs.length > 0 && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {accs.map((acc) => (
             <AccountCard
               key={acc.id}
@@ -595,7 +935,7 @@ export default function Accounts() {
       )}
 
       {create.error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-red-700 text-sm">
+        <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           {(create.error as Error).message}
         </div>
       )}

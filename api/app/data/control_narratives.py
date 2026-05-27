@@ -87,7 +87,20 @@ NARRATIVES: dict[str, str] = {
     ),
     "CIS 1.16": (
         "Vigil verifies that IAM policies are not attached directly to users. "
-        "Policy attachments are collected via iam:GetAccountAuthorizationDetails at each scan."
+        "Attached managed policy names and inline policy names are collected via "
+        "iam:ListAttachedUserPolicies and iam:ListUserPolicies at each scan."
+    ),
+    "CIS 1.7": (
+        "Vigil checks CloudTrail for root account API activity in the last 90 days. "
+        "Any root usage is reported as a finding — routine operations should use IAM roles or users."
+    ),
+    "CIS 1.12": (
+        "Vigil flags IAM users inactive for 90+ days and access keys with no recorded usage "
+        "in the same window, supporting credential disablement per CIS guidance."
+    ),
+    "CIS 1.22": (
+        "Vigil scans IAM role policies for wildcard Action or Resource on dangerous write paths, "
+        "and flags customer-managed policies that grant full administrative scope."
     ),
     "CIS 1.20": (
         "Vigil verifies that a support role exists in the account for incident management. "
@@ -112,6 +125,48 @@ NARRATIVES: dict[str, str] = {
     "CIS 3.1": (
         "Vigil collects CloudTrail events for root account activity. "
         "Any use of root credentials triggers a finding flagged to CC6 and this control."
+    ),
+    "CIS 2.1.1": (
+        "Vigil verifies that S3 bucket policies deny HTTP requests using an aws:SecureTransport condition."
+    ),
+    "CIS 2.1.2": (
+        "Vigil verifies that S3 buckets have default encryption (SSE-S3 or SSE-KMS) enabled."
+    ),
+    "CIS 2.1.3": (
+        "Vigil checks whether S3 buckets have MFA Delete enabled on versioning configuration."
+    ),
+    "CIS 2.1.5": (
+        "Vigil verifies account-level and per-bucket S3 Block Public Access settings."
+    ),
+    "CIS 2.2.1": (
+        "Vigil enumerates EBS volumes and flags any that are not encrypted at rest."
+    ),
+    "CIS 2.3.1": (
+        "Vigil verifies RDS instance storage encryption is enabled."
+    ),
+    "CIS 2.3.2": (
+        "Vigil flags RDS instances that are publicly accessible."
+    ),
+    "CIS 2.3.3": (
+        "Vigil verifies RDS automated backup retention is greater than zero."
+    ),
+    "CIS 3.3": (
+        "Vigil verifies CloudTrail log delivery S3 buckets are not publicly accessible."
+    ),
+    "CIS 3.4": (
+        "Vigil verifies CloudTrail trails send logs to CloudWatch Logs."
+    ),
+    "CIS 3.6": (
+        "Vigil verifies server access logging is enabled on CloudTrail delivery buckets."
+    ),
+    "CIS 3.8": (
+        "Vigil verifies customer-managed KMS keys have automatic annual rotation enabled."
+    ),
+    "CIS 4.1": (
+        "Vigil flags security groups allowing SSH (port 22) from 0.0.0.0/0 or ::/0."
+    ),
+    "CIS 4.2": (
+        "Vigil flags security groups allowing RDP (port 3389) from 0.0.0.0/0 or ::/0."
     ),
 
     # ── ISO 27001 ────────────────────────────────────────────────────────────
@@ -170,4 +225,27 @@ NARRATIVES: dict[str, str] = {
         "Vigil verifies network segregation controls through VPC flow log collection, "
         "security group rule inventory, and RDS public accessibility checks."
     ),
+    "A.12.4.2": (
+        "Vigil verifies log integrity and protection: CloudTrail log file validation, "
+        "KMS encryption on trails, and that delivery buckets are not public."
+    ),
+    "A.13.2.3": (
+        "Vigil verifies data-in-transit controls: S3 HTTPS-only bucket policies and "
+        "Block Public Access at account and bucket level."
+    ),
+    "A.12.3.1": (
+        "Vigil verifies backup-related controls: RDS deletion protection enabled and "
+        "DynamoDB Point-in-Time Recovery enabled on tables."
+    ),
+    "A.17.2.1": (
+        "Vigil verifies RDS Multi-AZ deployment for production databases requiring "
+        "high availability and automatic failover."
+    ),
 }
+
+
+def narrative_for(framework: str, control_id: str) -> str | None:
+    """Resolve questionnaire narrative; CIS controls use ``CIS {id}`` keys in NARRATIVES."""
+    if framework == "cis_aws_l1":
+        return NARRATIVES.get(f"CIS {control_id}") or NARRATIVES.get(control_id)
+    return NARRATIVES.get(control_id)

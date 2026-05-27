@@ -810,21 +810,28 @@ lists in this file are historical context only — when they conflict with
 this section, this section wins. Update *here* when items land or new
 work surfaces.
 
-**All product code from sessions 20–22 is shipped.** Remaining work is optional polish / distribution, not core AWS coverage.
+**All product code from sessions 20–23 is shipped.** Session 24 = Phase B demo polish (evidence + narratives).
 
 **Founder-blocking (need a click, not code):**
 
-1. **Re-scan** after session-22 deploy — populates user policy columns for CIS 1.16 and refreshes compliance scores.
+1. **Restart api + worker** after session-24 code lands, then **re-scan** — evidence packs need the new snapshot types (Lambda, DynamoDB, user policy attachments, etc.).
 
-**Shipped (sessions 20–23):** compliance polish · What If full coverage · CIS 1.16 · all 61 AWS checks mapped to frameworks · stale-CFN banner removed · Accounts metric strips · scan progress without finish clock · Vite vendor chunks · `.env.example` for `ALLOW_SSO_SIGNUP` / `CFN_TEMPLATE_URL`.
+**Session 24 (shipped this session):**
+- CIS questionnaire narratives fixed (`narrative_for` lookup — CIS tab copy was blank)
+- Narratives for all mapped CIS + ISO controls
+- Evidence snapshots for session-18 resource types + IAM user policies + RDS Multi-AZ/deletion protection
+- Reference page + Compliance check groups updated
 
-**AWS coverage snapshot (session 23):**
-- **61 AWS checks** across IAM, S3, KMS, CloudTrail, GuardDuty, Security Hub, Config, Access Analyzer, VPC/EC2/RDS, ACM, Lambda, Secrets Manager, SSM, ELB, DynamoDB, SNS, SQS
-- **All 61 mapped to at least one framework control** (SOC2 / CIS L1 / ISO 27001)
-- New ISO controls added: A.12.3.1 (Backup — RDS deletion protection + DynamoDB PITR), A.17.2.1 (Availability — RDS Multi-AZ)
-- **CIS L1**: automated for all mapped controls in `control_mappings.json`; full CIS benchmark is ~40+ items — many require manual evidence (password policy length, support role, etc.) or services we don't scan yet
+**Phase B still open:**
+- Historical diff UI ("state X between time A and B")
+- Google Workspace (Phase 4)
+- Prod deploy + Stripe
 
-**Optional when deploying prod:** set `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to a release tag or S3 object. Nav order (Findings 2nd) is intentional unless you want controls-first demos.
+**AWS coverage (session 23):**
+- **61 AWS checks**, all mapped to SOC2 / CIS L1 / ISO 27001
+- Full CIS benchmark still has manual-only items (support role, password policy min length, etc.)
+
+**Optional when deploying prod:** set `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to a release tag or S3 object.
 
 ### Phase 3 — GitHub integration (3 weeks)
 

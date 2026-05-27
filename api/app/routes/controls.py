@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import current_principal
-from app.data.control_narratives import NARRATIVES
+from app.data.control_narratives import narrative_for
 from app.models import Finding, AwsAccount, EvidenceSnapshot
 from app.models.control import Control, CheckControl
 
@@ -106,7 +106,7 @@ def list_controls(
                 title=ctrl.title,
                 description=ctrl.description,
                 guidance=ctrl.guidance,
-                narrative=NARRATIVES.get(ctrl.control_id),
+                narrative=narrative_for(ctrl.framework, ctrl.control_id),
                 check_ids=check_ids,
                 status=ctrl_status,
                 finding_count=len(hits),

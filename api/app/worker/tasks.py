@@ -37,19 +37,29 @@ from app.models import AssumeRoleAudit, AwsAccount, ScanRun, EvidenceSnapshot, F
 from app.models.iam import IamUser, IamAccessKey, IamRole
 from app.models.resources import (
     AccessAnalyzer,
+    AcmCertificate,
     CloudTrailTrail,
     ConfigRecorder,
+    DynamoDbTable,
     EbsEncryptionDefault,
+    EbsSnapshot,
     EbsVolume,
+    Ec2Ami,
     Ec2Instance,
+    ElbLoadBalancer,
     GuardDutyDetector,
     IamPasswordPolicy,
     KmsKey,
+    LambdaFunction,
     RdsInstance,
     S3AccountPublicAccessBlock,
     S3Bucket,
+    SecretsManagerSecret,
     SecurityGroup,
     SecurityHubStatus,
+    SnsTopic,
+    SqsQueue,
+    SsmParameter,
     Vpc,
 )
 from app.models.org import Org, User
@@ -105,6 +115,8 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
                 "arn": u.arn,
                 "has_console_password": u.has_console_password,
                 "mfa_active": u.mfa_enabled,
+                "attached_policies": u.attached_policies or [],
+                "inline_policy_names": list((u.inline_policies or {}).keys()),
                 "last_used_at": u.password_last_used.isoformat() if u.password_last_used else None,
                 "created_at": u.created.isoformat() if u.created else None,
             },
@@ -391,6 +403,173 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
                 "storage_encrypted": r.storage_encrypted,
                 "backup_retention_period": r.backup_retention_period,
                 "engine": r.engine,
+                "multi_az": r.multi_az,
+                "deletion_protection": r.deletion_protection,
+            },
+        ))
+
+    for snap in db.scalars(select(EbsSnapshot).where(EbsSnapshot.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="ebs_snapshot",
+            entity_id=snap.arn,
+            payload_json={
+                "snapshot_id": snap.snapshot_id,
+                "arn": snap.arn,
+                "region": snap.region,
+                "encrypted": snap.encrypted,
+                "is_public": snap.is_public,
+            },
+        ))
+
+    for ami in db.scalars(select(Ec2Ami).where(Ec2Ami.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="ec2_ami",
+            entity_id=ami.arn,
+            payload_json={
+                "image_id": ami.image_id,
+                "arn": ami.arn,
+                "region": ami.region,
+                "name": ami.name,
+                "is_public": ami.is_public,
+            },
+        ))
+
+    for cert in db.scalars(select(AcmCertificate).where(AcmCertificate.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="acm_certificate",
+            entity_id=cert.certificate_arn,
+            payload_json={
+                "certificate_arn": cert.certificate_arn,
+                "region": cert.region,
+                "domain_name": cert.domain_name,
+                "expires_at": cert.expires_at.isoformat() if cert.expires_at else None,
+                "status": cert.status,
+            },
+        ))
+
+    for fn in db.scalars(select(LambdaFunction).where(LambdaFunction.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="lambda_function",
+            entity_id=fn.arn,
+            payload_json={
+                "function_name": fn.function_name,
+                "arn": fn.arn,
+                "region": fn.region,
+                "runtime": fn.runtime,
+                "has_dlq": fn.has_dlq,
+            },
+        ))
+
+    for secret in db.scalars(select(SecretsManagerSecret).where(SecretsManagerSecret.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="secrets_manager_secret",
+            entity_id=secret.secret_arn,
+            payload_json={
+                "name": secret.name,
+                "secret_arn": secret.secret_arn,
+                "region": secret.region,
+                "rotation_enabled": secret.rotation_enabled,
+            },
+        ))
+
+    for param in db.scalars(select(SsmParameter).where(SsmParameter.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="ssm_parameter",
+            entity_id=f"{param.region}:{param.parameter_name}",
+            payload_json={
+                "parameter_name": param.parameter_name,
+                "region": param.region,
+                "parameter_type": param.parameter_type,
+            },
+        ))
+
+    for lb in db.scalars(select(ElbLoadBalancer).where(ElbLoadBalancer.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="elb_load_balancer",
+            entity_id=lb.load_balancer_arn,
+            payload_json={
+                "name": lb.name,
+                "load_balancer_arn": lb.load_balancer_arn,
+                "region": lb.region,
+                "lb_type": lb.lb_type,
+                "access_logs_enabled": lb.access_logs_enabled,
+                "ssl_policy": lb.ssl_policy,
+            },
+        ))
+
+    for table in db.scalars(select(DynamoDbTable).where(DynamoDbTable.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="dynamodb_table",
+            entity_id=table.arn,
+            payload_json={
+                "table_name": table.table_name,
+                "arn": table.arn,
+                "region": table.region,
+                "pitr_enabled": table.pitr_enabled,
+                "kms_encrypted": table.kms_encrypted,
+            },
+        ))
+
+    for topic in db.scalars(select(SnsTopic).where(SnsTopic.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="sns_topic",
+            entity_id=topic.topic_arn,
+            payload_json={
+                "topic_arn": topic.topic_arn,
+                "region": topic.region,
+                "kms_encrypted": topic.kms_encrypted,
+            },
+        ))
+
+    for queue in db.scalars(select(SqsQueue).where(SqsQueue.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="sqs_queue",
+            entity_id=queue.queue_arn,
+            payload_json={
+                "queue_arn": queue.queue_arn,
+                "queue_url": queue.queue_url,
+                "region": queue.region,
+                "kms_encrypted": queue.kms_encrypted,
             },
         ))
 
