@@ -12,7 +12,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Finding, EvidenceSnapshot
+from app.models import Finding, FindingEvent, EvidenceSnapshot, ScanRun
 from app.models.cloudtrail import CloudTrailEvent
 from app.models.control import Control, CheckControl
 from app.models.aws_account import AwsAccount
@@ -115,6 +115,7 @@ def build_evidence_pack(
             ]
 
         exceptions = [_finding_dict(f) for f in hits if f.status == "excepted"]
+        open_count = len([f for f in hits if f.status == "open"])
         control_results.append(
             {
                 "control_id": ctrl.control_id,
@@ -122,21 +123,46 @@ def build_evidence_pack(
                 "description": ctrl.description,
                 "guidance": ctrl.guidance or "",
                 "status": status,
-                "finding_count": len([f for f in hits if f.status == "open"]),
+                "finding_count": open_count,
                 "exception_count": len(exceptions),
                 "findings": [_finding_dict(f) for f in hits if f.status == "open"],
                 "exceptions": exceptions,
                 "snapshots": snaps[:50],
+                "status_note": _control_status_note(status, open_count, exceptions),
+                "exception_narratives": _exception_narratives(exceptions),
             }
         )
 
+    providers = db.scalars(
+        select(IdentityProvider).where(IdentityProvider.org_id == org_id)
+    ).all()
+    scan_runs = db.scalars(
+        select(ScanRun)
+        .where(ScanRun.account_id == account_id, ScanRun.started_at >= since)
+        .order_by(ScanRun.started_at.desc())
+    ).all()
+    mapped_check_ids = {cid for ids in check_map.values() for cid in ids}
+    timeline_rows = _collect_timeline_rows(
+        db, account_id, since, scan_runs, mapped_check_ids, control_results
+    )
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        readme = _build_readme(acc, framework, period_days, generated_at, control_results)
+        readme = _build_readme(acc, framework, period_days, generated_at, control_results, since)
         zf.writestr("README.txt", readme)
 
         index_csv = _build_index_csv(control_results)
         zf.writestr("INDEX.csv", index_csv)
+        zf.writestr("control_status.csv", index_csv)
+
+        timeline_csv = _build_timeline_csv(timeline_rows)
+        zf.writestr("timeline.csv", timeline_csv)
+
+        manifest = _build_source_manifest(
+            acc, framework, period_days, generated_at, since,
+            providers, snapshots, snap_by_type, scan_runs, mapped_check_ids,
+        )
+        zf.writestr("source_manifest.json", json.dumps(manifest, indent=2, default=str))
 
         for cr in control_results:
             folder = f"controls/{cr['control_id']}/"
@@ -145,10 +171,15 @@ def build_evidence_pack(
                 "title": cr["title"],
                 "framework": framework,
                 "status": cr["status"],
+                "status_note": cr["status_note"],
                 "finding_count": cr["finding_count"],
+                "exception_count": cr["exception_count"],
+                "exception_narratives": cr["exception_narratives"],
                 "description": cr["description"],
                 "guidance": cr["guidance"],
                 "generated_at": generated_at.isoformat(),
+                "period_start": since.isoformat(),
+                "period_end": generated_at.isoformat(),
             }, indent=2))
             zf.writestr(folder + "findings.json", json.dumps(cr["findings"], indent=2, default=str))
             zf.writestr(folder + "exceptions.json", json.dumps(cr["exceptions"], indent=2, default=str))
@@ -443,23 +474,248 @@ def _finding_dict(f: Finding) -> dict[str, Any]:
     return d
 
 
+def _control_status_note(status: str, open_count: int, exceptions: list[dict[str, Any]]) -> str:
+    if status == "pass" and exceptions:
+        return f"PASS with {len(exceptions)} approved exception(s) — no open findings"
+    if status == "pass":
+        return "PASS — no open findings mapped to this control"
+    if status == "no_data":
+        return "NO DATA — no automated checks mapped or no scan data in period"
+    if exceptions:
+        return (
+            f"FAIL — {open_count} open finding(s), {len(exceptions)} approved exception(s). "
+            "See exception_narratives for risk-accepted items."
+        )
+    return f"FAIL — {open_count} open finding(s)"
+
+
+def _exception_narratives(exceptions: list[dict[str, Any]]) -> list[str]:
+    lines: list[str] = []
+    for ex in exceptions:
+        exc = ex.get("exception") or {}
+        approver = exc.get("approved_by") or "unknown approver"
+        expires = exc.get("expires_at")
+        reason = exc.get("reason") or "No reason recorded"
+        expiry = f" until {expires[:10]}" if expires else ""
+        lines.append(
+            f"Finding '{ex.get('title', ex.get('check_id'))}' — exception approved by {approver}{expiry}. "
+            f"Reason: {reason}"
+        )
+    return lines
+
+
+def _collect_timeline_rows(
+    db: Session,
+    account_id: uuid.UUID,
+    since: datetime,
+    scan_runs: list[ScanRun],
+    mapped_check_ids: set[str],
+    control_results: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+
+    for run in scan_runs:
+        ts = run.finished_at or run.started_at
+        rows.append({
+            "timestamp": ts.isoformat(),
+            "event_type": "scan_completed" if run.status == "ok" else f"scan_{run.status}",
+            "control_id": "",
+            "check_id": "",
+            "resource_arn": "",
+            "detail": (
+                f"Scan {run.status}; opened={run.findings_opened} resolved={run.findings_resolved}"
+            ),
+        })
+
+    findings = db.scalars(
+        select(Finding).where(
+            Finding.account_id == account_id,
+            Finding.check_id.in_(mapped_check_ids) if mapped_check_ids else True,
+        )
+    ).all()
+    finding_ids = [f.id for f in findings]
+    events: list[FindingEvent] = []
+    if finding_ids:
+        events = db.scalars(
+            select(FindingEvent)
+            .where(
+                FindingEvent.finding_id.in_(finding_ids),
+                FindingEvent.ts >= since,
+            )
+            .order_by(FindingEvent.ts.asc())
+        ).all()
+    finding_by_id = {f.id: f for f in findings}
+
+    for evt in events:
+        f = finding_by_id.get(evt.finding_id)
+        if not f:
+            continue
+        rows.append({
+            "timestamp": evt.ts.isoformat(),
+            "event_type": f"finding_{evt.action}",
+            "control_id": "",
+            "check_id": f.check_id,
+            "resource_arn": f.resource_arn,
+            "detail": evt.note or f.title,
+        })
+
+    for f in findings:
+        if f.first_seen >= since:
+            rows.append({
+                "timestamp": f.first_seen.isoformat(),
+                "event_type": "finding_first_seen",
+                "control_id": "",
+                "check_id": f.check_id,
+                "resource_arn": f.resource_arn,
+                "detail": f.title,
+            })
+        if f.resolved_at and f.resolved_at >= since:
+            rows.append({
+                "timestamp": f.resolved_at.isoformat(),
+                "event_type": "finding_resolved",
+                "control_id": "",
+                "check_id": f.check_id,
+                "resource_arn": f.resource_arn,
+                "detail": f.title,
+            })
+        if f.status == "excepted" and f.exception_approved_by:
+            rows.append({
+                "timestamp": f.last_seen.isoformat(),
+                "event_type": "exception_active",
+                "control_id": "",
+                "check_id": f.check_id,
+                "resource_arn": f.resource_arn,
+                "detail": (
+                    f"Exception approved by {f.exception_approved_by}"
+                    + (f" until {f.exception_expires_at.date()}" if f.exception_expires_at else "")
+                    + f": {f.exception_reason or ''}"
+                ),
+            })
+
+    for cr in control_results:
+        if cr["status"] == "fail" and cr["finding_count"]:
+            rows.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event_type": "control_failing",
+                "control_id": cr["control_id"],
+                "check_id": "",
+                "resource_arn": "",
+                "detail": cr["status_note"],
+            })
+
+    rows.sort(key=lambda r: r["timestamp"])
+    return rows
+
+
+def _build_timeline_csv(rows: list[dict[str, Any]]) -> str:
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["timestamp", "event_type", "control_id", "check_id", "resource_arn", "detail"])
+    for r in rows:
+        writer.writerow([
+            r["timestamp"],
+            r["event_type"],
+            r["control_id"],
+            r["check_id"],
+            r["resource_arn"],
+            r["detail"],
+        ])
+    return buf.getvalue()
+
+
+def _build_source_manifest(
+    acc: AwsAccount,
+    framework: str,
+    period_days: int,
+    generated_at: datetime,
+    since: datetime,
+    providers: list[IdentityProvider],
+    snapshots: list[EvidenceSnapshot],
+    snap_by_type: dict[str, list[dict[str, Any]]],
+    scan_runs: list[ScanRun],
+    mapped_check_ids: set[str],
+) -> dict[str, Any]:
+    integrations: list[dict[str, Any]] = [{
+        "type": "aws",
+        "account_label": acc.label,
+        "account_id": acc.account_id,
+        "status": acc.status,
+        "last_scan_at": acc.last_scan_at.isoformat() if acc.last_scan_at else None,
+    }]
+    for p in providers:
+        integrations.append({
+            "type": p.type,
+            "status": p.status,
+            "last_synced_at": p.last_synced_at.isoformat() if p.last_synced_at else None,
+        })
+
+    snapshot_counts = {k: len(v) for k, v in snap_by_type.items()}
+    successful_scans = [r for r in scan_runs if r.status == "ok"]
+
+    return {
+        "pack_version": "2.0",
+        "generated_at": generated_at.isoformat(),
+        "framework": framework,
+        "audit_period": {
+            "days": period_days,
+            "start": since.isoformat(),
+            "end": generated_at.isoformat(),
+        },
+        "account": {
+            "label": acc.label,
+            "aws_account_id": acc.account_id,
+        },
+        "integrations": integrations,
+        "collection_summary": {
+            "scan_runs_in_period": len(scan_runs),
+            "successful_scans": len(successful_scans),
+            "evidence_snapshots_in_period": len(snapshots),
+            "snapshot_types": snapshot_counts,
+            "mapped_check_count": len(mapped_check_ids),
+        },
+        "artifacts": {
+            "README.txt": "Start here — pack overview and auditor instructions",
+            "report.pdf": "Executive summary for auditors (pass/fail overview)",
+            "INDEX.csv": "Control status table (same as control_status.csv)",
+            "control_status.csv": "Per-control pass/fail with open finding and exception counts",
+            "timeline.csv": "Chronological scan, finding, and exception events in audit period",
+            "source_manifest.json": "This file — collection metadata and integration sources",
+            "controls/": "Per-control folders with summary.json, findings.json, exceptions.json, snapshots.json",
+        },
+        "auditor_note": (
+            "Raw evidence is in controls/*/snapshots.json. Cross-reference timeline.csv "
+            "for when findings opened or resolved during the audit period."
+        ),
+    }
+
+
 def _build_readme(
     acc: AwsAccount,
     framework: str,
     period_days: int,
     generated_at: datetime,
     results: list[dict[str, Any]],
+    since: datetime,
 ) -> str:
     passed = sum(1 for r in results if r["status"] == "pass")
     failed = sum(1 for r in results if r["status"] == "fail")
     no_data = sum(1 for r in results if r["status"] == "no_data")
+    excepted_controls = sum(1 for r in results if r.get("exception_count", 0) > 0)
     lines = [
-        "VIGIL - COMPLIANCE EVIDENCE PACK",
+        "VIGIL - COMPLIANCE EVIDENCE PACK (v2)",
         "=" * 50,
         f"Account:     {acc.label} ({acc.account_id or 'unknown'})",
         f"Framework:   {framework.upper().replace('_', ' ')}",
-        f"Period:      {period_days} days",
+        f"Period:      {since.date()} to {generated_at.date()} ({period_days} days)",
         f"Generated:   {generated_at.strftime('%Y-%m-%d %H:%M UTC')}",
+        "",
+        "START HERE",
+        "-" * 30,
+        "1. Read report.pdf for the auditor-facing summary.",
+        "2. Open INDEX.csv (or control_status.csv) for pass/fail per control.",
+        "3. Drill into controls/[ID]/ for raw JSON evidence per control.",
+        "4. Use timeline.csv to show when findings opened, resolved, or were excepted.",
+        "5. source_manifest.json lists integrations and snapshot counts collected.",
         "",
         "SUMMARY",
         "-" * 30,
@@ -467,16 +723,26 @@ def _build_readme(
         f"FAIL:     {failed}",
         f"NO DATA:  {no_data}",
         f"TOTAL:    {len(results)}",
+        f"Controls with approved exceptions: {excepted_controls}",
         "",
         "CONTENTS",
         "-" * 30,
-        "INDEX.csv          - control ID, status, open findings, exceptions",
-        "controls/[ID]/     - per-control folder",
-        "  summary.json     - control metadata and pass/fail status",
-        "  findings.json    - open findings mapped to this control",
-        "  exceptions.json  - approved exceptions (risk accepted) for this control",
-        "  snapshots.json   - raw collected evidence (last 50 entries)",
-        "report.pdf         - formatted summary report",
+        "README.txt           - this file",
+        "report.pdf           - formatted summary report (auditor overview)",
+        "INDEX.csv            - control ID, status, open findings, exceptions",
+        "control_status.csv   - same as INDEX.csv (alias for auditor workflows)",
+        "timeline.csv         - scan + finding + exception events in audit period",
+        "source_manifest.json - integrations, scan counts, snapshot inventory",
+        "controls/[ID]/       - per-control evidence folder",
+        "  summary.json       - status, status_note, exception_narratives",
+        "  findings.json      - open findings mapped to this control",
+        "  exceptions.json    - approved exceptions with approver + expiry",
+        "  snapshots.json     - raw collected evidence (last 50 entries)",
+        "",
+        "EXCEPTIONS",
+        "-" * 30,
+        "Approved exceptions appear in exceptions.json and summary.json.",
+        "Excepted findings do not cause a control to FAIL — see status_note.",
         "",
         "NOTE: Evidence in snapshots.json is raw API data collected by",
         "Vigil during scans. Each entry includes a taken_at timestamp.",
@@ -489,7 +755,7 @@ def _build_readme(
 def _build_index_csv(results: list[dict[str, Any]]) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["control_id", "title", "status", "open_findings", "exceptions"])
+    writer.writerow(["control_id", "title", "status", "open_findings", "exceptions", "status_note"])
     for r in results:
         writer.writerow([
             r["control_id"],
@@ -497,5 +763,6 @@ def _build_index_csv(results: list[dict[str, Any]]) -> str:
             r["status"],
             r["finding_count"],
             r.get("exception_count", 0),
+            r.get("status_note", ""),
         ])
     return buf.getvalue()

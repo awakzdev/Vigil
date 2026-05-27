@@ -50,12 +50,44 @@ def test_index_csv_includes_exception_count():
             "status": "pass",
             "finding_count": 0,
             "exception_count": 2,
+            "status_note": "PASS with 2 approved exception(s)",
         }
     ])
     lines = csv_text.strip().splitlines()
-    assert lines[0] == "control_id,title,status,open_findings,exceptions"
+    assert lines[0] == "control_id,title,status,open_findings,exceptions,status_note"
     assert "CC6.1" in lines[1]
-    assert lines[1].endswith(",2")
+    assert "PASS with 2 approved exception(s)" in lines[1]
+
+
+def test_exception_narratives():
+    from app.services.evidence_pack import _exception_narratives
+
+    lines = _exception_narratives([{
+        "title": "Role too permissive",
+        "check_id": "iam.role.wildcard",
+        "exception": {
+            "approved_by": "Alice (CTO)",
+            "expires_at": "2026-08-27T00:00:00+00:00",
+            "reason": "Legacy batch job",
+        },
+    }])
+    assert len(lines) == 1
+    assert "Alice (CTO)" in lines[0]
+    assert "Legacy batch job" in lines[0]
+
+
+def test_timeline_csv_has_header():
+    from app.services.evidence_pack import _build_timeline_csv
+
+    csv_text = _build_timeline_csv([{
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "event_type": "scan_completed",
+        "control_id": "",
+        "check_id": "",
+        "resource_arn": "",
+        "detail": "Scan ok",
+    }])
+    assert csv_text.startswith("timestamp,event_type")
 
 
 def test_s3_no_default_encryption_flags_unencrypted_buckets(mock_db):
