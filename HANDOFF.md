@@ -816,12 +816,12 @@ work surfaces.
 
 1. **Re-scan** after session-22 deploy — populates user policy columns for CIS 1.16 and refreshes compliance scores.
 
-**Shipped (sessions 20–22):** compliance polish · What If full coverage · CIS 1.16 · Accounts metric strips · scan progress without finish clock · Vite vendor chunks · `.env.example` for `ALLOW_SSO_SIGNUP` / `CFN_TEMPLATE_URL`.
+**Shipped (sessions 20–23):** compliance polish · What If full coverage · CIS 1.16 · all 61 AWS checks mapped to frameworks · stale-CFN banner removed · Accounts metric strips · scan progress without finish clock · Vite vendor chunks · `.env.example` for `ALLOW_SSO_SIGNUP` / `CFN_TEMPLATE_URL`.
 
-**AWS coverage snapshot (session 22):**
+**AWS coverage snapshot (session 23):**
 - **61 AWS checks** across IAM, S3, KMS, CloudTrail, GuardDuty, Security Hub, Config, Access Analyzer, VPC/EC2/RDS, ACM, Lambda, Secrets Manager, SSM, ELB, DynamoDB, SNS, SQS
-- **55 mapped to at least one framework control** (SOC2 / CIS L1 / ISO 27001)
-- **6 findings-only** (no CIS/SOC2/ISO mapping yet): `lambda.function.*` (2), `acm.certificate.expiring`, `dynamodb.table.no_pitr`, `rds.instance.no_deletion_protection`, `rds.instance.no_multi_az`
+- **All 61 mapped to at least one framework control** (SOC2 / CIS L1 / ISO 27001)
+- New ISO controls added: A.12.3.1 (Backup — RDS deletion protection + DynamoDB PITR), A.17.2.1 (Availability — RDS Multi-AZ)
 - **CIS L1**: automated for all mapped controls in `control_mappings.json`; full CIS benchmark is ~40+ items — many require manual evidence (password policy length, support role, etc.) or services we don't scan yet
 
 **Optional when deploying prod:** set `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to a release tag or S3 object. Nav order (Findings 2nd) is intentional unless you want controls-first demos.
