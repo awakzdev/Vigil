@@ -152,53 +152,138 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
         # README
         passed = sum(1 for _, _, _, s, _, _ in sample_controls if s == "pass")
         failed = sum(1 for _, _, _, s, _, _ in sample_controls if s == "fail")
+        period_start = (now - timedelta(days=90)).date()
         readme_lines = [
-            "VIGIL - SAMPLE COMPLIANCE EVIDENCE PACK",
+            "VIGIL - SAMPLE COMPLIANCE EVIDENCE PACK (v2)",
             "=" * 50,
             "NOTICE: This is a synthetic sample pack with demo data.",
             "        Connect your AWS/GitHub account to generate real evidence.",
             "",
             f"Account:     ACME Corp Demo (123456789012)",
             f"Framework:   {framework.upper().replace('_', ' ')}",
-            f"Generated:   {now.isoformat()}",
-            f"Period:      {(now - timedelta(days=90)).date()} to {now.date()} (90 days)",
+            f"Generated:   {now.strftime('%Y-%m-%d %H:%M UTC')}",
+            f"Period:      {period_start} to {now.date()} (90 days)",
             "",
             f"Controls:    {passed} passed / {failed} failed",
+            "",
+            "START HERE",
+            "-" * 40,
+            "1. Read report.pdf (not included in sample — real packs include it).",
+            "2. Open INDEX.csv for pass/fail per control.",
+            "3. Drill into controls/[ID]/ for findings and exceptions.",
+            "4. timeline.csv shows when findings opened or were excepted.",
             "",
             "CONTENTS",
             "-" * 40,
             "README.txt             - this file",
-            "INDEX.csv              - control ID, status, finding count",
-            "controls/              - per-control evidence folder",
-            "  <CTRL-ID>/",
-            "    summary.json       - control metadata and status",
-            "    findings.json      - open findings for this control",
-            "    exceptions.json    - approved exceptions with approver + reason",
+            "INDEX.csv              - control status table",
+            "control_status.csv     - same as INDEX.csv",
+            "timeline.csv           - sample audit-period events",
+            "source_manifest.json   - collection metadata",
+            "controls/              - per-control evidence folders",
             "",
-            "Download at vigil.sh/sample or connect your account for real evidence.",
+            "Download from the Vigil login page or connect your account for real evidence.",
         ]
         zf.writestr("README.txt", "\n".join(readme_lines))
 
-        # INDEX.csv
+        # INDEX.csv + control_status.csv
         idx_buf = io.StringIO()
         idx_w = _csv.writer(idx_buf)
-        idx_w.writerow(["control_id", "title", "status", "open_findings", "exceptions"])
+        idx_w.writerow(["control_id", "title", "status", "open_findings", "exceptions", "status_note"])
         for ctrl_id, title, _, ctrl_status, open_ct, exc_ct in sample_controls:
-            idx_w.writerow([ctrl_id, title, ctrl_status, open_ct, exc_ct])
-        zf.writestr("INDEX.csv", idx_buf.getvalue())
+            if ctrl_status == "pass" and exc_ct:
+                note = f"PASS with {exc_ct} approved exception(s)"
+            elif ctrl_status == "pass":
+                note = "PASS — no open findings"
+            elif exc_ct:
+                note = f"FAIL — {open_ct} open, {exc_ct} exception(s)"
+            else:
+                note = f"FAIL — {open_ct} open finding(s)"
+            idx_w.writerow([ctrl_id, title, ctrl_status, open_ct, exc_ct, note])
+        index_csv = idx_buf.getvalue()
+        zf.writestr("INDEX.csv", index_csv)
+        zf.writestr("control_status.csv", index_csv)
+
+        # timeline.csv
+        tl_buf = io.StringIO()
+        tl_w = _csv.writer(tl_buf)
+        tl_w.writerow(["timestamp", "event_type", "control_id", "check_id", "resource_arn", "detail"])
+        tl_w.writerow([
+            (now - timedelta(days=60)).isoformat(),
+            "finding_first_seen",
+            "",
+            "iam.perm.granted_vs_used",
+            "arn:aws:iam::123456789012:role/legacy-batch",
+            "Role legacy-batch has 72% unused granted write actions",
+        ])
+        tl_w.writerow([
+            (now - timedelta(days=59)).isoformat(),
+            "exception_active",
+            "",
+            "iam.perm.granted_vs_used",
+            "arn:aws:iam::123456789012:role/legacy-batch",
+            "Exception approved by Alice Smith (CTO) until " + (now + timedelta(days=90)).date().isoformat(),
+        ])
+        tl_w.writerow([
+            (now - timedelta(days=14)).isoformat(),
+            "finding_first_seen",
+            "",
+            "iam.role.wildcard_action",
+            "arn:aws:iam::123456789012:role/dev-unrestricted",
+            "Role dev-unrestricted has Action: * in inline policy",
+        ])
+        tl_w.writerow([now.isoformat(), "scan_completed", "", "", "", "Scan ok; opened=2 resolved=0"])
+        zf.writestr("timeline.csv", tl_buf.getvalue())
+
+        manifest = {
+            "pack_version": "2.0",
+            "sample": True,
+            "generated_at": now.isoformat(),
+            "framework": framework,
+            "audit_period": {"days": 90, "start": (now - timedelta(days=90)).isoformat(), "end": now.isoformat()},
+            "integrations": [
+                {"type": "aws", "account_label": "ACME Corp Demo", "account_id": "123456789012", "status": "connected"},
+                {"type": "github", "status": "connected"},
+            ],
+            "collection_summary": {
+                "scan_runs_in_period": 12,
+                "successful_scans": 12,
+                "evidence_snapshots_in_period": 847,
+                "snapshot_types": {"iam_user": 24, "iam_role": 18, "s3_bucket": 6, "github_identity": 42},
+            },
+        }
+        zf.writestr("source_manifest.json", json.dumps(manifest, indent=2))
 
         # Per-control folders
         for ctrl_id, title, desc, ctrl_status, _, _ in sample_controls:
             checks_for_ctrl = [c for c, ctrls in check_to_control.items() if ctrl_id in ctrls]
             open_findings = [f for c in checks_for_ctrl for f in finding_by_check.get(c, []) if f["status"] == "open"]
             exceptions = [f for c in checks_for_ctrl for f in finding_by_check.get(c, []) if f["status"] == "excepted"]
+            exc_narratives = []
+            for ex in exceptions:
+                exc = ex.get("exception") or {}
+                exc_narratives.append(
+                    f"Finding '{ex['title']}' — exception approved by {exc.get('approved_by', 'unknown')}"
+                    + (f" until {exc['expires_at'][:10]}" if exc.get("expires_at") else "")
+                    + f". Reason: {exc.get('reason', '')}"
+                )
+            if ctrl_status == "pass" and exceptions:
+                status_note = f"PASS with {len(exceptions)} approved exception(s)"
+            elif ctrl_status == "pass":
+                status_note = "PASS — no open findings"
+            elif exceptions:
+                status_note = f"FAIL — {len(open_findings)} open, {len(exceptions)} exception(s)"
+            else:
+                status_note = f"FAIL — {len(open_findings)} open finding(s)"
             summary = {
                 "control_id": ctrl_id,
                 "title": title,
                 "description": desc,
                 "status": ctrl_status,
+                "status_note": status_note,
                 "open_findings": len(open_findings),
                 "exceptions": len(exceptions),
+                "exception_narratives": exc_narratives,
                 "generated_at": now.isoformat(),
                 "account": "ACME Corp Demo (123456789012)",
                 "framework": framework,

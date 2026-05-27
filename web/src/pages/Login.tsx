@@ -57,6 +57,7 @@ export default function Login() {
   const [err, setErr] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [sampleLoading, setSampleLoading] = useState(false);
 
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
@@ -176,6 +177,27 @@ export default function Login() {
     }
   }
 
+  async function downloadSamplePack() {
+    setSampleLoading(true);
+    try {
+      const res = await fetch(`${BASE}/v1/exports/sample-evidence-pack?framework=soc2`);
+      if (!res.ok) throw new Error("Download failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `vigil-sample-soc2-${new Date().toISOString().slice(0, 10)}.zip`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setErr("Could not download sample pack. Try again.");
+    } finally {
+      setSampleLoading(false);
+    }
+  }
+
   if (mfaToken) {
     return (
       <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4">
@@ -249,6 +271,24 @@ export default function Login() {
           <p className="text-sm text-zinc-500 mb-6">
             {mode === "login" ? "Sign in to your workspace" : "Start monitoring your AWS IAM posture"}
           </p>
+
+          <div className="mb-6 rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+            <p className="text-xs font-semibold uppercase tracking-wide text-indigo-700">See what auditors get</p>
+            <p className="mt-1.5 text-sm leading-snug text-zinc-600">
+              Download a sample SOC 2 evidence pack — ZIP with control status, timeline, and exception examples. No account required.
+            </p>
+            <button
+              type="button"
+              onClick={downloadSamplePack}
+              disabled={sampleLoading}
+              className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-sm font-medium text-indigo-800 transition hover:bg-indigo-50 disabled:opacity-60"
+            >
+              <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden="true">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M7.5 10.5L12 15m0 0l4.5-4.5M12 15V3" />
+              </svg>
+              {sampleLoading ? "Preparing…" : "Download sample evidence pack"}
+            </button>
+          </div>
 
           <form noValidate onSubmit={submit} className="space-y-4">
             {mode === "signup" && (
