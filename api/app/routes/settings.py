@@ -13,7 +13,9 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models.org import Org, User
 from app.models import AwsAccount, Finding
+from app.services.check_evidence import all_evidence_classes
 from app.services.check_settings import hidden_check_ids, optional_checks_for_ui
+from app.services.cis_benchmark_coverage import cis_benchmark_coverage
 from app.services.scan_schedule import (
     DEFAULT_SCANNING,
     get_scanning_settings,
@@ -95,6 +97,8 @@ class OptionalCheckOut(BaseModel):
 class SettingsOut(BaseModel):
     checks: dict
     optional_checks: list[OptionalCheckOut]
+    evidence_classes: dict[str, str] = {}
+    cis_benchmark_coverage: dict | None = None
     scanning: dict
     notifications: dict
     scan_status: ScanStatusOut
@@ -136,6 +140,8 @@ def get_settings(p=Depends(current_principal), db: Session = Depends(get_db)):
     return SettingsOut(
         **merged,
         optional_checks=optional_checks_for_ui(org_settings),
+        evidence_classes=all_evidence_classes(),
+        cis_benchmark_coverage=cis_benchmark_coverage(),
         scan_status=_scan_status(org, db),
         account_email=user.email if user and user.email else None,
     )
@@ -181,6 +187,8 @@ def patch_settings(body: SettingsPatch, p=Depends(current_principal), db: Sessio
     return SettingsOut(
         **merged,
         optional_checks=optional_checks_for_ui(org.settings),
+        evidence_classes=all_evidence_classes(),
+        cis_benchmark_coverage=cis_benchmark_coverage(),
         scan_status=_scan_status(org, db),
         account_email=user.email if user and user.email else None,
     )

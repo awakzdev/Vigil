@@ -16,14 +16,18 @@ NARRATIVES: dict[str, str] = {
     "CC6.2": (
         "System credentials are issued only to registered, authorized users. "
         "Vigil verifies that no root access keys exist, that each IAM user holds at most one active access key, "
+        "that the account IAM password policy meets minimum complexity (length, reuse, and related fields), "
         "and that MFA is enforced at the organization level in GitHub and GitLab where integrated. "
         "Outside collaborators with direct repository access are enumerated and flagged for review."
     ),
     "CC6.3": (
         "Access to protected resources is restricted based on least-privilege principles. "
-        "Vigil collects evidence of IAM roles and policies, flagging wildcard Action grants (Action: *), "
-        "overly permissive resource scopes, and roles granted write permissions to services they have never called. "
-        "Evidence includes inline policy documents, attached managed policy names, and service last-accessed data."
+        "Vigil collects evidence of IAM roles and policies, flagging wildcard Resource scopes "
+        "on customer-managed policies, external-account role trust, unused granted services, "
+        "and roles granted write permissions to services they have never called. "
+        "Evidence includes inline policy documents, attached managed policy names, service last-accessed data, "
+        "and IAM Identity Center user roster snapshots where enabled. "
+        "User deprovisioning workflow attestation remains outside automated scope."
     ),
     "CC6.6": (
         "Logical access controls prevent unauthorized access from outside the organization. "
@@ -45,23 +49,25 @@ NARRATIVES: dict[str, str] = {
         "VPC flow log enablement is verified for network traffic visibility."
     ),
     "CC7.1": (
-        "Infrastructure changes are subject to change management controls. "
-        "Vigil collects GitHub and GitLab branch protection evidence including required reviewers, "
-        "dismiss-stale-reviews enforcement, CODEOWNERS file presence, and deployment environment protection. "
-        "Self-merge checks flag PRs merged by their own author."
+        "Configuration changes that can introduce vulnerabilities are detected and monitored. "
+        "Vigil verifies CloudTrail is enabled with log file validation and KMS encryption, "
+        "AWS Config recorder status and rule compliance, ACM certificate expiry, and "
+        "deprecated Lambda runtimes that may lack security patches."
     ),
     "CC7.2": (
         "Security events and anomalies are detected and monitored. "
         "Vigil verifies that AWS CloudTrail is enabled, covers all regions, and has log file validation active. "
-        "AWS Config, GuardDuty, and Security Hub enablement are checked. "
+        "AWS Config (including non-compliant managed rules), GuardDuty detector enablement, "
+        "active GuardDuty findings, and Security Hub enablement are checked. "
         "CloudTrail write events (IAM changes, security group modifications, S3 policy changes) "
-        "are collected and retained to support audit sampling."
+        "are collected and retained to support audit sampling. "
+        "Evidence packs include a coverage indicator when the selected audit window predates Vigil monitoring."
     ),
     "CC8.1": (
-        "Changes to infrastructure are authorized, documented, and tracked. "
-        "Vigil collects CloudTrail management events for infrastructure-changing operations "
-        "(security group rule changes, IAM user/role creation, S3 policy updates, KMS key operations). "
-        "Branch protection and required-reviewer evidence from GitHub/GitLab is included in this control."
+        "Changes to infrastructure and application code are authorized before production use. "
+        "Vigil collects GitHub and GitLab evidence for branch protection on default branches, "
+        "required pull request reviews, absence of self-merged PRs, and protected deployment environments. "
+        "CloudTrail write events for infrastructure changes are included in evidence packs for correlation."
     ),
 
     # ── CIS AWS L1 ──────────────────────────────────────────────────────────
@@ -95,8 +101,8 @@ NARRATIVES: dict[str, str] = {
         "in the same window, supporting credential disablement per CIS guidance."
     ),
     "CIS 1.22": (
-        "Vigil scans IAM role policies for Action: '*' on customer-managed policies "
-        "(CIS full-admin pattern also requires Resource: '*')."
+        "Vigil scans customer-managed role policies for the CIS full-admin pattern: "
+        "Allow with Action: '*' and Resource: '*' on the same statement."
     ),
     "CIS 1.20": (
         "Vigil verifies that a support role exists in the account for incident management. "
@@ -243,13 +249,13 @@ NARRATIVES: dict[str, str] = {
 SHORT_ANSWERS: dict[str, str] = {
     "CC6.1": "Logical access is restricted; Vigil continuously monitors IAM and integrated identity providers for MFA and dormant accounts.",
     "CC6.2": "Credentials are issued only to authorized users; root keys, access key limits, and org MFA are verified each scan.",
-    "CC6.3": "Least-privilege access is enforced; wildcard IAM grants and unused permissions are flagged with policy evidence.",
+    "CC6.3": "Least-privilege access is enforced; wildcard actions/resources, external trust, and unused permissions are flagged with policy evidence.",
     "CC6.6": "External access paths are controlled via permission-usage analysis, security group checks, and branch protection evidence.",
     "CC6.7": "Encryption at rest is verified for S3, KMS, EBS, and RDS using collected configuration snapshots.",
     "CC6.8": "Malware and threat detection controls include GuardDuty, Security Hub, IMDSv2, and VPC flow log checks.",
-    "CC7.1": "Infrastructure changes require review; branch protection, CODEOWNERS, and PR merge evidence is collected from GitHub/GitLab.",
-    "CC7.2": "Security monitoring is active; CloudTrail, Config, GuardDuty, and Security Hub status are verified each scan.",
-    "CC8.1": "Infrastructure write events are collected from CloudTrail; GitHub/GitLab branch protection evidence supports authorized changes.",
+    "CC7.1": "Configuration change detection via CloudTrail, AWS Config, certificate and runtime hygiene signals.",
+    "CC7.2": "Security monitoring is active; CloudTrail, Config rules, GuardDuty findings, and Security Hub status are verified each scan.",
+    "CC8.1": "SCM branch protection and review evidence from GitHub/GitLab; CloudTrail write events support authorized infrastructure changes.",
     "CIS 1.5": "Root account MFA is verified from the IAM account summary at each scan.",
     "CIS 1.10": "Console IAM users without MFA devices are enumerated and reported as findings.",
     "CIS 2.1": "Multi-region CloudTrail enablement is verified from trail configuration snapshots.",
@@ -261,9 +267,14 @@ SHORT_ANSWERS: dict[str, str] = {
 
 KNOWN_GAPS: dict[str, list[str]] = {
     "CC6.1": ["Physical access to data centers is out of scope — attest separately for colo/on-prem."],
-    "CC6.2": ["Password complexity policy minimum length is not fully automated — confirm in IAM password policy."],
+    "CC6.2": ["HR/offboarding attestations for non-AWS identities are outside Vigil scope."],
+    "CC6.3": ["Formal user deprovisioning approval workflow is not automated — attest separately."],
+    "CC7.2": ["GuardDuty finding triage and incident response runbooks require manual attestation."],
     "CC7.1": ["Emergency break-glass deploys outside SCM are not captured unless logged in CloudTrail."],
-    "CC8.1": ["Changes made directly in the AWS Console appear in CloudTrail only — process attestation may be required."],
+    "CC8.1": [
+        "Changes made directly in the AWS Console appear in CloudTrail only — process attestation may be required.",
+        "CODEOWNERS file coverage is optional hygiene (Settings → Detection coverage); branch protection and required reviews are the mapped SCM evidence.",
+    ],
     "CIS 1.20": ["AWS Support role existence is checked; support plan enrollment is manual attestation."],
     "CIS 1.16": ["Vigil automates policy attachment checks; manual attestation still needed for business justification."],
 }

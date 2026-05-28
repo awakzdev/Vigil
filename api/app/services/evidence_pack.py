@@ -18,9 +18,23 @@ from app.models.cloudtrail import CloudTrailEvent
 from app.models.control import Control, CheckControl
 from app.models.aws_account import AwsAccount
 from app.models.org import Org
+from app.services.check_coverage import control_coverage_tier, extended_checks_in_list, tier_for_check
+from app.services.check_evidence import (
+    all_evidence_classes,
+    evidence_class_for_check,
+    evidence_class_label,
+)
 from app.services.check_settings import hidden_check_ids
+from app.services.cis_benchmark_coverage import cis_benchmark_coverage
 from app.models.github import CiPipeline, IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection, WorkflowRun
+from app.models.iam import IamUser
+from app.models.resources import IdentityCenterUser
+from app.services.evidence_coverage import compute_evidence_coverage
 from app.services.pdf_report import build_pdf
+
+# Max snapshots embedded per control folder (full count in snapshots_total).
+_SNAPSHOT_EMBED_LIMIT = 50
+_CLOUDTRAIL_EVENT_LIMIT = 1000
 
 
 def _control_status(
@@ -46,12 +60,17 @@ def build_evidence_pack(
     account_id: uuid.UUID,
     framework: str,
     period_days: int = 90,
+    as_of: datetime | None = None,
 ) -> bytes:
     acc = db.get(AwsAccount, account_id)
     if not acc or str(acc.org_id) != str(org_id):
         raise ValueError("account not found")
 
-    since = datetime.now(timezone.utc) - timedelta(days=period_days)
+    end = as_of if as_of else datetime.now(timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    since = end - timedelta(days=period_days)
+    coverage = compute_evidence_coverage(db, account_id, since, end, period_days)
 
     controls = db.scalars(
         select(Control).where(Control.framework == framework).order_by(Control.control_id)
@@ -79,10 +98,11 @@ def build_evidence_pack(
         select(EvidenceSnapshot).where(
             EvidenceSnapshot.account_id == account_id,
             EvidenceSnapshot.taken_at >= since,
+            EvidenceSnapshot.taken_at <= end,
         ).order_by(EvidenceSnapshot.taken_at.desc())
     ).all()
 
-    generated_at = datetime.now(timezone.utc)
+    generated_at = end
 
     snap_by_type: dict[str, list[dict[str, Any]]] = {}
     for s in snapshots:
@@ -95,7 +115,9 @@ def build_evidence_pack(
     snap_by_type.update(identity_snaps)
 
     # CloudTrail change events — used for CC8.1 change management evidence
-    snap_by_type["cloudtrail_event"] = _build_cloudtrail_event_snapshots(db, account_id, since)
+    snap_by_type["cloudtrail_event"] = _build_cloudtrail_event_snapshots(
+        db, account_id, since, end, limit=_CLOUDTRAIL_EVENT_LIMIT
+    )
 
     # CI/CD pipeline evidence (GitHub Actions workflow runs + GitLab CI pipelines)
     cicd_snaps = _build_cicd_snapshots(db, acc.org_id, since)
@@ -136,19 +158,28 @@ def build_evidence_pack(
         exceptions = [_finding_dict(f) for f in hits if f.status == "excepted"]
         open_count = len([f for f in hits if f.status == "open"])
         open_finding_dicts = [_finding_dict(f) for f in hits if f.status == "open"]
+        snapshots_total = len(snaps)
+        mapped = check_map[ctrl.id]
+        cov_tier = control_coverage_tier(mapped)
         control_results.append(
             {
                 "control_id": ctrl.control_id,
                 "title": ctrl.title,
                 "description": ctrl.description,
                 "guidance": ctrl.guidance or "",
+                "coverage_tier": cov_tier,
+                "extended_check_ids": extended_checks_in_list(mapped),
+                "check_tiers": {cid: tier_for_check(cid) for cid in mapped},
+                "check_evidence_classes": {cid: evidence_class_for_check(cid) for cid in mapped},
                 "status": status,
                 "evidence_status": _evidence_status(check_map[ctrl.id], snaps, has_successful_scan),
                 "finding_count": open_count,
                 "exception_count": len(exceptions),
                 "findings": open_finding_dicts,
                 "exceptions": exceptions,
-                "snapshots": snaps[:50],
+                "snapshots": snaps[:_SNAPSHOT_EMBED_LIMIT],
+                "snapshots_total": snapshots_total,
+                "snapshots_truncated": snapshots_total > _SNAPSHOT_EMBED_LIMIT,
                 "status_note": _control_status_note(status, open_count, exceptions),
                 "exception_narratives": _exception_narratives(exceptions),
                 "review_reason": _review_reason(status, open_count, open_finding_dicts, check_map[ctrl.id]),
@@ -157,35 +188,74 @@ def build_evidence_pack(
 
     scan_runs = db.scalars(
         select(ScanRun)
-        .where(ScanRun.account_id == account_id, ScanRun.started_at >= since)
+        .where(
+            ScanRun.account_id == account_id,
+            ScanRun.started_at >= since,
+            ScanRun.started_at <= end,
+        )
         .order_by(ScanRun.started_at.desc())
     ).all()
+    access_roster = _build_access_roster(db, account_id, end)
     mapped_check_ids = {cid for ids in check_map.values() for cid in ids}
     timeline_rows = _collect_timeline_rows(
         db, account_id, since, scan_runs, mapped_check_ids, control_results
     )
 
+    report_id = _report_id(account_id, framework, generated_at)
+    evidence_classes_map = all_evidence_classes()
+
     buf = io.BytesIO()
+    artifacts: list[tuple[str, bytes]] = []
+
+    def _add(path: str, content: str | bytes) -> None:
+        data = content.encode("utf-8") if isinstance(content, str) else content
+        artifacts.append((path, data))
+
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        def _write(path: str, content: str | bytes) -> None:
+            _add(path, content)
+            zf.writestr(path, artifacts[-1][1])
+
         readme = _build_readme(acc, framework, period_days, generated_at, control_results, since)
-        zf.writestr("README.txt", readme)
+        _write("README.txt", readme)
 
         index_csv = _build_index_csv(control_results)
-        zf.writestr("INDEX.csv", index_csv)
-        zf.writestr("control_status.csv", index_csv)
+        _write("INDEX.csv", index_csv)
+        _write("control_status.csv", index_csv)
 
         timeline_csv = _build_timeline_csv(timeline_rows)
-        zf.writestr("timeline.csv", timeline_csv)
+        _write("timeline.csv", timeline_csv)
 
         manifest = _build_source_manifest(
             acc, framework, period_days, generated_at, since,
             providers, snapshots, snap_by_type, scan_runs, mapped_check_ids,
+            coverage=coverage,
+            report_id=report_id,
+            evidence_classes=evidence_classes_map,
         )
-        zf.writestr("source_manifest.json", json.dumps(manifest, indent=2, default=str))
+        _write("source_manifest.json", json.dumps(manifest, indent=2, default=str))
+        _write("access_roster.json", json.dumps(access_roster, indent=2, default=str))
+        _write("evidence_coverage.json", json.dumps(coverage, indent=2, default=str))
+        _write(
+            "check_evidence_classes.json",
+            json.dumps(
+                {
+                    "labels": {
+                        "benchmark": evidence_class_label("benchmark"),
+                        "supporting": evidence_class_label("supporting"),
+                        "hygiene": evidence_class_label("hygiene"),
+                    },
+                    "checks": evidence_classes_map,
+                },
+                indent=2,
+            ),
+        )
+        if framework == "cis_aws_l1":
+            _write("cis_benchmark_coverage.json", json.dumps(cis_benchmark_coverage(), indent=2, default=str))
 
         for cr in control_results:
             folder = f"controls/{cr['control_id']}/"
-            zf.writestr(folder + "summary.json", json.dumps({
+            _write(folder + "summary.json", json.dumps({
                 "control_id": cr["control_id"],
                 "title": cr["title"],
                 "framework": framework,
@@ -194,15 +264,22 @@ def build_evidence_pack(
                 "finding_count": cr["finding_count"],
                 "exception_count": cr["exception_count"],
                 "exception_narratives": cr["exception_narratives"],
+                "snapshots_total": cr.get("snapshots_total", 0),
+                "snapshots_included": len(cr["snapshots"]),
+                "snapshots_truncated": cr.get("snapshots_truncated", False),
                 "description": cr["description"],
                 "guidance": cr["guidance"],
+                "coverage_tier": cr.get("coverage_tier", "core"),
+                "extended_check_ids": cr.get("extended_check_ids", []),
+                "check_tiers": cr.get("check_tiers", {}),
+                "check_evidence_classes": cr.get("check_evidence_classes", {}),
                 "generated_at": generated_at.isoformat(),
                 "period_start": since.isoformat(),
                 "period_end": generated_at.isoformat(),
             }, indent=2))
-            zf.writestr(folder + "findings.json", json.dumps(cr["findings"], indent=2, default=str))
-            zf.writestr(folder + "exceptions.json", json.dumps(cr["exceptions"], indent=2, default=str))
-            zf.writestr(folder + "snapshots.json", json.dumps(cr["snapshots"], indent=2, default=str))
+            _write(folder + "findings.json", json.dumps(cr["findings"], indent=2, default=str))
+            _write(folder + "exceptions.json", json.dumps(cr["exceptions"], indent=2, default=str))
+            _write(folder + "snapshots.json", json.dumps(cr["snapshots"], indent=2, default=str))
 
         pdf_bytes = build_pdf(
             acc,
@@ -212,9 +289,13 @@ def build_evidence_pack(
             control_results,
             since=since,
             evidence_sources=evidence_sources,
-            report_id=_report_id(account_id, framework, generated_at),
+            report_id=report_id,
+            benchmark_coverage=cis_benchmark_coverage() if framework == "cis_aws_l1" else None,
         )
-        zf.writestr("report.pdf", pdf_bytes)
+        _write("report.pdf", pdf_bytes)
+
+        checksum_body = _build_checksum_manifest(artifacts, generated_at=generated_at, report_id=report_id)
+        _write("checksum_manifest.json", checksum_body)
 
     return buf.getvalue()
 
@@ -224,8 +305,13 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
     for cid in check_ids:
         if cid.startswith("iam.root"):
             types.add("account_summary")
-        elif cid.startswith("iam.user"):
+        elif cid.startswith("iam.user") or cid.startswith("iam.access_inventory"):
             types.add("iam_user")
+            types.add("identity_center_user")
+        elif cid.startswith("iam.account.") or cid == "iam.account.password_policy_weak":
+            types.add("iam_password_policy")
+        elif cid.startswith("iam.policy."):
+            types.add("iam_role")
         elif cid.startswith("iam.access_key"):
             types.add("iam_access_key")
         elif cid.startswith("iam.role"):
@@ -240,10 +326,12 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
             types.add("cloudtrail_trail")
         elif cid.startswith("guardduty."):
             types.add("guardduty_detector")
+            types.add("guardduty_finding")
         elif cid.startswith("aws.access_analyzer"):
             types.add("access_analyzer")
         elif cid.startswith("aws.config"):
             types.add("config_recorder")
+            types.add("config_rule_compliance")
         elif cid.startswith("aws.securityhub"):
             types.add("security_hub")
         elif cid.startswith("vpc."):
@@ -258,6 +346,8 @@ def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
             types.add("ebs_snapshot")
         elif cid.startswith("ec2.ami"):
             types.add("ec2_ami")
+        elif cid.startswith("iam.role.external"):
+            types.add("iam_role")
         elif cid.startswith("acm."):
             types.add("acm_certificate")
         elif cid.startswith("lambda."):
@@ -370,17 +460,57 @@ def _build_identity_snapshots(
     return result
 
 
+def _build_access_roster(db: Session, account_id: uuid.UUID, as_of: datetime) -> dict[str, Any]:
+    """Point-in-time access roster from latest collected IAM + Identity Center users."""
+    iam_users = db.scalars(select(IamUser).where(IamUser.account_id == account_id)).all()
+    ic_users = db.scalars(select(IdentityCenterUser).where(IdentityCenterUser.account_id == account_id)).all()
+    return {
+        "as_of": as_of.isoformat(),
+        "iam_users": [
+            {
+                "arn": u.arn,
+                "username": u.name,
+                "mfa_enabled": u.mfa_enabled,
+                "has_console_password": u.has_console_password,
+                "last_used_at": u.password_last_used.isoformat() if u.password_last_used else None,
+            }
+            for u in iam_users
+        ],
+        "identity_center_users": [
+            {
+                "user_id": u.user_id,
+                "user_name": u.user_name,
+                "display_name": u.display_name,
+                "email": u.email,
+                "active": u.active,
+            }
+            for u in ic_users
+        ],
+        "summary": {
+            "iam_user_count": len(iam_users),
+            "identity_center_user_count": len(ic_users),
+        },
+    }
+
+
 def _build_cloudtrail_event_snapshots(
     db: Session,
     account_id: uuid.UUID,
     since: datetime,
+    end: datetime,
+    *,
+    limit: int = _CLOUDTRAIL_EVENT_LIMIT,
 ) -> list[dict[str, Any]]:
     """Return significant CloudTrail write events as evidence snapshots for CC8.1."""
     events = db.scalars(
         select(CloudTrailEvent)
-        .where(CloudTrailEvent.account_id == account_id, CloudTrailEvent.event_time >= since)
+        .where(
+            CloudTrailEvent.account_id == account_id,
+            CloudTrailEvent.event_time >= since,
+            CloudTrailEvent.event_time <= end,
+        )
         .order_by(CloudTrailEvent.event_time.desc())
-        .limit(200)
+        .limit(limit)
     ).all()
     return [
         {
@@ -694,6 +824,28 @@ def _build_timeline_csv(rows: list[dict[str, Any]]) -> str:
     return buf.getvalue()
 
 
+def _build_checksum_manifest(
+    artifacts: list[tuple[str, bytes]],
+    *,
+    generated_at: datetime,
+    report_id: str,
+) -> str:
+    """SHA-256 per ZIP member (excluding this manifest file)."""
+    checksums = {
+        path: hashlib.sha256(data).hexdigest()
+        for path, data in artifacts
+        if path != "checksum_manifest.json"
+    }
+    body = {
+        "algorithm": "sha256",
+        "generated_at": generated_at.isoformat(),
+        "report_id": report_id,
+        "note": "checksum_manifest.json is not self-hashed; verify other files then validate JSON structure.",
+        "artifacts": checksums,
+    }
+    return json.dumps(body, indent=2)
+
+
 def _build_source_manifest(
     acc: AwsAccount,
     framework: str,
@@ -705,6 +857,10 @@ def _build_source_manifest(
     snap_by_type: dict[str, list[dict[str, Any]]],
     scan_runs: list[ScanRun],
     mapped_check_ids: set[str],
+    *,
+    coverage: dict[str, Any] | None = None,
+    report_id: str | None = None,
+    evidence_classes: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     integrations: list[dict[str, Any]] = [{
         "type": "aws",
@@ -724,9 +880,16 @@ def _build_source_manifest(
     successful_scans = [r for r in scan_runs if r.status == "ok"]
 
     return {
-        "pack_version": "2.0",
+        "pack_version": "2.1",
         "generated_at": generated_at.isoformat(),
+        "report_id": report_id,
         "framework": framework,
+        "evidence_class_labels": {
+            "benchmark": evidence_class_label("benchmark"),
+            "supporting": evidence_class_label("supporting"),
+            "hygiene": evidence_class_label("hygiene"),
+        },
+        "check_evidence_classes": evidence_classes or {},
         "audit_period": {
             "days": period_days,
             "start": since.isoformat(),
@@ -743,6 +906,7 @@ def _build_source_manifest(
             "evidence_snapshots_in_period": len(snapshots),
             "snapshot_types": snapshot_counts,
             "mapped_check_count": len(mapped_check_ids),
+            "evidence_coverage": coverage or {},
         },
         "artifacts": {
             "README.txt": "Start here — pack overview and auditor instructions",
@@ -752,6 +916,11 @@ def _build_source_manifest(
             "timeline.csv": "Chronological scan, finding, and exception events in audit period",
             "source_manifest.json": "This file — collection metadata and integration sources",
             "controls/": "Per-control folders with summary.json, findings.json, exceptions.json, snapshots.json",
+            "access_roster.json": "IAM + Identity Center user roster as of pack end date",
+            "evidence_coverage.json": "Days of scan data vs requested audit period",
+            "check_evidence_classes.json": "Per-check classification: benchmark | supporting | hygiene",
+            "checksum_manifest.json": "SHA-256 checksums for pack integrity verification",
+            "cis_benchmark_coverage.json": "CIS mapped-control matrix (CIS packs only)",
         },
         "auditor_note": (
             "Raw evidence is in controls/*/snapshots.json. Cross-reference timeline.csv "
@@ -778,7 +947,7 @@ def _build_readme(
         f"Account:     {acc.label} ({acc.account_id or 'unknown'})",
         f"Framework:   {framework.upper().replace('_', ' ')}",
         f"Period:      {since.date()} to {generated_at.date()} ({period_days} days)",
-        f"Generated:   {generated_at.strftime('%Y-%m-%d %H:%M UTC')}",
+        f"Generated:   {generated_at.strftime('%Y-%m-%d %H:%M UTC')} (as-of end of period)",
         "",
         "START HERE",
         "-" * 30,
@@ -787,6 +956,8 @@ def _build_readme(
         "3. Drill into controls/[ID]/ for raw JSON evidence per control.",
         "4. Use timeline.csv to show when findings opened, resolved, or were excepted.",
         "5. source_manifest.json lists integrations and snapshot counts collected.",
+        "6. access_roster.json — IAM + Identity Center users as of period end.",
+        "7. evidence_coverage.json — days of collected data vs requested period.",
         "",
         "SUMMARY",
         "-" * 30,
@@ -808,12 +979,24 @@ def _build_readme(
         "  summary.json       - status, status_note, exception_narratives",
         "  findings.json      - open findings mapped to this control",
         "  exceptions.json    - approved exceptions with approver + expiry",
-        "  snapshots.json     - raw collected evidence (last 50 entries)",
+        "  snapshots.json     - raw evidence (see snapshots_total in summary.json if truncated)",
         "",
         "EXCEPTIONS",
         "-" * 30,
         "Approved exceptions appear in exceptions.json and summary.json.",
         "Excepted findings do not cause a control to FAIL — see status_note.",
+        "",
+        "coverage_tier in INDEX.csv:",
+        "  core     — mapped checks align to common benchmark evidence",
+        "  extended — supports the control objective; not a prescriptive framework checklist item",
+        "  mixed    — both core and extended checks contribute to status",
+        "",
+        "check_evidence_classes.json:",
+        "  benchmark  — required mapped control evidence",
+        "  supporting — corroborating evidence (extended tier checks)",
+        "  hygiene    — optional cleanup checks (off by default)",
+        "",
+        "checksum_manifest.json lists SHA-256 hashes for every file except itself.",
         "",
         "NOTE: Evidence in snapshots.json is raw API data collected by",
         "Vigil during scans. Each entry includes a taken_at timestamp.",
@@ -826,12 +1009,21 @@ def _build_readme(
 def _build_index_csv(results: list[dict[str, Any]]) -> str:
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(["control_id", "title", "status", "open_findings", "exceptions", "status_note"])
+    writer.writerow([
+        "control_id",
+        "title",
+        "status",
+        "coverage_tier",
+        "open_findings",
+        "exceptions",
+        "status_note",
+    ])
     for r in results:
         writer.writerow([
             r["control_id"],
             r["title"],
             r["status"],
+            r.get("coverage_tier", "core"),
             r["finding_count"],
             r.get("exception_count", 0),
             r.get("status_note", ""),

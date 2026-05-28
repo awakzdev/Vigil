@@ -264,6 +264,52 @@ class Ec2Ami(Base):
     arn: Mapped[str] = mapped_column(String(512))
     name: Mapped[str | None] = mapped_column(String(256), nullable=True)
     is_public: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class GuardDutyFinding(Base):
+    __tablename__ = "guardduty_findings"
+    __table_args__ = (UniqueConstraint("account_id", "region", "finding_id", name="uq_guardduty_finding"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    finding_id: Mapped[str] = mapped_column(String(64))
+    finding_type: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    severity: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    resource_arn: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IdentityCenterUser(Base):
+    __tablename__ = "identity_center_users"
+    __table_args__ = (UniqueConstraint("account_id", "identity_store_id", "user_id", name="uq_identity_center_user"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    identity_store_id: Mapped[str] = mapped_column(String(64))
+    user_id: Mapped[str] = mapped_column(String(64))
+    user_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ConfigRuleCompliance(Base):
+    __tablename__ = "config_rule_compliance"
+    __table_args__ = (UniqueConstraint("account_id", "region", "rule_name", name="uq_config_rule_compliance"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    region: Mapped[str] = mapped_column(String(40))
+    rule_name: Mapped[str] = mapped_column(String(256))
+    compliance_type: Mapped[str] = mapped_column(String(40))
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

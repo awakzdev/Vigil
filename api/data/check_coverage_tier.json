@@ -1,0 +1,21 @@
+{
+  "guardduty.detector.not_enabled": "extended",
+  "guardduty.open_findings": "extended",
+  "aws.securityhub.not_enabled": "extended",
+  "ec2.instance.imdsv2_not_required": "extended",
+  "github.repo.no_env_protection": "extended",
+  "gitlab.repo.no_env_protection": "extended",
+  "github.repo.self_merge_allowed": "extended",
+  "gitlab.repo.self_merge_allowed": "extended",
+  "github.repo.insufficient_reviews": "extended",
+  "gitlab.repo.insufficient_reviews": "extended",
+  "lambda.function.no_dlq": "extended",
+  "lambda.function.deprecated_runtime": "extended",
+  "rds.instance.no_deletion_protection": "extended",
+  "rds.instance.no_multi_az": "extended",
+  "dynamodb.table.no_pitr": "extended",
+  "ec2.ami.aged": "extended",
+  "aws.config.rules_non_compliant": "extended",
+  "iam.access_inventory_gap": "extended",
+  "iam.role.external_account_trust": "extended"
+}

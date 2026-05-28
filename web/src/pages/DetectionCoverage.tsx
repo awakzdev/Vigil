@@ -17,7 +17,19 @@ type OptionalCheck = {
 
 type SettingsChecksData = {
   optional_checks: OptionalCheck[];
+  evidence_classes?: Record<string, string>;
+  cis_benchmark_coverage?: {
+    mapped_control_count: number;
+    cis_v5_level1_total: number;
+    disclaimer: string;
+  };
 };
+
+const EVIDENCE_CLASS_LEGEND = [
+  { id: "benchmark", label: "Required benchmark mapping", desc: "Mapped to SOC 2 / CIS / ISO controls; drives pass/fail." },
+  { id: "supporting", label: "Supporting evidence", desc: "Corroborates control objectives; extended-tier checks." },
+  { id: "hygiene", label: "Hygiene only", desc: "Optional cleanup; off by default; not in framework scoring." },
+] as const;
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
 
@@ -274,9 +286,29 @@ export default function DetectionCoverage() {
           <p className="mt-2 max-w-2xl text-sm text-zinc-500">
             Scanning domains, benchmark-backed checks, and optional hygiene capabilities for your cloud estate.
           </p>
+          {data?.cis_benchmark_coverage && (
+            <p className="mt-2 max-w-2xl rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+              CIS: {data.cis_benchmark_coverage.mapped_control_count} of{" "}
+              {data.cis_benchmark_coverage.cis_v5_level1_total} v5 Level 1 controls automated — curated subset, not
+              full benchmark parity. {data.cis_benchmark_coverage.disclaimer}
+            </p>
+          )}
         </div>
         <SaveIndicator status={saveStatus} error={saveError} />
       </div>
+
+      <section className="rounded-2xl border border-zinc-200/70 bg-white p-5 sm:p-6">
+        <h2 className="text-base font-bold text-zinc-900">Evidence classification</h2>
+        <p className="mt-1 text-sm text-zinc-500">Every check is labeled in exports and evidence packs as one of:</p>
+        <ul className="mt-4 grid gap-3 sm:grid-cols-3">
+          {EVIDENCE_CLASS_LEGEND.map((row) => (
+            <li key={row.id} className="rounded-xl border border-zinc-200/80 bg-zinc-50/50 px-3 py-3">
+              <p className="text-xs font-semibold text-zinc-900">{row.label}</p>
+              <p className="mt-1 text-[11px] leading-snug text-zinc-600">{row.desc}</p>
+            </li>
+          ))}
+        </ul>
+      </section>
 
       <div className="grid grid-cols-1 gap-5 md:grid-cols-2 md:gap-6">
         <div className="group relative overflow-hidden rounded-2xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50/50 via-white to-white p-6 shadow-sm shadow-emerald-950/[0.03] ring-1 ring-emerald-500/5 transition hover:border-emerald-300/70">
@@ -416,6 +448,7 @@ export default function DetectionCoverage() {
                 </div>
                 <p className="mt-1 text-xs leading-snug text-zinc-600">{check.summary}</p>
                 <p className="mt-2 font-mono text-[10px] text-zinc-400">{check.check_id}</p>
+                <p className="mt-1 text-[10px] font-medium text-zinc-500">Hygiene only</p>
                 {enabled && (
                   <p className="mt-2 text-[11px] text-sky-700/80">
                     Included in Findings and evidence on next scan.

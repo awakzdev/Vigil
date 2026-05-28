@@ -244,54 +244,154 @@ function CompactTokenField({ value, maxWidth = "max-w-xs" }: { value: string; ma
   );
 }
 
-function frameworkPillTone(score: number | null | undefined): string {
-  if (score == null) return "bg-zinc-100 text-zinc-500";
-  if (score >= 80) return "bg-emerald-50 text-emerald-800 ring-emerald-200/60";
-  if (score >= 40) return "bg-amber-50 text-amber-800 ring-amber-200/60";
-  return "bg-orange-50 text-orange-800 ring-orange-200/60";
+function postureBarTone(score: number): string {
+  if (score >= 80) return "bg-emerald-500";
+  if (score >= 40) return "bg-amber-500";
+  return "bg-orange-500";
 }
 
-function FrameworkScorePills({
+function frameworkScoreTextClass(score: number | null | undefined): string {
+  if (score == null) return "text-zinc-400";
+  if (score >= 80) return "text-emerald-700";
+  if (score >= 40) return "text-amber-700";
+  return "text-orange-600";
+}
+
+function complianceRingColor(score: number): { arc: string; text: string } {
+  if (score >= 80) return { arc: "text-emerald-500", text: "text-emerald-700" };
+  if (score >= 40) return { arc: "text-amber-400", text: "text-amber-700" };
+  return { arc: "text-orange-500", text: "text-orange-600" };
+}
+
+/** Donut only — no caption (used inside expanded security posture). */
+function ComplianceRingGraphic({ score, size = 46 }: { score: number | null; size?: number }) {
+  const strokeWidth = 3;
+  const radius = (size - strokeWidth) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  if (score == null) {
+    return (
+      <div
+        className="flex shrink-0 items-center justify-center rounded-full border border-dashed border-zinc-200/80 bg-zinc-50/50"
+        style={{ width: size, height: size }}
+      >
+        <span className="text-xs font-medium text-zinc-300">—</span>
+      </div>
+    );
+  }
+
+  const colors = complianceRingColor(score);
+  const offset = circumference - (score / 100) * circumference;
+
+  return (
+    <div className="relative shrink-0" style={{ width: size, height: size }} aria-hidden>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+          className="text-zinc-200/80"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          className={colors.arc}
+        />
+      </svg>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className={`text-sm font-semibold tabular-nums leading-none ${colors.text}`}>
+          {score}%
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function SecurityPostureDetail({
+  score,
   soc2,
   cis,
   iso,
   loading,
+  hasScanned,
 }: {
+  score: number | null;
   soc2: number | null | undefined;
   cis: number | null | undefined;
   iso: number | null | undefined;
   loading?: boolean;
+  hasScanned: boolean;
 }) {
-  const items = [
+  if (!hasScanned && !loading) {
+    return (
+      <p className="text-sm text-zinc-500">Run a scan to compute security posture.</p>
+    );
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-start gap-4" aria-hidden>
+        <div className="h-[46px] w-[46px] shrink-0 animate-pulse rounded-full bg-zinc-100" />
+        <div className="min-w-0 pt-0.5">
+          <div className="h-3.5 w-28 animate-pulse rounded bg-zinc-200/70" />
+          <div className="mt-2.5 h-2 w-56 max-w-full animate-pulse rounded-full bg-zinc-100" />
+          <div className="mt-2 h-3 w-52 animate-pulse rounded bg-zinc-100" />
+        </div>
+      </div>
+    );
+  }
+
+  const benchmarks = [
     { label: "SOC2", score: soc2 },
     { label: "CIS", score: cis },
     { label: "ISO", score: iso },
   ];
 
-  if (loading) {
-    return (
-      <div className="flex flex-wrap gap-2">
-        {items.map((item) => (
-          <span
-            key={item.label}
-            className="inline-flex h-7 w-16 animate-pulse rounded-md bg-zinc-200/70"
-          />
-        ))}
-      </div>
-    );
-  }
-
   return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((item) => (
-        <span
-          key={item.label}
-          className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium ring-1 ring-inset ${frameworkPillTone(item.score)}`}
-        >
-          <span>{item.label}</span>
-          <span className="tabular-nums">{item.score != null ? `${item.score}%` : "—"}</span>
-        </span>
-      ))}
+    <div
+      className="flex items-start gap-4"
+      role="group"
+      aria-label={score != null ? `Security posture ${score}% passing` : "Security posture"}
+    >
+      <ComplianceRingGraphic score={score} />
+      <div className="min-w-0 pt-0.5">
+        <p className="text-xs font-medium text-zinc-600">Security posture</p>
+        {score != null && (
+          <div
+            className="mt-2 h-2 w-56 max-w-full overflow-hidden rounded-full bg-zinc-100"
+            role="progressbar"
+            aria-valuenow={score}
+            aria-valuemin={0}
+            aria-valuemax={100}
+          >
+            <div
+              className={`h-full rounded-full transition-[width] duration-500 ${postureBarTone(score)}`}
+              style={{ width: `${score}%` }}
+            />
+          </div>
+        )}
+        <p className="mt-2 text-xs tabular-nums text-zinc-500">
+          {benchmarks.map((b, i) => (
+            <span key={b.label}>
+              {i > 0 && <span className="text-zinc-300"> · </span>}
+              <span className="text-zinc-500">{b.label} </span>
+              <span className={`font-medium ${frameworkScoreTextClass(b.score)}`}>
+                {b.score != null ? `${b.score}%` : "—"}
+              </span>
+            </span>
+          ))}
+        </p>
+      </div>
     </div>
   );
 }
@@ -316,6 +416,8 @@ function AccountDetailsPanel({
   soc2,
   cis,
   iso,
+  complianceAvg,
+  hasScanned,
   complianceLoading,
   isScanActive,
   scanError,
@@ -332,6 +434,8 @@ function AccountDetailsPanel({
   soc2: number | null | undefined;
   cis: number | null | undefined;
   iso: number | null | undefined;
+  complianceAvg: number | null;
+  hasScanned: boolean;
   complianceLoading: boolean;
   isScanActive: boolean;
   scanError: string | null;
@@ -408,14 +512,18 @@ function AccountDetailsPanel({
         </DetailCell>
       </div>
 
-      <div className="border-t border-zinc-200/40 px-4 py-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">Compliance</p>
-        <div className="mt-2">
-          <FrameworkScorePills soc2={soc2} cis={cis} iso={iso} loading={complianceLoading} />
-        </div>
+      <div className="border-t border-zinc-200/60 px-4 py-4">
+        <SecurityPostureDetail
+          score={complianceAvg}
+          soc2={soc2}
+          cis={cis}
+          iso={iso}
+          loading={complianceLoading}
+          hasScanned={hasScanned}
+        />
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200/40 px-4 py-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200/60 px-4 py-3">
         <div className="flex flex-wrap gap-1">
           <button type="button" onClick={onUpdateRole} disabled={isScanActive} className={ghostBtn}>
             Update IAM role
@@ -814,72 +922,6 @@ function buildStatsMap(items: Finding[] | undefined): Map<string, FindingStats> 
   return map;
 }
 
-function complianceRingColor(score: number): { arc: string; text: string } {
-  if (score >= 80) return { arc: "text-emerald-500", text: "text-emerald-700" };
-  if (score >= 40) return { arc: "text-amber-400", text: "text-amber-700" };
-  return { arc: "text-orange-500", text: "text-orange-600" };
-}
-
-function ComplianceRing({ score }: { score: number | null }) {
-  const size = 58;
-  const strokeWidth = 3;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-
-  if (score == null) {
-    return (
-      <div className="flex flex-col items-center gap-0.5">
-        <div
-          className="flex items-center justify-center rounded-full border border-dashed border-zinc-200/80 bg-zinc-50/50"
-          style={{ width: size, height: size }}
-        >
-          <span className="text-xs font-medium text-zinc-300">—</span>
-        </div>
-        <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Compliance</span>
-      </div>
-    );
-  }
-
-  const colors = complianceRingColor(score);
-  const offset = circumference - (score / 100) * circumference;
-
-  return (
-    <div className="flex flex-col items-center gap-0.5">
-      <div className="relative" style={{ width: size, height: size }}>
-        <svg width={size} height={size} className="-rotate-90" aria-hidden>
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={strokeWidth}
-            className="text-zinc-200/80"
-          />
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={radius}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={strokeWidth}
-            strokeDasharray={circumference}
-            strokeDashoffset={offset}
-            strokeLinecap="round"
-            className={colors.arc}
-          />
-        </svg>
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-0.5">
-          <span className={`text-sm font-semibold tabular-nums leading-none ${colors.text}`}>
-            {score}%
-          </span>
-        </div>
-      </div>
-      <span className="text-[10px] font-medium uppercase tracking-wider text-zinc-400">Compliance</span>
-    </div>
-  );
-}
-
 function ScanFreshnessBadge({
   iso,
   isScanActive,
@@ -1015,12 +1057,6 @@ function AccountCard({
           </div>
         </div>
 
-        {connected && hasScanned && (
-          <div className="hidden shrink-0 sm:block">
-            <ComplianceRing score={complianceAvg ?? null} />
-          </div>
-        )}
-
         <div className="flex shrink-0 items-center gap-2">
           {hasStats && stats && (
             <div className="hidden md:block">
@@ -1124,6 +1160,8 @@ function AccountCard({
                 soc2={soc2.data}
                 cis={cis.data}
                 iso={iso.data}
+                complianceAvg={complianceAvg}
+                hasScanned={hasScanned}
                 complianceLoading={complianceLoading}
                 isScanActive={isScanActive}
                 scanError={

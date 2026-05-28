@@ -110,6 +110,8 @@ Resources:
                 Action:
                   - guardduty:ListDetectors
                   - guardduty:GetDetector
+                  - guardduty:ListFindings
+                  - guardduty:GetFindings
                 Resource: "*"
 
               - Sid: SecurityHubConfiguration
@@ -150,6 +152,16 @@ Resources:
                   - config:DescribeConfigurationRecorders
                   - config:DescribeConfigurationRecorderStatus
                   - config:DescribeDeliveryChannels
+                  - config:DescribeComplianceByConfigRule
+                Resource: "*"
+
+              - Sid: IdentityCenterDirectory
+                Effect: Allow
+                Action:
+                  - sso:ListInstances
+                  - sso:DescribeInstance
+                  - identitystore:ListUsers
+                  - identitystore:DescribeUser
                 Resource: "*"
 
               - Sid: RdsConfiguration

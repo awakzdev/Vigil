@@ -100,6 +100,33 @@ def run_dormant_members(db: Session, account_id, provider_type: str, check_id: s
     return out
 
 
+def run_no_codeowners(db: Session, account_id, provider_type: str, check_id: str) -> list[FindingDraft]:
+    out: list[FindingDraft] = []
+    for provider in _providers_of_type(db, account_id, provider_type):
+        source = _source_label(provider)
+        repos = db.scalars(select(Repo).where(Repo.provider_id == provider.id)).all()
+        for repo in repos:
+            if repo.has_codeowners is not False:
+                continue
+            out.append(
+                FindingDraft(
+                    check_id=check_id,
+                    resource_arn=f"{provider_type}://{source}/{repo.name}",
+                    title=f"Repository `{repo.name}` has no CODEOWNERS file",
+                    severity="medium",
+                    risk_score=score("medium"),
+                    evidence={
+                        "provider_type": provider_type,
+                        "source": source,
+                        "repo": repo.name,
+                        "has_codeowners": False,
+                        "note": "Optional hygiene — not a mapped SOC 2/CIS/ISO control. Enable branch protection and required reviews for audit evidence.",
+                    },
+                )
+            )
+    return out
+
+
 def run_no_branch_protection(db: Session, account_id, provider_type: str, check_id: str) -> list[FindingDraft]:
     out: list[FindingDraft] = []
     for provider in _providers_of_type(db, account_id, provider_type):

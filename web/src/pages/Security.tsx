@@ -88,8 +88,8 @@ export default function Security() {
 
         <Section title="Network and infrastructure">
           <ul className="list-disc pl-5 space-y-1 text-zinc-400 text-sm">
-            <li>All traffic served over HTTPS (TLS 1.2+) via Caddy with automatic certificate renewal.</li>
-            <li>Scans are run from a dedicated Hetzner VPS in the EU (Falkenstein). Vigil communicates only with AWS control-plane endpoints (IAM, STS, S3, etc.) — all public HTTPS, no VPN or VPC peering required.</li>
+            <li>All production traffic is served over HTTPS (TLS 1.2+).</li>
+            <li>Vigil scans use read-only STS AssumeRole into your AWS account. Communication is only with AWS control-plane APIs (IAM, STS, S3, etc.) over public HTTPS — no VPN or VPC peering required.</li>
             <li>Database: Postgres 16, not publicly accessible, encrypted at rest.</li>
             <li>Nightly encrypted database backups to Backblaze B2.</li>
           </ul>

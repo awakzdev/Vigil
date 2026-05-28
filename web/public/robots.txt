@@ -1,0 +1,22 @@
+# Vigil — https://github.com/awakzdev/Vigil
+# Update Sitemap URL if production hostname changes.
+
+User-agent: *
+Allow: /login
+Allow: /security
+Allow: /llms.txt
+Allow: /robots.txt
+Allow: /sitemap.xml
+
+Disallow: /findings
+Disallow: /dashboard
+Disallow: /accounts
+Disallow: /account
+Disallow: /settings
+Disallow: /detection
+Disallow: /controls
+Disallow: /integrations
+Disallow: /timeline
+Disallow: /auth/
+
+Sitemap: https://vigil.cclab.cloud-castles.com/sitemap.xml

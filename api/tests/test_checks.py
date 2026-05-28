@@ -226,6 +226,43 @@ class TestWildcardAction:
         drafts = role_wildcard_action.run(mock_db, uuid.uuid4())
         assert drafts == []
 
+    def test_flags_action_star_without_resource_star(self, mock_db):
+        from app.checks import role_wildcard_action
+        acc_id = uuid.uuid4()
+        policy = {
+            "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "arn:aws:s3:::bucket/*"}]
+        }
+        r = _role(account_id=acc_id, inline_policies={"Broad": policy})
+        mock_db.scalars.return_value.all.return_value = [r]
+        drafts = role_wildcard_action.run(mock_db, acc_id)
+        assert len(drafts) == 1
+
+
+# --- iam.role.full_admin_policy ---
+
+
+class TestFullAdminPolicy:
+    def test_flags_action_and_resource_star(self, mock_db):
+        from app.checks import iam_role_full_admin
+        acc_id = uuid.uuid4()
+        policy = {"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+        r = _role(account_id=acc_id, inline_policies={"Admin": policy})
+        mock_db.scalars.return_value.all.return_value = [r]
+        drafts = iam_role_full_admin.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "iam.role.full_admin_policy"
+
+    def test_skips_action_star_scoped_resource(self, mock_db):
+        from app.checks import iam_role_full_admin
+        acc_id = uuid.uuid4()
+        policy = {
+            "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "arn:aws:s3:::bucket/*"}]
+        }
+        r = _role(account_id=acc_id, inline_policies={"S3Admin": policy})
+        mock_db.scalars.return_value.all.return_value = [r]
+        drafts = iam_role_full_admin.run(mock_db, acc_id)
+        assert drafts == []
+
 
 # helpers for new checks
 

@@ -12,5 +12,7 @@ def test_unattached_not_in_framework_map():
     assert frameworks_for_check("iam.policy.unattached") == []
 
 
-def test_optional_wildcard_not_in_framework_map():
-    assert frameworks_for_check("iam.policy.wildcard_resource") == []
+def test_wildcard_resource_in_framework_map():
+    fw = frameworks_for_check("iam.policy.wildcard_resource")
+    assert "soc2" in fw
+    assert "iso27001" in fw

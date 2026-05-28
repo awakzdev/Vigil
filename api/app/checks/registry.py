@@ -4,6 +4,7 @@ from app.checks import (
     github_org_outside_collaborators,
     github_repo_no_protection,
     github_repo_no_env_protection,
+    github_repo_no_codeowners,
     github_repo_self_merge,
     github_repo_insufficient_reviews,
     gitlab_org_mfa,
@@ -18,10 +19,14 @@ from app.checks import (
     cloudtrail_not_enabled,
     cloudtrail_no_log_validation,
     config_not_enabled,
+    aws_config_rules_non_compliant,
     ec2_ebs_encryption_default,
     ec2_ebs_volume_unencrypted,
     ec2_imdsv2_not_required,
     guardduty_not_enabled,
+    guardduty_open_findings,
+    iam_access_inventory_gap,
+    iam_role_external_trust,
     iam_access_key_unused,
     iam_password_policy_weak,
     iam_perm_granted_vs_used,
@@ -39,6 +44,7 @@ from app.checks import (
     role_unassumed_90d,
     role_unused_services,
     role_wildcard_action,
+    iam_role_full_admin,
     iam_policy_wildcard_resource,
     iam_policy_unattached,
     s3_account_public_access,
@@ -56,6 +62,7 @@ from app.checks import (
     ebs_snapshot_public,
     ebs_snapshot_unencrypted,
     ec2_ami_public,
+    ec2_ami_aged,
     cloudtrail_s3_bucket_public,
     cloudtrail_no_cloudwatch,
     cloudtrail_s3_no_logging,
@@ -91,9 +98,12 @@ ALL_CHECKS = [
     # IAM roles / policies
     role_unassumed_90d,
     role_wildcard_action,
+    iam_role_full_admin,
     iam_perm_granted_vs_used,
     iam_policy_wildcard_resource,
     iam_policy_unattached,
+    iam_role_external_trust,
+    iam_access_inventory_gap,
     role_unused_services,
     role_trust_wildcard,
     # S3
@@ -110,10 +120,12 @@ ALL_CHECKS = [
     cloudtrail_no_kms,
     # GuardDuty
     guardduty_not_enabled,
+    guardduty_open_findings,
     # Access Analyzer
     access_analyzer_not_enabled,
     # AWS Config
     config_not_enabled,
+    aws_config_rules_non_compliant,
     # Security Hub
     securityhub_not_enabled,
     # VPC
@@ -136,6 +148,7 @@ ALL_CHECKS = [
     github_org_outside_collaborators,
     github_repo_no_protection,
     github_repo_no_env_protection,
+    github_repo_no_codeowners,
     github_repo_self_merge,
     github_repo_insufficient_reviews,
     # GitLab identity
@@ -150,6 +163,7 @@ ALL_CHECKS = [
     ebs_snapshot_public,
     ebs_snapshot_unencrypted,
     ec2_ami_public,
+    ec2_ami_aged,
     cloudtrail_s3_bucket_public,
     cloudtrail_no_cloudwatch,
     cloudtrail_s3_no_logging,

@@ -15,13 +15,13 @@ Continuous cloud compliance evidence SaaS for startup engineering teams. Read-on
 - One AWS account per org in MVP (schema is multi-account ready)
 - Solo founder, Docker Compose, no microservices, no k8s
 - FastAPI + Postgres + Celery + React + Tailwind + TanStack Query
-- Hetzner VPS + Cloudflare + Caddy auto-TLS for prod
+- Production: your VPS/cloud + TLS reverse proxy (not prescribed in-repo)
 - Pricing: per-account monthly subscription + free trial
 
 ## Architecture
 
 ```
-caddy → api (FastAPI :8000)  →  postgres
+proxy → api (FastAPI :8000)  →  postgres
        → web (React :5173)        ↑
                                   ↓
                        worker (Celery + beat) ─→ sts:AssumeRole → customer AWS
@@ -43,7 +43,6 @@ api/
   migrations/   Alembic (0001_init has full schema)
 web/            React + Vite + Tailwind + TanStack Query
 infra/cfn/      hygiene-readonly-role.yaml (ExternalId + SecurityAudit + extras)
-caddy/          Caddyfile (prod profile)
 compose.yml
 README.md
 HANDOFF.md      detailed status + roadmap (read this for scope)
@@ -91,7 +90,7 @@ See HANDOFF.md for full roadmap.
 Immediate unblocked work:
 1. "What If" blast radius tab on IAM role findings (uses existing `iam_perm_usage` data — no new collectors needed)
 2. Throwaway AWS sandbox with seeded junk (test the full flow end-to-end)
-3. Hetzner deploy + domain + Caddy TLS + nightly pg_dump → B2
+3. Production deploy + nightly pg_dump backups
 
 ## Phase 2+ (not now)
 

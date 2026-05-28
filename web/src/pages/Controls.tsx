@@ -22,6 +22,11 @@ type ControlRow = {
   evidence_refs: string[];
   known_gaps: string[];
   check_ids: string[];
+  coverage_tier?: "core" | "extended" | "mixed" | "no_data";
+  coverage_label?: string | null;
+  extended_check_ids?: string[];
+  check_tiers?: Record<string, string>;
+  check_evidence_classes?: Record<string, string>;
   status: "pass" | "fail" | "no_data";
   finding_count: number;
   open_finding_ids: string[];
@@ -59,6 +64,15 @@ const AUDIT_WINDOWS = [
   { value: 180, label: "Last 180 days" },
   { value: 365, label: "Last 365 days" },
 ];
+
+type EvidenceCoverage = {
+  coverage_label: string;
+  coverage_ratio: number;
+  warning: string | null;
+  period_start: string;
+  period_end: string;
+  successful_scans_in_period: number;
+};
 
 type StatusFilter = "all" | "pass" | "fail" | "no_data";
 
@@ -316,7 +330,51 @@ function groupCheckIds(checkIds: string[]) {
   });
 }
 
-function MappedChecksList({ checkIds }: { checkIds: string[] }) {
+const EVIDENCE_CLASS_LABELS: Record<string, string> = {
+  benchmark: "Benchmark",
+  supporting: "Supporting",
+  hygiene: "Hygiene",
+};
+
+function EvidenceClassBadge({ evidenceClass }: { evidenceClass?: string }) {
+  if (!evidenceClass || evidenceClass === "benchmark") return null;
+  const label = EVIDENCE_CLASS_LABELS[evidenceClass] ?? evidenceClass;
+  const styles =
+    evidenceClass === "supporting"
+      ? "bg-sky-50 text-sky-800 ring-sky-200/70"
+      : "bg-zinc-100 text-zinc-600 ring-zinc-200/80";
+  return (
+    <span className={`inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-medium ring-1 ring-inset ${styles}`}>
+      {label}
+    </span>
+  );
+}
+
+function CoverageTierBadge({ tier, label }: { tier?: string; label?: string | null }) {
+  if (!tier || tier === "core" || tier === "no_data") return null;
+  const text = label ?? (tier === "extended" ? "Supports control objective" : "Core + extended");
+  return (
+    <span
+      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-medium ring-1 ring-inset ${
+        tier === "extended"
+          ? "bg-sky-50 text-sky-800 ring-sky-200/70"
+          : "bg-violet-50 text-violet-800 ring-violet-200/70"
+      }`}
+    >
+      {text}
+    </span>
+  );
+}
+
+function MappedChecksList({
+  checkIds,
+  checkTiers = {},
+  checkEvidenceClasses = {},
+}: {
+  checkIds: string[];
+  checkTiers?: Record<string, string>;
+  checkEvidenceClasses?: Record<string, string>;
+}) {
   const navigate = useNavigate();
   const grouped = useMemo(() => groupCheckIds(checkIds), [checkIds]);
 
@@ -344,6 +402,12 @@ function MappedChecksList({ checkIds }: { checkIds: string[] }) {
                         {labelForCheck(cid)}
                       </p>
                       <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500">{cid}</p>
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                        {checkTiers[cid] === "extended" && (
+                          <span className="text-[10px] font-medium text-sky-700">Supports control objective</span>
+                        )}
+                        <EvidenceClassBadge evidenceClass={checkEvidenceClasses[cid]} />
+                      </div>
                     </div>
                     <svg
                       className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition-colors group-hover:text-indigo-500"
@@ -773,6 +837,7 @@ export default function Controls() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
   const [period, setPeriod] = useState(90);
+  const [asOf, setAsOf] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [exportOpen, setExportOpen] = useState(false);
   const exportRef = useRef<HTMLDivElement>(null);
@@ -795,6 +860,15 @@ export default function Controls() {
     enabled: !accounts.isLoading,
   });
 
+  const cisCoverage = useQuery({
+    queryKey: ["benchmark-coverage", "cis_aws_l1"],
+    queryFn: () =>
+      api<{ mapped_control_count: number; cis_v5_level1_total: number }>(
+        "/v1/controls/benchmark-coverage/cis_aws_l1"
+      ),
+    enabled: framework === "cis_aws_l1",
+  });
+
   const openFindingsMeta = useQuery({
     queryKey: ["findings", "open", connectedAccount?.id, "controls-meta"],
     queryFn: () =>
@@ -808,6 +882,18 @@ export default function Controls() {
   });
 
   const findingMap = openFindingsMeta.data ?? new Map<string, OpenFindingMeta>();
+
+  const evidenceCoverage = useQuery({
+    queryKey: ["evidence-coverage", connectedAccount?.id, period, asOf],
+    queryFn: () => {
+      const params = new URLSearchParams({ period: String(period) });
+      if (asOf.trim()) params.set("as_of", asOf.trim());
+      return api<EvidenceCoverage>(
+        `/v1/accounts/${connectedAccount!.id}/evidence-coverage?${params}`
+      );
+    },
+    enabled: !!connectedAccount && exportOpen,
+  });
 
   useEffect(() => {
     if (!exportOpen) return;
@@ -859,10 +945,15 @@ export default function Controls() {
     setDownloading(true);
     try {
       const tok = token();
-      const res = await fetch(
-        `${BASE}/v1/exports/evidence-pack?framework=${framework}&account_id=${connectedAccount.id}&period=${period}`,
-        { headers: { Authorization: `Bearer ${tok}` } }
-      );
+      const params = new URLSearchParams({
+        framework,
+        account_id: connectedAccount.id,
+        period: String(period),
+      });
+      if (asOf.trim()) params.set("as_of", asOf.trim());
+      const res = await fetch(`${BASE}/v1/exports/evidence-pack?${params}`, {
+        headers: { Authorization: `Bearer ${tok}` },
+      });
       if (!res.ok) throw new Error(await res.text());
       const blob = await res.blob();
       const url = URL.createObjectURL(blob);
@@ -918,6 +1009,12 @@ export default function Controls() {
               <span className="text-zinc-400"> · {passed}/{total} controls passing</span>
             )}
           </p>
+          {framework === "cis_aws_l1" && cisCoverage.data && (
+            <p className="mt-2 max-w-2xl rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+              Automated coverage: {cisCoverage.data.mapped_control_count} of{" "}
+              {cisCoverage.data.cis_v5_level1_total} CIS AWS Foundations v5 Level 1 controls (curated subset).
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2">
           {connectedAccount && (
@@ -966,6 +1063,42 @@ export default function Controls() {
                       ))}
                     </select>
                   </div>
+                  <div className="mt-4">
+                    <label htmlFor="evidence-as-of" className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                      As of date (optional)
+                    </label>
+                    <input
+                      id="evidence-as-of"
+                      type="date"
+                      value={asOf}
+                      onChange={(e) => setAsOf(e.target.value)}
+                      max={new Date().toISOString().slice(0, 10)}
+                      className="mt-1.5 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
+                    />
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      End of audit period for Type II sampling. Leave blank for today (UTC).
+                    </p>
+                  </div>
+                  {evidenceCoverage.data && (
+                    <div
+                      className={`mt-4 rounded-xl border px-3 py-2.5 text-xs leading-relaxed ${
+                        evidenceCoverage.data.warning
+                          ? "border-amber-200/80 bg-amber-50/60 text-amber-900"
+                          : "border-emerald-200/70 bg-emerald-50/50 text-emerald-900"
+                      }`}
+                    >
+                      <p className="font-medium">
+                        Evidence coverage: {evidenceCoverage.data.coverage_label}
+                      </p>
+                      <p className="mt-0.5 text-[11px] opacity-90">
+                        {evidenceCoverage.data.successful_scans_in_period} successful scan
+                        {evidenceCoverage.data.successful_scans_in_period === 1 ? "" : "s"} in window
+                      </p>
+                      {evidenceCoverage.data.warning && (
+                        <p className="mt-1.5 text-[11px]">{evidenceCoverage.data.warning}</p>
+                      )}
+                    </div>
+                  )}
                   <button
                     onClick={downloadPack}
                     disabled={downloading}
@@ -1235,6 +1368,7 @@ export default function Controls() {
                               <span className="text-sm font-semibold leading-snug text-zinc-900">
                                 {shortControlTitle(ctrl.title)}
                               </span>
+                              <CoverageTierBadge tier={ctrl.coverage_tier} label={ctrl.coverage_label} />
                             </div>
                             <p className="mt-1 truncate text-xs text-zinc-500">{meta}</p>
                           </div>
@@ -1303,7 +1437,11 @@ export default function Controls() {
 
                             {ctrl.check_ids.length > 0 && (
                               <div className="mt-4">
-                                <MappedChecksList checkIds={ctrl.check_ids} />
+                                <MappedChecksList
+                                  checkIds={ctrl.check_ids}
+                                  checkTiers={ctrl.check_tiers}
+                                  checkEvidenceClasses={ctrl.check_evidence_classes}
+                                />
                               </div>
                             )}
 

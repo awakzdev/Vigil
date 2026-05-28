@@ -27,3 +27,10 @@ def is_sso_reserved_role(arn: str, name: str | None = None) -> bool:
 def is_operational_check_excluded_role(arn: str, name: str | None = None) -> bool:
     """Roles to skip for usage/orphan hygiene checks."""
     return is_service_linked_role(arn) or is_sso_reserved_role(arn, name)
+
+
+def is_vigil_integration_role(name: str | None) -> bool:
+    """Cross-account trust to Vigil's control-plane principal is required for scanning."""
+    if not name:
+        return False
+    return name == "VigilReadOnly" or name.startswith("Vigil")

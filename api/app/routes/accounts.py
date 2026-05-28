@@ -21,6 +21,7 @@ from app.core.iam_usage import (
 )
 from app.core.security import current_principal
 from app.services.blast_radius_identity import blast_radius_identity
+from app.services.evidence_coverage import compute_evidence_coverage, parse_as_of
 from app.services.s3_https_policy import build_https_policy_suggestion
 from app.services.compliance_timeline import build_compliance_timeline
 from app.services.evidence_diff import build_evidence_diff
@@ -120,6 +121,22 @@ def create_account(body: AccountIn, p=Depends(current_principal), db: Session = 
 def list_accounts(p=Depends(current_principal), db: Session = Depends(get_db)):
     rows = db.scalars(select(AwsAccount).where(AwsAccount.org_id == uuid.UUID(p["org_id"]))).all()
     return [_account_out(a) for a in rows]
+
+
+@router.get("/{account_id}/evidence-coverage")
+def evidence_coverage(
+    account_id: str,
+    period: int = Query(default=90, ge=7, le=365),
+    as_of: str | None = Query(default=None, description="End of audit period (YYYY-MM-DD)"),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    end = parse_as_of(as_of) or datetime.now(timezone.utc)
+    since = end - timedelta(days=period)
+    return compute_evidence_coverage(db, acc.id, since, end, period)
 
 
 @router.post("/{account_id}/verify", response_model=AccountOut)
@@ -670,7 +687,16 @@ def blast_radius(
         warnings = []
         if recently_active_keys:
             for k in recently_active_keys:
-                warnings.append(f"Access key {k['key_id']} used {k['days_ago']} days ago via {k['last_used_service'] or 'unknown'} — deactivate keys before disabling user")
+                if check_id == "iam.user.no_mfa":
+                    warnings.append(
+                        f"Access key {k['key_id']} had API activity {k['days_ago']} days ago via "
+                        f"{k['last_used_service'] or 'unknown'} — enabling MFA does not change keys; rotate separately if needed"
+                    )
+                else:
+                    warnings.append(
+                        f"Access key {k['key_id']} used {k['days_ago']} days ago via "
+                        f"{k['last_used_service'] or 'unknown'} — deactivate keys before disabling user"
+                    )
 
         return {
             "resource_type": "iam_user",

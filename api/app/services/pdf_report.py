@@ -1165,6 +1165,7 @@ def build_pdf(
     since: datetime | None = None,
     evidence_sources: list[str] | None = None,
     report_id: str | None = None,
+    benchmark_coverage: dict[str, Any] | None = None,
 ) -> bytes:
     rid = report_id or "SAMPLE"
     fw_short = _FRAMEWORK_SHORT.get(framework, framework.upper())
@@ -1186,18 +1187,24 @@ def build_pdf(
         _FRAMEWORK_LABELS.get(framework, framework.upper()),
     )
 
-    _draw_meta_card(
-        pdf,
-        [
-            ("Account", f"{_s(acc.label)} ({acc.account_id or 'unknown'})"),
-            ("Audit period", f"{period_start} to {period_end} ({period_days} days)"),
-            ("Generated", generated_at.strftime("%Y-%m-%d %H:%M UTC")),
-            ("Report ID", rid),
-            ("Evidence sources", sources_display),
-            ("Collection mode", "Read-only API collection"),
-        ],
-        compact=True,
-    )
+    meta_rows = [
+        ("Account", f"{_s(acc.label)} ({acc.account_id or 'unknown'})"),
+        ("Audit period", f"{period_start} to {period_end} ({period_days} days)"),
+        ("Generated", generated_at.strftime("%Y-%m-%d %H:%M UTC")),
+        ("Report ID", rid),
+        ("Evidence sources", sources_display),
+        ("Collection mode", "Read-only API collection"),
+    ]
+    if benchmark_coverage:
+        mapped = benchmark_coverage.get("mapped_control_count", "?")
+        total = benchmark_coverage.get("cis_v5_level1_total", "?")
+        meta_rows.append(
+            (
+                "CIS coverage",
+                f"{mapped} of {total} CIS v5 Level 1 controls automated (curated subset)",
+            )
+        )
+    _draw_meta_card(pdf, meta_rows, compact=True)
 
     passed = sum(1 for r in control_results if r["status"] == "pass")
     failed = sum(1 for r in control_results if r["status"] == "fail")

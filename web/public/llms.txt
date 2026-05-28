@@ -1,0 +1,39 @@
+# Vigil
+
+> Continuous SOC 2 / CIS / ISO 27001 evidence automation for AWS (+ GitHub/GitLab). Read-only scans, auditor-ready ZIP exports — not a GRC suite or CSPM.
+
+## Summary
+
+Vigil connects to a customer AWS account via a CloudFormation read-only IAM role (STS AssumeRole + ExternalId). A daily Celery worker collects IAM, S3, KMS, CloudTrail, EC2, RDS, and related configuration, runs mapped compliance checks, and stores timestamped evidence snapshots. Customers review findings, document exceptions, and download evidence packs (JSON, CSV, PDF, ZIP) mapped to SOC 2 CC6/CC7/CC8, a curated subset of CIS AWS Foundations controls, and ISO 27001 Annex A.
+
+Vigil does **not** replace Vanta/Drata (no HR, MDM, policies). It does **not** write to customer AWS accounts.
+
+## Key differentiator
+
+**What If / blast radius:** before remediating IAM or network findings, engineers see dependency and usage context (e.g. IAM Access Advisor, trust policies, recent key use).
+
+## Evidence classification
+
+Each check is labeled **benchmark** (mapped control evidence), **supporting** (extended corroboration), or **hygiene** (optional, off by default — e.g. unattached policies, CODEOWNERS).
+
+## Honest CIS scope
+
+~24 CIS AWS Foundations controls automated; CIS v5 Level 1 defines 40 — not full benchmark parity. See `cis_benchmark_coverage.json` in CIS evidence packs.
+
+## Repository
+
+- Source: https://github.com/awakzdev/Vigil
+- API: FastAPI, Postgres, Celery, Redis
+- Web: React, Vite, TanStack Query
+- Docs: README.md, HANDOFF.md (operator handoff for contributors)
+
+## Public pages
+
+- /login — sign in
+- /security — security overview for customers
+
+Authenticated app routes (/findings, /controls, /accounts, etc.) are not intended for indexing.
+
+## Contact / licensing
+
+Source closed. Product inquiries via repository owner.

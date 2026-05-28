@@ -14,7 +14,15 @@ from app.models import Finding, AwsAccount, EvidenceSnapshot
 from app.models.control import Control, CheckControl
 from app.models.org import Org
 from app.services.check_settings import hidden_check_ids
+from app.services.check_coverage import (
+    control_coverage_tier,
+    extended_checks_in_list,
+    tier_display_label,
+    tier_for_check,
+)
+from app.services.check_evidence import all_evidence_classes, evidence_class_for_check
 from app.services.check_frameworks import check_framework_map, framework_catalog
+from app.services.cis_benchmark_coverage import cis_benchmark_coverage
 from app.services.compliance_timeline import build_control_history
 
 router = APIRouter()
@@ -35,6 +43,11 @@ class ControlOut(BaseModel):
     evidence_refs: list[str] = []
     known_gaps: list[str] = []
     check_ids: list[str]
+    coverage_tier: str = "core"  # core | extended | mixed | no_data
+    coverage_label: str | None = None
+    extended_check_ids: list[str] = []
+    check_tiers: dict[str, str] = {}
+    check_evidence_classes: dict[str, str] = {}
     status: str          # pass | fail | no_data
     finding_count: int
     open_finding_ids: list[str]
@@ -43,14 +56,32 @@ class ControlOut(BaseModel):
 class CheckFrameworksOut(BaseModel):
     frameworks: list[dict[str, str]]
     checks: dict[str, list[str]]
+    coverage_tiers: dict[str, str] = {}
+    evidence_classes: dict[str, str] = {}
+    evidence_class_labels: dict[str, str] = {}
+    cis_benchmark_coverage: dict | None = None
 
 
 @router.get("/check-frameworks", response_model=CheckFrameworksOut)
 def get_check_frameworks(p=Depends(current_principal)):
+    from app.services.check_evidence import CLASS_LABELS
+    from app.services.check_coverage import check_coverage_tier_map
+
     return CheckFrameworksOut(
         frameworks=framework_catalog(),
         checks=check_framework_map(),
+        coverage_tiers=check_coverage_tier_map(),
+        evidence_classes=all_evidence_classes(),
+        evidence_class_labels=CLASS_LABELS,
+        cis_benchmark_coverage=cis_benchmark_coverage(),
     )
+
+
+@router.get("/benchmark-coverage/{framework}")
+def benchmark_coverage(framework: str, p=Depends(current_principal)):
+    if framework == "cis_aws_l1":
+        return cis_benchmark_coverage()
+    raise HTTPException(status.HTTP_404_NOT_FOUND, "No coverage matrix for this framework")
 
 
 @router.get("", response_model=list[ControlOut])
@@ -124,6 +155,8 @@ def list_controls(
             ctrl_status = "no_data"
 
         detail = narrative_detail_for(ctrl.framework, ctrl.control_id, check_ids)
+        cov_tier = control_coverage_tier(check_ids)
+        ext_ids = extended_checks_in_list(check_ids)
         result.append(
             ControlOut(
                 id=str(ctrl.id),
@@ -138,6 +171,11 @@ def list_controls(
                 evidence_refs=list(detail.get("evidence_refs") or []),
                 known_gaps=list(detail.get("known_gaps") or []),
                 check_ids=check_ids,
+                coverage_tier=cov_tier,
+                coverage_label=tier_display_label(cov_tier),
+                extended_check_ids=ext_ids,
+                check_tiers={cid: tier_for_check(cid) for cid in check_ids},
+                check_evidence_classes={cid: evidence_class_for_check(cid) for cid in check_ids},
                 status=ctrl_status,
                 finding_count=len(hits),
                 open_finding_ids=[str(f.id) for f in hits],

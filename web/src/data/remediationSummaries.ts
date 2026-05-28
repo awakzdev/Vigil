@@ -292,9 +292,14 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     fix: "Enable Security Hub and FSBP standard.",
   },
   "ec2.security_group.default_allows_traffic": {
-    impact: "Default security group has active rules.",
-    risk: "Unconfigured resources inherit open traffic.",
-    fix: "Clear default SG rules; use named groups.",
+    impact: "VPC default security group has inbound or outbound rules.",
+    risk: "Resources launched without an explicit SG inherit those rules.",
+    fix: "Delete rules on the default SG; use named SGs on instances.",
+  },
+  "iam.role.external_account_trust": {
+    impact: "Role trust policy allows another AWS account to assume it.",
+    risk: "External account can use this role's permissions in your account.",
+    fix: "Review trust policy; remove unapproved cross-account principals.",
   },
   "ec2.instance.imdsv2_not_required": {
     impact: "IMDSv1 still allowed on instance.",

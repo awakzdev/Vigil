@@ -191,6 +191,7 @@ def collect_ec2(db: Session, account: AwsAccount) -> dict:
                 for image in page.get("Images", []):
                     image_id = image["ImageId"]
                     arn = f"arn:aws:ec2:{region}:{account.account_id or 'unknown'}:image/{image_id}"
+                    created = image.get("CreationDate")
                     stmt = pg_insert(Ec2Ami).values(
                         id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:{region}:{image_id}"),
                         account_id=account.id,
@@ -199,12 +200,14 @@ def collect_ec2(db: Session, account: AwsAccount) -> dict:
                         arn=arn,
                         name=image.get("Name"),
                         is_public=image.get("Public", False),
+                        created_at=created,
                         last_seen=_now(),
                     ).on_conflict_do_update(
                         index_elements=["account_id", "region", "image_id"],
                         set_={
                             "name": image.get("Name"),
                             "is_public": image.get("Public", False),
+                            "created_at": created,
                             "last_seen": _now(),
                         },
                     )

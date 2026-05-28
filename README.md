@@ -2,7 +2,7 @@
 
 **Continuous SOC2 CC6/CC7 and CIS evidence automation for engineering teams.**
 
-Connect AWS, GitHub, or GitLab. Vigil scans daily, maps every finding to SOC2 CC6/CC7, CIS AWS L1, and ISO 27001 controls, and produces auditor-ready evidence packs — JSON, CSV, and PDF — on demand.
+Connect AWS, GitHub, or GitLab. Vigil scans daily, maps findings to SOC2 CC6/CC7, a curated subset of CIS AWS Foundations controls, and ISO 27001 Annex A, and produces auditor-ready evidence packs — JSON, CSV, and PDF — on demand.
 
 Built for engineering-led startups heading into their first SOC2 Type 2 audit who don't want to pay $10k–80k/yr for Vanta or spend weeks doing it manually with Prowler screenshots.
 
@@ -16,7 +16,7 @@ Vigil is a **continuous compliance evidence platform** — not a CSPM, not a com
 
 | What Vigil does | What Vigil does not do |
 |---|---|
-| Automates SOC2 CC6/CC7, CIS AWS L1, ISO 27001 evidence | Replace Vanta/Drata (no HR/MDM/vendor/policy) |
+| Automates SOC2 CC6/CC7, selected CIS AWS controls, ISO 27001 evidence | Replace Vanta/Drata (no HR/MDM/vendor/policy) |
 | Produces timestamped, auditor-ready evidence packs | Compete with Wiz/Prisma on scan breadth |
 | Correlates AWS + GitHub/GitLab into a change timeline | Write to your AWS account (read-only, always) |
 | Shows blast radius before you remediate a finding | Generate AI summaries in evidence outputs |
@@ -30,7 +30,7 @@ Vigil is a **continuous compliance evidence platform** — not a CSPM, not a com
 Your browser
      │
      ▼
-  Caddy (reverse proxy, prod only)
+  Reverse proxy (prod)
      ├──▶ API   (FastAPI :8000)  ──▶ Postgres
      └──▶ Web   (React :5173)
                                        ▲
@@ -144,7 +144,7 @@ vigil-evidence-soc2-2026-05-26.zip
 | Framework | Controls |
 |---|---|
 | SOC2 TSC (CC6, CC7, CC8) | CC6.1 – CC6.8, CC7.1 – CC7.2, CC8.1 |
-| CIS AWS Foundations L1 | 1.4 – 3.8 |
+| CIS AWS Foundations (selected) | ~22 mapped controls (e.g. 1.4–3.8); not full CIS v5 benchmark parity |
 | ISO 27001 Annex A | A.9, A.10, A.12, A.13 |
 
 ---
@@ -205,7 +205,6 @@ api/
   migrations/     Alembic (0001 → 0022)
 web/              React + Vite + Tailwind + TanStack Query
 infra/cfn/        hygiene-readonly-role.yaml
-caddy/            Caddyfile (prod profile)
 compose.yml
 ```
 
@@ -217,6 +216,47 @@ compose.yml
 - GitHub OAuth (login + connect for evidence)
 - Google OAuth (login)
 - JWT access tokens (24h) + refresh tokens (30d, auto-retry on 401)
+
+---
+
+## Release readiness
+
+Shipped in-repo (narrow technical / design-partner launch):
+
+| Item | Status |
+|------|--------|
+| **Evidence classification** | `benchmark` / `supporting` / `hygiene` on checks; `check_evidence_classes.json` in ZIP; Detection coverage legend |
+| **Root pass-state snapshots** | `account_summary` entity per scan (`GetAccountSummary` for `iam.root.*`) |
+| **CIS honesty** | `cis_benchmark_coverage.json` in CIS packs; PDF meta shows mapped vs CIS v5 L1 total (40) |
+| **Pack integrity** | `checksum_manifest.json` — SHA-256 per artifact (manifest not self-hashed) |
+| **CI** | `.github/workflows/ci.yml` — Postgres + Redis + `pytest` on push/PR |
+
+Still manual / planned (not blockers for first design partners):
+
+| Item | Notes |
+|------|--------|
+| **Long-term evidence vault** | Optional WORM/S3 Object Lock bucket so exports cannot be altered after upload — not built in; use your own archive + periodic ZIP exports today |
+| **Cryptographic pack signing** | Checksums detect accidental edits; signing (e.g. Sigstore) proves who produced a pack — checksums only for now |
+| **Full CIS v5 parity** | ~24 of 40 CIS v5 Level 1 controls automated; expanding coverage is roadmap, not a hidden claim |
+| **Control copy template** | Standardize Controls UI blocks: objective → collected → period → findings → exceptions → manual gaps |
+| **Narrative audit automation** | Script: narrative sentence ↔ `check_id` / snapshot type registry |
+| **Production deploy** | Your hosting choice + nightly DB backups + secrets rotation |
+
+**Ops hygiene:** Never distribute repo archives with `.env` / `.env.prod`. Use `git archive` or CI artifacts. Rotate any secret that ever appeared in a shared ZIP.
+
+---
+
+## Public site files (`web/public/`)
+
+Served at the web app root (Vite `public/`):
+
+| File | Purpose |
+|------|---------|
+| `llms.txt` | Product summary for LLM crawlers |
+| `robots.txt` | Crawl rules (app routes disallowed; `/login`, `/security` allowed) |
+| `sitemap.xml` | Public URLs only — update `SITE_BASE` in file when the production hostname changes |
+
+Default canonical host in sitemap: `https://vigil.cclab.cloud-castles.com`.
 
 ---
 

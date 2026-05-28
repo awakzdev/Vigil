@@ -1,3 +1,4 @@
+"""CIS 1.22 — customer-managed policies with Action:* and Resource:* (full admin)."""
 from __future__ import annotations
 
 from sqlalchemy import select
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.checks.base import FindingDraft, score
 from app.models import IamRole
 
-CHECK_ID = "iam.role.wildcard_action"
+CHECK_ID = "iam.role.full_admin_policy"
 
 
 def run(db: Session, account_id) -> list[FindingDraft]:
@@ -17,15 +18,15 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             continue
         inline_flagged = []
         for pname, doc in (r.inline_policies or {}).items():
-            if _has_wildcard_action(doc):
+            if _has_full_admin_allow(doc):
                 inline_flagged.append(pname)
 
         attached_flagged = []
         for pol in (r.attached_policies or []):
             if pol.get("policy_type") == "aws_managed":
-                continue  # AWS managed wildcards are expected (e.g. AdministratorAccess)
+                continue
             stmts = pol.get("statements", [])
-            if _has_wildcard_action({"Statement": stmts}):
+            if _has_full_admin_allow({"Statement": stmts}):
                 attached_flagged.append(pol["policy_name"])
 
         if inline_flagged or attached_flagged:
@@ -38,13 +39,13 @@ def run(db: Session, account_id) -> list[FindingDraft]:
                 FindingDraft(
                     check_id=CHECK_ID,
                     resource_arn=r.arn,
-                    title=f"Role `{r.name}` has wildcard Action in a policy (not necessarily full admin)",
+                    title=f"Role `{r.name}` has full-admin policy (Action:* and Resource:*)",
                     severity="high",
                     risk_score=score("high", admin=True),
                     evidence={
                         "role_arn": r.arn,
-                        "inline_policies_with_wildcard": inline_flagged,
-                        "attached_policies_with_wildcard": attached_flagged,
+                        "inline_policies_full_admin": inline_flagged,
+                        "attached_policies_full_admin": attached_flagged,
                         "sources": sources,
                     },
                 )
@@ -52,13 +53,18 @@ def run(db: Session, account_id) -> list[FindingDraft]:
     return out
 
 
-def _has_wildcard_action(doc: dict) -> bool:
+def _has_full_admin_allow(doc: dict) -> bool:
     for stmt in doc.get("Statement", []):
         if stmt.get("Effect") != "Allow":
             continue
         action = stmt.get("Action", [])
         if isinstance(action, str):
             action = [action]
-        if "*" in action:
+        if "*" not in action:
+            continue
+        resource = stmt.get("Resource", [])
+        if isinstance(resource, str):
+            resource = [resource]
+        if "*" in resource:
             return True
     return False

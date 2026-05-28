@@ -16,6 +16,9 @@ from app.collectors.account import collect_s3, collect_s3_account_public_access_
 from app.collectors.cloudtrail import collect_cloudtrail
 from app.collectors.cloudtrail_events import collect_cloudtrail_events
 from app.collectors.guardduty import collect_guardduty
+from app.collectors.guardduty_findings import collect_guardduty_findings
+from app.collectors.identity_center import collect_identity_center
+from app.collectors.config_compliance import collect_config_compliance
 from app.collectors.vpc import collect_vpc
 from app.collectors.rds import collect_rds
 from app.collectors.ec2 import collect_ec2
@@ -32,6 +35,7 @@ from app.collectors.extended import (
 from app.collectors.access_analyzer import collect_access_analyzer
 from app.collectors.config_service import collect_config_service
 from app.collectors.securityhub import collect_securityhub
+from app.core.aws import assume_role
 from app.core.db import SessionLocal
 from app.models import AssumeRoleAudit, AwsAccount, ScanRun, EvidenceSnapshot, Finding
 from app.models.iam import IamUser, IamAccessKey, IamRole
@@ -48,6 +52,9 @@ from app.models.resources import (
     Ec2Instance,
     ElbLoadBalancer,
     GuardDutyDetector,
+    GuardDutyFinding,
+    IdentityCenterUser,
+    ConfigRuleCompliance,
     IamPasswordPolicy,
     KmsKey,
     LambdaFunction,
@@ -74,6 +81,7 @@ _COLLECTOR_FOR_CHECK = {
     "kms.": lambda db, acc: collect_kms(db, acc),
     "cloudtrail.": lambda db, acc: collect_cloudtrail(db, acc),
     "guardduty.": lambda db, acc: collect_guardduty(db, acc),
+    "aws.identity": lambda db, acc: collect_identity_center(db, acc),
     "aws.access_analyzer.": lambda db, acc: collect_access_analyzer(db, acc),
     "aws.config.": lambda db, acc: collect_config_service(db, acc),
     "aws.securityhub.": lambda db, acc: collect_securityhub(db, acc),
@@ -100,6 +108,35 @@ log = structlog.get_logger()
 def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
     """Snapshot all collected entities for this scan run into evidence_snapshots."""
     snaps = []
+
+    if acc.role_arn and acc.external_id:
+        try:
+            sess = assume_role(
+                acc.role_arn,
+                acc.external_id,
+                session_name="vigil-account-summary",
+                aws_account=acc,
+                purpose="evidence_snapshot_account_summary",
+            )
+            summary_map = sess.client("iam").get_account_summary()["SummaryMap"]
+            snaps.append(
+                EvidenceSnapshot(
+                    id=uuid.uuid4(),
+                    scan_run_id=run.id,
+                    account_id=acc.id,
+                    org_id=acc.org_id,
+                    entity_type="account_summary",
+                    entity_id=f"arn:aws:iam::{acc.account_id}:root",
+                    payload_json={
+                        "account_id": acc.account_id,
+                        "account_mfa_enabled": bool(summary_map.get("AccountMFAEnabled")),
+                        "account_access_keys_present": int(summary_map.get("AccountAccessKeysPresent", 0)),
+                        "summary_map": {k: int(v) for k, v in summary_map.items()},
+                    },
+                )
+            )
+        except Exception:  # noqa: BLE001
+            log.warning("snapshot.account_summary_failed", account_id=str(acc.id))
 
     # IAM users
     for u in db.scalars(select(IamUser).where(IamUser.account_id == acc.id)).all():
@@ -439,6 +476,57 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
                 "region": ami.region,
                 "name": ami.name,
                 "is_public": ami.is_public,
+                "created_at": ami.created_at.isoformat() if ami.created_at else None,
+            },
+        ))
+
+    for gf in db.scalars(select(GuardDutyFinding).where(GuardDutyFinding.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="guardduty_finding",
+            entity_id=f"{gf.region}:{gf.finding_id}",
+            payload_json={
+                "region": gf.region,
+                "finding_id": gf.finding_id,
+                "severity": gf.severity,
+                "title": gf.title,
+                "finding_type": gf.finding_type,
+                "archived": gf.archived,
+            },
+        ))
+
+    for ic in db.scalars(select(IdentityCenterUser).where(IdentityCenterUser.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="identity_center_user",
+            entity_id=f"{ic.identity_store_id}:{ic.user_id}",
+            payload_json={
+                "user_id": ic.user_id,
+                "user_name": ic.user_name,
+                "display_name": ic.display_name,
+                "email": ic.email,
+                "active": ic.active,
+            },
+        ))
+
+    for rule in db.scalars(select(ConfigRuleCompliance).where(ConfigRuleCompliance.account_id == acc.id)).all():
+        snaps.append(EvidenceSnapshot(
+            id=uuid.uuid4(),
+            scan_run_id=run.id,
+            account_id=acc.id,
+            org_id=acc.org_id,
+            entity_type="config_rule_compliance",
+            entity_id=f"{rule.region}:{rule.rule_name}",
+            payload_json={
+                "region": rule.region,
+                "rule_name": rule.rule_name,
+                "compliance_type": rule.compliance_type,
             },
         ))
 
@@ -618,7 +706,7 @@ def run_scan(account_id: str) -> dict:
     try:
         stats: dict = {}
 
-        _TOTAL_STEPS = 23  # 21 collectors + checks + snapshots
+        _TOTAL_STEPS = 26  # collectors + checks + snapshots
         _step_counter = 0
 
         def _step(name: str, fn):
@@ -643,6 +731,8 @@ def run_scan(account_id: str) -> dict:
         stats["vpcs"] = vpc_stats.get("vpcs", 0)
         stats["security_groups"] = vpc_stats.get("security_groups", 0)
         stats["guardduty_detectors"] = _step("collect_guardduty", lambda: collect_guardduty(db, acc))
+        stats["guardduty_findings"] = _step("collect_guardduty_findings", lambda: collect_guardduty_findings(db, acc))
+        stats["identity_center_users"] = _step("collect_identity_center", lambda: collect_identity_center(db, acc))
         stats["rds_instances"] = _step("collect_rds", lambda: collect_rds(db, acc))
         ec2_stats = _step("collect_ec2", lambda: collect_ec2(db, acc))
         stats["ec2_instances"] = ec2_stats.get("instances", 0)
@@ -660,6 +750,7 @@ def run_scan(account_id: str) -> dict:
         stats["sqs_queues"] = _step("collect_sqs", lambda: collect_sqs(db, acc))
         stats["access_analyzers"] = _step("collect_access_analyzer", lambda: collect_access_analyzer(db, acc))
         stats["config_regions"] = _step("collect_config_service", lambda: collect_config_service(db, acc))
+        stats["config_rule_compliance"] = _step("collect_config_compliance", lambda: collect_config_compliance(db, acc))
         stats["securityhub_regions"] = _step("collect_securityhub", lambda: collect_securityhub(db, acc))
 
         step = "load_check_config"

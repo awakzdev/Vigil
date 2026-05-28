@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import AwsAccount
+from app.services.evidence_coverage import parse_as_of
 from app.services.evidence_pack import build_evidence_pack
 
 router = APIRouter()
@@ -20,6 +21,7 @@ def download_evidence_pack(
     framework: str = Query(...),
     account_id: str = Query(...),
     period: int = Query(default=90, ge=7, le=365),
+    as_of: str | None = Query(default=None, description="End of audit period (YYYY-MM-DD). Defaults to today UTC."),
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
@@ -37,6 +39,7 @@ def download_evidence_pack(
             account_id=acc.id,
             framework=framework,
             period_days=period,
+            as_of=parse_as_of(as_of),
         )
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)) from exc

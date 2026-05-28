@@ -1,6 +1,18 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-27 (session 22)_
+_Last updated: 2026-05-28 (session 26 release-readiness + drawer docs)_
+
+---
+
+## Session 26 (2026-05-28) — shipped
+
+- **Release readiness:** `evidence_class` (benchmark / supporting / hygiene), `account_summary` snapshots for `iam.root.*`, CIS coverage matrix in packs/PDF, `checksum_manifest.json`, GitHub Actions CI (`.github/workflows/ci.yml`).
+- **Optional check:** `github.repo.no_codeowners` (off by default, not framework-mapped).
+- **Audit Q2/Q3:** Identity Center, GuardDuty findings, Config rule compliance, AMI age, external trust, `iam.role.full_admin_policy`; migration `0030`.
+- **Drawer docs:** `web/src/data/checkDocumentation.ts` — per-check “what Vigil checks” + “why flagged” on Overview/Remediation (default SG, external trust, MFA so far).
+- **External trust:** skip `VigilReadOnly` + trust-only to `TRUST_PRINCIPAL_ARN`; extended tier; trust policy JSON in Resources tab.
+- **MFA What If:** no “disable user” / key-deactivation noise; remediation tab shows full `rem.why` + role-aware CLI fallbacks.
+- **Docs:** no Hetzner/Caddy as prescribed stack; `web/public/llms.txt`, `robots.txt`, `sitemap.xml`.
 
 ---
 
@@ -10,7 +22,7 @@ Future LLMs / sessions: **do not propose, ask about, or "remind" the founder of
 any item in this list.** They are settled decisions, not gaps. Several past
 sessions wasted turns suggesting these.
 
-- **No deployment work.** No Hetzner, no Caddy/TLS provisioning, no domain
+- **No deployment work.** Hosting/TLS is your choice — not prescribed in-repo.
   setup, no production rollout planning. The founder will raise deployment
   when she wants to deploy. Until then, treat the app as dev-only.
 - **No "throwaway AWS sandbox" planning.** A real scanned AWS account
@@ -160,19 +172,21 @@ only, and only to say it's out of scope.
 - GitLab API tokens auto-refresh: `app/services/gitlab_tokens.py` swaps expired access tokens via `refresh_token` before each API call
 
 ### Infra
-- `compose.yml` — api, worker, db (postgres 16), redis, web, caddy (prod profile)
+- `compose.yml` — api, worker, db (postgres 16), redis, web
 - Hot reload: uvicorn --reload (api), watchfiles (worker), Vite HMR (web)
 - Migrations: 0001_init → … → 0029_iam_user_policies (latest)
 - CFN role: exact actions enumerated (no wildcards), includes CloudTrail/GuardDuty/EC2/RDS/SecurityHub/Config/AccessAnalyzer/S3Control read permissions
-- pytest: 101 tests (check unit tests + botocore Stubber collector tests)
-- 74 checks total (61 AWS, 13 GitHub/GitLab)
+- pytest: 140+ tests (check unit tests + botocore Stubber collector tests)
+- Checks: registry + optional hygiene (`iam.policy.unattached`, `github.repo.no_codeowners` off by default)
+- Per-check drawer documentation: `web/src/data/checkDocumentation.ts` (extend for more `check_id`s)
+- Evidence pack v2.1: `check_evidence_classes.json`, `checksum_manifest.json`, `cis_benchmark_coverage.json` (CIS packs)
 
 ---
 
 ## Architecture reminder
 
 ```
-Vigil worker (Account A / Hetzner)
+Vigil worker (control plane)
   → sts.amazonaws.com  →  AssumeRole (customer's CFN role)
   → iam.amazonaws.com  →  read-only scan
 
@@ -545,7 +559,7 @@ policy analysis, onboarding empty state.
 
 1. `iam.root.usage` — root account activity check via CloudTrail `LookupEvents` (needs `cloudtrail:LookupEvents` added to CFN role + migration for root_activity table)
 2. End-to-end AWS sandbox validation: signup → CFN → verify → scan → evidence pack
-3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
+3. Production deploy + nightly pg_dump backups
 4. GitHub integration for identity and change-management evidence (Phase 3)
 5. Stripe gating for Free vs paid plan evidence export limits (deferred per founder decision)
 
@@ -570,7 +584,7 @@ policy analysis, onboarding empty state.
 
 1. `iam.root.usage` — root account activity check (CloudTrail `LookupEvents`)
 2. End-to-end AWS sandbox validation
-3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
+3. Production deploy + nightly pg_dump backups
 4. Stripe gating for evidence export limits
 
 **Session 8 additions (2026-05-26):**
@@ -589,7 +603,7 @@ policy analysis, onboarding empty state.
 **Remaining gaps after session 8:**
 
 1. End-to-end AWS sandbox validation (needs throwaway AWS account with seeded junk)
-2. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2
+2. Production deploy + nightly pg_dump backups
 3. Stripe gating for evidence export limits (deferred per founder decision)
 4. TOTP MFA (deferred to Phase 1.5 / paying customers ask)
 
@@ -624,7 +638,7 @@ policy analysis, onboarding empty state.
 
 1. `alembic upgrade head` needed to apply migrations 0019 (actions_json), 0020 (has_codeowners/protected_envs), 0021 (cloudtrail_events)
 2. End-to-end AWS sandbox validation (needs throwaway AWS account with seeded junk)
-3. Hetzner deploy: domain, Caddy auto-TLS, nightly pg_dump → B2 (deferred per founder decision)
+3. Production deploy (deferred)
 4. Stripe gating for evidence export limits (deferred per founder decision)
 5. TOTP MFA (deferred to Phase 1.5)
 6. GitHub Actions deployments/workflow runs (Phase 3 item — tracks workflow runs to environments for CC8.1)
@@ -643,7 +657,7 @@ policy analysis, onboarding empty state.
 3. Audit period selector on evidence pack UI (currently hardcoded 90d in the frontend)
 4. Control narrative text per control (copy-paste paragraph for questionnaire responses)
 5. End-to-end sandbox validation (deferred — needs throwaway AWS account)
-6. Hetzner deploy (deferred)
+6. Production deploy (deferred)
 7. Stripe (deferred)
 8. TOTP MFA (deferred to Phase 1.5)
 9. GitHub Actions deployments/workflow runs (Phase 3 last item)
@@ -657,7 +671,7 @@ policy analysis, onboarding empty state.
 
 1. `alembic upgrade head` — migrations 0019–0022 (run on next deploy)
 2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
-3. Hetzner deploy (deferred)
+3. Production deploy (deferred)
 4. Stripe (deferred)
 5. TOTP MFA (deferred to Phase 1.5)
 6. GitHub Actions deployments/workflow runs (Phase 3 last item — tracks workflow runs to environments for CC8.1)
@@ -673,7 +687,7 @@ policy analysis, onboarding empty state.
 
 1. `alembic upgrade head` — migrations 0019–0024 (run on next deploy)
 2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
-3. Hetzner deploy (deferred)
+3. Production deploy (deferred)
 4. Stripe (deferred)
 5. TOTP MFA (deferred to Phase 1.5)
 6. Phase 3 is now **complete** — all GitHub/GitLab checks, identity evidence, change management evidence, timeline correlation, and CI/CD pipeline collection are shipped
@@ -692,7 +706,7 @@ policy analysis, onboarding empty state.
 
 1. `alembic upgrade head` — migrations 0019–0024 (run on next deploy)
 2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
-3. Hetzner deploy (deferred)
+3. Production deploy (deferred)
 4. Stripe (deferred)
 5. TOTP MFA (deferred to Phase 1.5)
 6. Re-scan production account to populate action-level `actions_json` after collector fix
@@ -714,7 +728,7 @@ policy analysis, onboarding empty state.
 1. `alembic upgrade head` — migrations 0019–0025 (run on next deploy; **0025 adds `users.gitlab_id`** and is required for GitLab sign-in)
 2. GitLab OAuth app must list both `/v1/auth/gitlab/callback` (login/link) and `/v1/integrations/gitlab/callback` (evidence) as redirect URIs, with scopes `read_user` + `read_api`
 3. End-to-end sandbox validation (deferred — needs throwaway AWS account)
-4. Hetzner deploy (deferred)
+4. Production deploy (deferred)
 5. Stripe (deferred)
 6. Re-scan production account to populate action-level `actions_json` after collector fix
 7. Some scan_runs still drop into `error` immediately on first start with no detail — needs root-cause once a stable AWS sandbox exists
@@ -730,7 +744,7 @@ policy analysis, onboarding empty state.
 
 1. `alembic upgrade head` — migrations 0019–0026 (run on next deploy; **0026 adds `users.google_id`**, required for proper Google link/disconnect)
 2. End-to-end sandbox validation (deferred — needs throwaway AWS account)
-3. Hetzner deploy (deferred)
+3. Production deploy (deferred)
 4. Stripe (deferred)
 5. Re-scan production account to populate action-level `actions_json` after collector fix
 6. Some scan_runs drop into `error` immediately on first start with no detail — root-cause once a stable AWS sandbox exists
@@ -738,7 +752,7 @@ policy analysis, onboarding empty state.
 
 **Session 17 additions (2026-05-27)** — pre-prod hygiene pass (end-to-end):
 - **Scan error capture**: every collector + check phase in `run_scan` is now tagged with a `step` name; on failure the step + truncated traceback land in `scan_runs.error` and `scan_runs.stats.failed_at`/`error_type`. Per-check failures are isolated (one bad check no longer kills the whole scan — error is appended to `stats.check_errors` and the rest of the checks still run). Latest scan-runs API exposes `failed_at` + `error_type`; Accounts + Findings pages render `Last scan failed at step <collector_name> (<ErrorType>):` instead of an opaque traceback.
-- **Request-id middleware**: every HTTP request gets an `X-Request-Id` (honours inbound headers from a proxy; otherwise generates a UUID4 hex). The id is bound to structlog's contextvars so every log line emitted during the request carries `request_id=`. Single `http.request` log line per request with `method/path/status/duration_ms/remote`; `/healthz` is silenced. Response carries the same id so clients/Caddy/Cloudflare can correlate. Trusts `X-Forwarded-For` only in non-dev.
+- **Request-id middleware**: every HTTP request gets an `X-Request-Id` (honours inbound headers from a proxy; otherwise generates a UUID4 hex). The id is bound to structlog's contextvars so every log line emitted during the request carries `request_id=`. Single `http.request` log line per request with `method/path/status/duration_ms/remote`; `/healthz` is silenced. Response carries the same id so clients and your reverse proxy can correlate. Trusts `X-Forwarded-For` only in non-dev.
 - **CFN template URL configurable**: `settings.CFN_TEMPLATE_URL` (env: `CFN_TEMPLATE_URL`) replaces the hard-coded constant in `accounts.py`. Default still points at the dev S3 location; production should pin to a versioned object so launched-yesterday vs launched-today stacks reference the same template. `.env.example` updated with a comment.
 - **AssumeRole audit log**: new `assume_role_audit` table (migration `0027`) — one row per `sts:AssumeRole` call with `org_id`, `aws_account_id`, `role_arn`, `session_name`, `purpose`, `success`, `error_code`, `error_message`, `called_at`. `app/core/aws.py` writes to it on every call (success or failure) using an isolated session so the audit row survives even when the caller rolls back. All 16 collector/check call sites pass `aws_account=acc, purpose="..."`. Customer-facing endpoint `GET /v1/accounts/{id}/assume-role-audit` returns the latest events (default 100, max 500). Accounts page now has an expandable "AWS activity" panel per account that renders the last 50 events in a compact table. Migration applied locally. Daily Celery task `prune_assume_role_audit` (beat: 04:30 UTC) deletes rows older than `retention_days` (default 365).
 - **SSO signup logging + gate**: every login-flow that creates a new user+org for GitHub/GitLab/Google emits `oauth.signup.new_org` (provider, email, IdP id, org id, user id). Email-match → IdP attach is logged as `oauth.idp_attached_by_email`. New config flag `ALLOW_SSO_SIGNUP` (default `True`) — when set to `False`, the login-flow returns `?error=no_account_for_idp` instead of creating a new user+org. Login page has a friendly message for the new error code.
@@ -810,7 +824,7 @@ lists in this file are historical context only — when they conflict with
 this section, this section wins. Update *here* when items land or new
 work surfaces.
 
-**All product code from sessions 20–23 is shipped.** Session 24 = Phase B demo polish (evidence + narratives).
+**State as of session 25:** product is strong for Type I prep, but there are compliance-mapping bugs and Type II evidence gaps that must be fixed before auditor-facing demos.
 
 **Founder-blocking (need a click, not code):**
 
@@ -822,16 +836,76 @@ work surfaces.
 - Evidence snapshots for session-18 resource types + IAM user policies + RDS Multi-AZ/deletion protection
 - Reference page + Compliance check groups updated
 
-**Phase B still open:**
-- Historical diff UI ("state X between time A and B")
-- Google Workspace (Phase 4)
-- Prod deploy + Stripe
+**Critical bugs to fix before showing auditors:**
 
-**AWS coverage (session 23):**
-- **61 AWS checks**, all mapped to SOC2 / CIS L1 / ISO 27001
-- Full CIS benchmark still has manual-only items (support role, password policy min length, etc.)
+1. **`iam.policy.wildcard_resource` mapping bug**  
+   Check runs and appears in Findings, but is missing from `api/data/control_mappings.json` so it is invisible in Compliance and excluded from evidence packs.  
+   - Fix target mapping: SOC2 **CC6.3** + ISO **A.9.2.5**.
+2. **`github.repo.no_codeowners` unmapped**  
+   Session notes say mapped, but mapping is absent in JSON.  
+   - Fix target mapping: SOC2 **CC8.1**.
+3. **Additional mapping gaps (audit-visible):**
+   - `iam.account.password_policy_weak` missing SOC2 **CC6.2**, CIS **1.8/1.9**
+   - `iam.user.direct_policy_attachment` missing SOC2 **CC6.3**, ISO **A.9.2.2**
+   - `iam.role.unused_services_90d` missing SOC2 **CC6.3**
+   - `ec2.security_group.default_allows_traffic` missing SOC2 **CC6.6**
+   - `ec2.ebs.encryption_not_default` missing SOC2 **CC6.8**
+   - `rds.instance.no_automated_backup` missing ISO **A.12.3.1**
+   - `aws.access_analyzer.not_enabled` missing SOC2 **CC6.6/CC7.2**
+   - `aws.config.not_enabled` missing SOC2 **CC7.1**
+   - `secretsmanager.secret.no_rotation` missing SOC2 **CC6.2/CC6.3**
+   - `ssm.parameter.plaintext_secret` missing SOC2 **CC6.2**
+   - `elb.load_balancer.no_access_logs` missing SOC2 **CC7.2**
+
+**Relevance call (keep/remove):**
+- `iam.policy.unattached` is correctly **optional hygiene-only** (unmapped by design).
+- `iam.policy.wildcard_resource` is **not hygiene-only**; mapping absence is a bug.
+
+**Type II blockers (product gaps):**
+- No point-in-time access roster retrieval by sampled date (auditor asks: "show access on date X").
+- No IAM Identity Center / SSO account inventory; IAM-user-only view can produce false all-clear.
+- GuardDuty findings response evidence is not collected (only enablement state).
+- No evidence coverage indicator (e.g., "7 of 90 days collected").
+
+**Important but not hard blockers:**
+- Cross-account trust enumeration depth.
+- Config rule compliance details (not only "enabled").
+- AMI/patch-age visibility.
+
+**Phase B still open (updated):**
+- Date-specific evidence pack generation ("as of date X"), not only rolling N-day window.
+- Evidence coverage indicator in Compliance and export metadata.
+- Historical diff UI ("state X between time A and time B").
+- Google Workspace (Phase 4).
+- Prod deploy + Stripe.
+
+**AWS coverage (session 25 correction):**
+- **61 AWS checks** shipped.
+- Mapping is **not fully complete** yet (see critical mapping bugs above).
+- Full CIS benchmark still has manual-only items (support role, password policy min length, etc.).
 
 **Optional when deploying prod:** set `ALLOW_SSO_SIGNUP=False`, pin `CFN_TEMPLATE_URL` to a release tag or S3 object.
+
+### Session 25 audit-readiness review (2026-05-28)
+
+**Evidence pack sufficiency (CC6/CC7):**
+- **Strong:** per-control folder structure, `timeline.csv` with open/close lifecycle, exceptions with approver, source manifest.
+- **Weak for Type II:** no "as-of date" export, snapshot displays capped without total-count context, CloudTrail sample cap can be low for active accounts.
+- **Verdict:** sufficient for Type I and readiness conversations; borderline for strict Type II sampling until date-specific export + coverage indicator land.
+
+**Audit narratives (keep, but adjust):**
+- Keep narratives (high value differentiator vs scanner-only tools).
+- Fix control specificity:
+  - CC6.3 narrative should focus deprovisioning/access removal (not generic permissive scopes).
+  - Add coverage statement to narratives ("evidence collected daily; retention window starts at account connection").
+  - CC6.2 should explicitly call out manual provisioning-process attestation gap.
+  - CC7.2 should explicitly call out that GuardDuty incident-response workflow evidence is manual today.
+  - CC8.1 should explain auditor interpretation of `self_merge=true` and `approval_count < required_review_count`.
+
+**Market / positioning notes (for GTM):**
+- Direct day-1 competition for this buyer is often **Prowler + manual evidence assembly**, not Vanta.
+- Best-fit buyer: 5–15 person AWS-native startup, technical founder/platform lead, price-sensitive, first SOC2 push.
+- Initial sales motion should prioritize technical operators (platform/devops/CTO at seed), auditor partnerships, and proof content ("download sample evidence pack", long-form CC6/CC7 AWS evidence guide) over broad CISO cold outreach.
 
 ### Phase 3 — GitHub integration (3 weeks)
 
@@ -953,7 +1027,7 @@ Google Workspace.
 
 ### Phase 6 — Production polish (2 weeks)
 
-- Hetzner deploy: VPS + Caddy auto-TLS + Cloudflare
+- Production deploy: your host + TLS + DNS
 - Postgres nightly `pg_dump` → Backblaze B2
 - Encrypt `aws_accounts.role_arn` + `external_id` at rest (pgcrypto)
 - Audit log of every assume-role call

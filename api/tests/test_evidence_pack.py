@@ -67,13 +67,14 @@ def test_index_csv_includes_exception_count():
             "control_id": "CC6.1",
             "title": "Access",
             "status": "pass",
+            "coverage_tier": "extended",
             "finding_count": 0,
             "exception_count": 2,
             "status_note": "PASS with 2 approved exception(s)",
         }
     ])
     lines = csv_text.strip().splitlines()
-    assert lines[0] == "control_id,title,status,open_findings,exceptions,status_note"
+    assert lines[0] == "control_id,title,status,coverage_tier,open_findings,exceptions,status_note"
     assert "CC6.1" in lines[1]
     assert "PASS with 2 approved exception(s)" in lines[1]
 
@@ -93,6 +94,24 @@ def test_exception_narratives():
     assert len(lines) == 1
     assert "Alice (CTO)" in lines[0]
     assert "Legacy batch job" in lines[0]
+
+
+def test_checksum_manifest_excludes_self():
+    from datetime import datetime, timezone
+
+    from app.services.evidence_pack import _build_checksum_manifest
+
+    artifacts = [
+        ("README.txt", b"hello"),
+        ("INDEX.csv", b"csv"),
+    ]
+    body = _build_checksum_manifest(
+        artifacts,
+        generated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        report_id="ABC123",
+    )
+    assert "README.txt" in body
+    assert "checksum_manifest.json" not in body or '"checksum_manifest.json"' not in body.split("artifacts")[1]
 
 
 def test_timeline_csv_has_header():

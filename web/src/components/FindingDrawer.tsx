@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { BLAST_RADIUS_CHECKS } from "../data/blastRadiusChecks";
 import { checkLabels } from "../data/checkLabels";
+import { documentationForCheck } from "../data/checkDocumentation";
 import { remediationSummaryFor } from "../data/remediationSummaries";
 import { daysAgo, resourceDisplayName, resourceTypeLabel } from "../lib/findingDisplay";
 import {
@@ -265,6 +266,7 @@ function OverviewTabContent({
   affected,
   finding,
   hasException,
+  documentation,
 }: {
   impact: string;
   risk: string;
@@ -272,19 +274,34 @@ function OverviewTabContent({
   affected?: string | null;
   finding: Finding;
   hasException: boolean;
+  documentation?: ReturnType<typeof documentationForCheck>;
 }) {
+  const context = documentation?.overview?.context ?? impact;
+  const exposure = documentation?.overview?.exposure ?? risk;
+  const nextStep = documentation?.overview?.fix ?? fix;
+
   return (
     <div className="space-y-2.5">
       <DrawerFlowLabel>Security narrative</DrawerFlowLabel>
       <div className="space-y-2">
+        {documentation && (
+          <>
+            <SemanticNarrativeBlock tag="Scanner" tone="neutral" title="What Vigil checks">
+              {documentation.whatWeCheck}
+            </SemanticNarrativeBlock>
+            <SemanticNarrativeBlock tag="Why flagged" tone="caution" title="Why you see this finding">
+              {documentation.whyShown}
+            </SemanticNarrativeBlock>
+          </>
+        )}
         <SemanticNarrativeBlock tag="Context" tone="caution" title="Why this matters">
-          {impact}
+          {context}
         </SemanticNarrativeBlock>
         <SemanticNarrativeBlock tag="Exposure" tone="neutral" title="Risk exposure">
-          {risk}
+          {exposure}
         </SemanticNarrativeBlock>
         <SemanticNarrativeBlock tag="Next step" tone="action" title="Recommended action">
-          {fix}
+          {nextStep}
         </SemanticNarrativeBlock>
         {affected && (
           <SemanticNarrativeBlock tag="Scope" tone="neutral" title="Affected resources">
@@ -481,6 +498,23 @@ aws iam get-role --role-name <role-name> --query 'Role.AssumeRolePolicyDocument'
 # Update the trust policy after scoping Principal and Conditions
 aws iam update-assume-role-policy --role-name <role-name> --policy-document file://trust-policy.json`,
     risk: "Wildcard trust can expose a role to unintended principals, especially when conditions are missing or weak.",
+  },
+  "iam.role.external_account_trust": {
+    why: "The role's trust policy allows an AWS principal in another account to call sts:AssumeRole. That is expected for some integrations but must be documented and scoped — unknown external accounts are a common path for lateral access.",
+    console: [
+      "Open IAM → Roles → select the role",
+      'Open the "Trust relationships" tab',
+      "Review Principal.AWS entries — note each external 12-digit account ID",
+      "Confirm with the owning team that each account is still required",
+      "Remove stale principals, or add ExternalId / aws:PrincipalArn conditions to narrow who can assume",
+      "Save an approved exception in Vigil if the trust is intentional (vendor, security tool, shared services)",
+    ],
+    cli: `# Read trust policy
+aws iam get-role --role-name <role-name> --query 'Role.AssumeRolePolicyDocument'
+
+# After editing trust-policy.json locally
+aws iam update-assume-role-policy --role-name <role-name> --policy-document file://trust-policy.json`,
+    risk: "Anyone who can assume this role from the trusted account receives all permissions attached to the role in your account.",
   },
 
   "iam.root.has_access_keys": {
@@ -1422,12 +1456,44 @@ const identityRemediations: Record<string, Remediation> = {
   },
 };
 
-const fallbackRemediation: Remediation = {
-  why: "Review this finding and take corrective action based on your security policy.",
-  console: ["Open the AWS Console", "Navigate to IAM", "Locate the affected resource and review its configuration"],
-  cli: "# Review with AWS CLI\naws iam get-user --user-name <user>",
-  risk: "Unresolved findings increase your attack surface.",
-};
+function fallbackRemediationFor(checkId: string): Remediation {
+  if (checkId.startsWith("iam.role.")) {
+    return {
+      why: "Review this IAM role's trust and permission policies against your access standards.",
+      console: [
+        "Open IAM → Roles → select the role",
+        'Review "Trust relationships" and "Permissions"',
+        "Confirm the configuration matches an approved integration or workload",
+      ],
+      cli: `aws iam get-role --role-name <role-name>
+aws iam list-attached-role-policies --role-name <role-name>
+aws iam list-role-policies --role-name <role-name>`,
+      risk: "Over-permissive or broadly trusted roles expand blast radius if assumed by the wrong principal.",
+    };
+  }
+  if (checkId.startsWith("iam.user.")) {
+    return {
+      why: "Review this IAM user's access (console, MFA, keys, and policies).",
+      console: ["Open IAM → Users → select the user", 'Review "Security credentials" and "Permissions"'],
+      cli: "aws iam get-user --user-name <user>\naws iam list-mfa-devices --user-name <user>\naws iam list-access-keys --user-name <user>",
+      risk: "Unresolved identity findings increase risk of unauthorized console or API access.",
+    };
+  }
+  if (checkId.startsWith("ec2.security_group.")) {
+    return {
+      why: "Review this security group's rules and which ENIs/instances reference it.",
+      console: ["Open EC2 → Security Groups → select the group", "Review inbound and outbound rules and the Resources tab"],
+      cli: "aws ec2 describe-security-groups --group-ids <sg-id>",
+      risk: "Security group changes can immediately affect network reachability for attached resources.",
+    };
+  }
+  return {
+    why: "Review this finding and take corrective action based on your security policy.",
+    console: ["Open the AWS Console", "Locate the affected resource", "Compare configuration to your baseline"],
+    cli: "# Use the service CLI for this resource type — see AWS docs for the matching describe-* API",
+    risk: "Unresolved findings increase your attack surface.",
+  };
+}
 
 function ServicePills({ services }: { services: string[] }) {
   return (
@@ -1705,6 +1771,8 @@ const EVIDENCE_LABELS: Record<string, string> = {
   db_instance_id: "DB instance",
   volume_id: "Volume",
   role_arn: "Role ARN",
+  trust_policy: "Trust policy",
+  external_account_ids: "External account IDs",
   unused_write_actions: "Unused write actions",
   block_public_acls: "Block public ACLs",
   ignore_public_acls: "Ignore public ACLs",
@@ -1880,6 +1948,14 @@ function EvidenceValue({ fieldKey, value }: { fieldKey: string; value: unknown }
     );
   }
 
+  if (typeof value === "object") {
+    return (
+      <pre className="max-h-56 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50/90 p-2.5 font-mono text-[11px] leading-relaxed text-zinc-800">
+        {JSON.stringify(value, null, 2)}
+      </pre>
+    );
+  }
+
   const text = formatEvidenceDate(String(value));
   return <span className="break-all">{text}</span>;
 }
@@ -1980,7 +2056,7 @@ aws accessanalyzer start-policy-generation \\
 # 4. Poll for the generated policy (takes ~30s)
 aws accessanalyzer get-generated-policy --job-id <job-id>`;
   }
-  const rem = remediations[finding.check_id] ?? fallbackRemediation;
+  const rem = remediations[finding.check_id] ?? fallbackRemediationFor(finding.check_id);
   const placeholders = buildCliPlaceholders(finding, clientIp);
   let cli = applyCliPlaceholders(rem.cli, placeholders);
   cli = injectEc2RegionFlags(cli, placeholders["<region>"]);
@@ -2527,12 +2603,17 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
     const normalized = warning.toLowerCase();
     return !(normalized.startsWith("access key ") && normalized.includes(" used ") && normalized.includes(" deactivate keys before disabling user"));
   });
-  const keyUsageWarnings = data.resource_type === "iam_user" && data.keys
-    ? data.keys
-        .filter((k) => k.last_used && k.days_ago != null)
-        .map((k) => `Access key ${k.key_id} shows API activity ${k.days_ago} days ago via ${k.last_used_service ?? "unknown service"}${k.last_used_region ? ` (${k.last_used_region})` : ""} — deactivate keys before disabling user`)
-    : [];
-  const allNotices = [...baseWarnings, ...keyUsageWarnings];
+  const mfaOnlyUserCheck = finding.check_id === "iam.user.no_mfa";
+  const keyUsageWarnings =
+    !mfaOnlyUserCheck && data.resource_type === "iam_user" && data.keys
+      ? data.keys
+          .filter((k) => k.last_used && k.days_ago != null)
+          .map(
+            (k) =>
+              `Access key ${k.key_id} shows API activity ${k.days_ago} days ago via ${k.last_used_service ?? "unknown service"}${k.last_used_region ? ` (${k.last_used_region})` : ""} — deactivate keys before disabling user`,
+          )
+      : [];
+  const allNotices = mfaOnlyUserCheck ? [] : [...baseWarnings, ...keyUsageWarnings];
   const infoRows = verdict.type === "safe" ? allNotices : [];
   const warningRows = verdict.type === "safe" ? [] : allNotices.filter((warning) => {
     const key = warningKey(warning);
@@ -2629,8 +2710,8 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
           </div>
         )}
 
-        {/* User: summary */}
-        {data.resource_type === "iam_user" && (
+        {/* User: summary (hidden for MFA-only — keys/password are not part of remediation) */}
+        {data.resource_type === "iam_user" && !mfaOnlyUserCheck && (
           <div className="space-y-2">
             <div className="overflow-hidden rounded-lg border border-zinc-200 bg-zinc-50">
               <div className="px-3 py-2 text-xs text-zinc-600">
@@ -3890,8 +3971,12 @@ export function FindingDrawer({
 
   if (!finding) return null;
 
-  const rem = identityRemediations[finding.check_id] ?? remediations[finding.check_id] ?? fallbackRemediation;
+  const rem =
+    identityRemediations[finding.check_id] ??
+    remediations[finding.check_id] ??
+    fallbackRemediationFor(finding.check_id);
   const ops = remediationSummaryFor(finding.check_id);
+  const checkDoc = documentationForCheck(finding.check_id);
   const affectedLabel = multiResource
     ? relatedFindings
       ? `${relatedFindings.length} resources`
@@ -3982,6 +4067,7 @@ export function FindingDrawer({
           affected={affectedLabel}
           finding={finding}
           hasException={hasException}
+          documentation={checkDoc}
         />
       )}
       {tab === "resources" && showResources && (
@@ -4007,6 +4093,14 @@ export function FindingDrawer({
       {tab === "remediation" && (
         <div className="space-y-2.5">
           <DrawerFlowLabel>Remediation plan</DrawerFlowLabel>
+          {checkDoc && (
+            <SemanticNarrativeBlock tag="Scanner" tone="neutral" title="What Vigil checks">
+              {checkDoc.whatWeCheck}
+            </SemanticNarrativeBlock>
+          )}
+          <SemanticNarrativeBlock tag="Rationale" tone="caution" title="Why this matters">
+            {rem.why}
+          </SemanticNarrativeBlock>
           <SemanticNarrativeBlock tag="Action" tone="positive" title="Recommended action">
             {ops.fix}
           </SemanticNarrativeBlock>
