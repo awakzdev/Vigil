@@ -138,7 +138,7 @@ export default function GitLabIntegration() {
   const instanceLabel = p?.base_url ? p.base_url.replace(/^https?:\/\//, "") : "gitlab.com";
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
+    <div className="w-full space-y-8 pb-10">
       <div>
         <p className="text-sm font-medium text-sky-700">
           <Link to="/integrations" className="hover:underline">Integrations</Link>
