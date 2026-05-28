@@ -116,6 +116,53 @@ class TestAccessKeyUnused:
         assert drafts == []
 
 
+# --- iam.role.unassumed_90d ---
+
+class TestRoleUnassumed:
+    def test_flags_stale_custom_role(self, mock_db):
+        from app.checks import role_unassumed_90d
+        acc_id = uuid.uuid4()
+        r = MagicMock()
+        r.account_id = acc_id
+        r.arn = "arn:aws:iam::123456789012:role/DeployRole"
+        r.name = "DeployRole"
+        r.last_assumed = None
+        r.created = datetime.now(timezone.utc) - timedelta(days=200)
+        mock_db.scalars.return_value.all.return_value = [r]
+        drafts = role_unassumed_90d.run(mock_db, acc_id)
+        assert len(drafts) == 1
+        assert drafts[0].check_id == "iam.role.unassumed_90d"
+
+    def test_skips_sso_reserved_role_by_name(self, mock_db):
+        from app.checks import role_unassumed_90d
+        acc_id = uuid.uuid4()
+        r = MagicMock()
+        r.account_id = acc_id
+        r.name = "AWSReservedSSO_AdministratorAccess_33bebb4004caf898"
+        r.arn = (
+            "arn:aws:iam::946796614687:role/aws-reserved/sso.amazonaws.com/"
+            "AWSReservedSSO_AdministratorAccess_33bebb4004caf898"
+        )
+        r.last_assumed = None
+        r.created = datetime.now(timezone.utc) - timedelta(days=1314)
+        mock_db.scalars.return_value.all.return_value = [r]
+        drafts = role_unassumed_90d.run(mock_db, acc_id)
+        assert drafts == []
+
+    def test_skips_service_linked_role(self, mock_db):
+        from app.checks import role_unassumed_90d
+        acc_id = uuid.uuid4()
+        r = MagicMock()
+        r.account_id = acc_id
+        r.name = "AWSServiceRoleForEC2"
+        r.arn = "arn:aws:iam::123456789012:role/aws-service-role/ec2.amazonaws.com/AWSServiceRoleForEC2"
+        r.last_assumed = None
+        r.created = datetime.now(timezone.utc) - timedelta(days=400)
+        mock_db.scalars.return_value.all.return_value = [r]
+        drafts = role_unassumed_90d.run(mock_db, acc_id)
+        assert drafts == []
+
+
 # --- iam.role.wildcard_action ---
 
 class TestWildcardAction:
@@ -483,6 +530,7 @@ class TestWildcardResourceCheck:
         drafts = iam_policy_wildcard_resource.run(mock_db, acc_id)
         assert len(drafts) == 1
         assert drafts[0].check_id == "iam.policy.wildcard_resource"
+        assert drafts[0].severity == "low"
         assert "InlineAdmin" in drafts[0].evidence["policy_names"]
 
     def test_skips_read_only_actions(self, mock_db):

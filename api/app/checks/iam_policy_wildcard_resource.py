@@ -110,9 +110,9 @@ def run(db: Session, account_id) -> list[FindingDraft]:
         out.append(FindingDraft(
             check_id=CHECK_ID,
             resource_arn=r.arn,
-            title=f"Role `{r.name}` grants dangerous actions on Resource: *",
-            severity="high",
-            risk_score=score("high", admin=True),
+            title=f"Role `{r.name}` grants write actions on Resource: * (hygiene)",
+            severity="low",
+            risk_score=score("low"),
             evidence={
                 "role_arn": r.arn,
                 "policy_names": [h["policy"] for h in hits],

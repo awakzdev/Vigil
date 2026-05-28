@@ -237,8 +237,6 @@ def _repo_blast(
         warnings.append(
             f"Enabling branch protection on `{default_branch}` blocks direct pushes — open PRs may need rebasing"
         )
-    elif check_id.endswith("no_codeowners"):
-        warnings.append("Adding CODEOWNERS auto-requests reviews — existing PRs are unaffected until updated")
     elif check_id.endswith("no_env_protection"):
         confidence = "medium"
         warnings.append(

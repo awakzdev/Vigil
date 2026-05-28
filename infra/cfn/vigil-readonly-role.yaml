@@ -7,6 +7,7 @@ Description: >
 Parameters:
   VigilAccountPrincipal:
     Type: String
+    Default: "arn:aws:iam::016266969060:role/VigilControlPlane"
     Description: ARN of the Vigil control plane principal (provided during onboarding).
   ExternalId:
     Type: String

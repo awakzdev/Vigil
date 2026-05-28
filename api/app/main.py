@@ -41,7 +41,7 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.APP_ENV == "dev" else [settings.API_PUBLIC_URL],
+    allow_origins=["*"] if settings.APP_ENV == "dev" else [settings.FRONTEND_URL],
     allow_methods=["*"],
     allow_headers=["*"],
 )

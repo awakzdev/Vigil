@@ -16,9 +16,12 @@ class Settings(BaseSettings):
     DEV_MODE: bool = False
     TRUST_PRINCIPAL_ARN: str = "arn:aws:iam::000000000000:root"
     API_PUBLIC_URL: str = "http://localhost:8000"
+    FRONTEND_URL: str = "http://localhost:5173"
 
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
+    # If set, only emails from this domain are accepted via Google OAuth (login + link).
+    GOOGLE_ALLOWED_DOMAIN: str = ""
     GITHUB_CLIENT_ID: str = ""
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_INTEGRATION_CALLBACK_PATH: str = "/v1/auth/github/callback"
@@ -35,12 +38,11 @@ class Settings(BaseSettings):
     ENCRYPTION_KEY: str = "IqebDQNnegvXTO6n5gdTpVcZGXXE35Fcdh2hwT7oQxM="
 
     # Public URL of the read-only CloudFormation template a customer launches
-    # in their own AWS account. Pin to a versioned S3 object or a tagged
-    # GitHub raw URL in production so a launched-yesterday stack and a
-    # launched-today stack reference the exact same template.
-    # Defaults are safe for dev; override in prod via env.
+    # in their own AWS account. Must be fetchable by CloudFormation in the
+    # customer's account (S3 object URL — GitHub raw URLs are not reliable).
+    # Override in prod to pin a versioned object when the template changes.
     CFN_TEMPLATE_URL: str = (
-        "https://raw.githubusercontent.com/awakzdev/Vigil/main/infra/cfn/vigil-readonly-role.yaml"
+        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/vigil-readonly-role.yaml"
     )
 
     # When True (default) hitting /v1/auth/{github,gitlab,google} *without*

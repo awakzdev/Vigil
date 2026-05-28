@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.security import current_principal
 from app.models import Finding, FindingEvent, AwsAccount
+from app.models.org import Org
+from app.services.check_settings import hidden_check_ids
 
 router = APIRouter()
 
@@ -96,7 +98,12 @@ def list_findings(
     db: Session = Depends(get_db),
 ):
     org_id = uuid.UUID(p["org_id"])
+    org = db.get(Org, org_id)
+    hidden = hidden_check_ids(org.settings if org else {})
+
     base_q = select(Finding).where(Finding.org_id == org_id)
+    if hidden:
+        base_q = base_q.where(Finding.check_id.notin_(hidden))
     if status_filter and status_filter != "all":
         base_q = base_q.where(Finding.status == status_filter)
     if severity:

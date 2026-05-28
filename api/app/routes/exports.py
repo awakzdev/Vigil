@@ -358,8 +358,15 @@ def export_findings_csv(
     import csv, io
     from sqlalchemy import select
     from app.models import Finding
+    from app.models.org import Org
+    from app.services.check_settings import hidden_check_ids
+
+    org = db.get(Org, uuid.UUID(p["org_id"]))
+    hidden = hidden_check_ids(org.settings if org else {})
 
     q = select(Finding).where(Finding.org_id == uuid.UUID(p["org_id"]))
+    if hidden:
+        q = q.where(Finding.check_id.notin_(hidden))
     if status_filter and status_filter != "all":
         q = q.where(Finding.status == status_filter)
     if account_id:

@@ -6,6 +6,10 @@ import { FindingDrawer } from "../components/FindingDrawer";
 import { SearchReferenceModal } from "../components/SearchReferenceModal";
 import ScanProgressBar from "../components/ScanProgressBar";
 import { checkLabels } from "../data/checkLabels";
+import { CHECK_FRAMEWORK_MAP } from "../data/checkFrameworkMap";
+import { FRAMEWORKS, frameworkLabel, type FrameworkId } from "../data/frameworks";
+import { remediationSummaryFor } from "../data/remediationSummaries";
+import { affectedResourcesPreview, daysAgo, severityLabel } from "../lib/findingDisplay";
 import { useTriggeredScan } from "../hooks/useTriggeredScan";
 
 type Finding = {
@@ -32,109 +36,30 @@ type FindingPage = {
 
 type Account = { id: string; status: string; cfn_launch_url?: string };
 
-const COLLAPSED_FINDINGS_KEY = "vigil.findings.collapsedGroups";
+const COLLAPSED_FINDINGS_KEY = "vigil.findings.collapsedGroups"; // legacy — cleared on load
 
 const sevBadge: Record<string, string> = {
-  critical: "border-red-200 bg-red-50 text-red-700",
-  high: "border-red-200 bg-red-50 text-red-600",
-  medium: "border-amber-200 bg-amber-50 text-amber-600",
-  low: "border-zinc-200 bg-zinc-50 text-zinc-500",
+  critical: "bg-red-50 text-red-700 ring-red-200/70",
+  high: "bg-orange-50 text-orange-700 ring-orange-200/70",
+  medium: "bg-amber-50 text-amber-800 ring-amber-200/70",
+  low: "bg-zinc-100 text-zinc-600 ring-zinc-200/70",
 };
 
-const sevAccent: Record<string, string> = {
-  critical: "border-l-2 border-l-red-300/70",
-  high: "border-l-2 border-l-red-200/80",
-  medium: "border-l-2 border-l-amber-300/60",
-  low: "border-l-2 border-l-zinc-200/80",
+const sevBorder: Record<string, string> = {
+  critical: "border-l-red-500",
+  high: "border-l-orange-500",
+  medium: "border-l-amber-400",
+  low: "border-l-zinc-300",
 };
 
-const sevExpandedBg: Record<string, string> = {
-  critical: "bg-red-50/[0.18]",
-  high: "bg-red-50/[0.12]",
-  medium: "bg-amber-50/[0.18]",
-  low: "bg-zinc-50/40",
+const sevRiskTone: Record<string, string> = {
+  critical: "text-red-700",
+  high: "text-orange-700",
+  medium: "text-amber-700",
+  low: "text-zinc-700",
 };
 
 const sevWeight: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
-
-const checkDescriptions: Record<string, string> = {
-  "iam.root.has_access_keys": "Root account access keys are permanent credentials — delete them.",
-  "iam.root.no_mfa": "Root account without MFA can be compromised with credentials alone.",
-  "iam.root.usage": "Root account should not be used for regular operations — use IAM users or roles instead.",
-  "iam.account.password_policy_weak": "Strengthen the account password policy to enforce complexity and rotation.",
-  "iam.user.no_mfa": "Require MFA for interactive IAM users.",
-  "iam.user.direct_policy_attachment": "Attach policies via groups or roles, not directly to users.",
-  "iam.user.inactive_90d": "Disable or remove dormant IAM users.",
-  "iam.access_key.unused_90d": "Deactivate stale access keys, then delete after validation.",
-  "iam.access_key.no_rotation_90d": "Rotate active keys older than 90 days.",
-  "iam.access_key.multiple_active": "Valid during rotation, but persistent duplicates increase exposure.",
-  "iam.role.unassumed_90d": "Confirm ownership, then remove roles that are no longer used.",
-  "iam.role.wildcard_action": "Replace wildcard permissions with scoped actions.",
-  "iam.perm.granted_vs_used": "Scope role policies down to the actions actually used — reduce the blast radius if this role is ever compromised.",
-  "iam.policy.wildcard_resource": "Scope Resource: '*' to specific ARNs — or remove actions that don't need account-wide access.",
-  "iam.policy.unattached": "Delete or archive customer-managed policies that are not attached to any principal.",
-  "iam.role.unused_services_90d": "Trim unused service permissions from role policies.",
-  "iam.role.trust_wildcard": "Trust policy allows an unrestricted principal.",
-  "s3.account.public_access_not_blocked": "Enable account-level S3 Block Public Access to guard every bucket by default.",
-  "s3.bucket.public_access_not_blocked": "Enable all four Block Public Access settings to prevent accidental exposure.",
-  "s3.bucket.no_https_policy": "Add a deny-HTTP bucket policy — low blast radius; blocks legacy http:// clients, not modern SDKs.",
-  "s3.bucket.no_kms": "Enable SSE-KMS to use customer-managed keys for encryption at rest.",
-  "s3.bucket.no_logging": "Enable server access logging for audit and forensic visibility.",
-  "kms.key.no_rotation": "Enable annual automatic rotation for customer-managed KMS keys.",
-  "cloudtrail.trail.not_enabled": "Enable CloudTrail with multi-region logging to capture all API activity.",
-  "cloudtrail.trail.no_log_validation": "Enable log file integrity validation to detect log tampering.",
-  "cloudtrail.trail.no_kms": "Encrypt CloudTrail logs with a customer-managed KMS key.",
-  "guardduty.detector.not_enabled": "Enable GuardDuty to detect threats, anomalies, and unauthorized activity.",
-  "aws.access_analyzer.not_enabled": "Enable IAM Access Analyzer to surface over-permissive cross-account access.",
-  "aws.config.not_enabled": "Enable AWS Config to maintain a continuous configuration change history.",
-  "aws.securityhub.not_enabled": "Enable Security Hub to centralize security posture checks and findings.",
-  "vpc.flow_logs.not_enabled": "Enable VPC flow logs for network-level visibility and forensics.",
-  "ec2.security_group.unrestricted_ssh": "Remove 0.0.0.0/0 ingress on port 22 — use Systems Manager Session Manager instead.",
-  "ec2.security_group.unrestricted_rdp": "Remove 0.0.0.0/0 ingress on port 3389 — use Fleet Manager for RDP access.",
-  "ec2.security_group.default_allows_traffic": "Default security groups should have no rules — move traffic to named groups.",
-  "ec2.instance.imdsv2_not_required": "Require IMDSv2 to prevent SSRF-based credential theft from instance metadata.",
-  "ec2.ebs.encryption_not_default": "Enable default EBS encryption so all new volumes are encrypted at creation.",
-  "ec2.ebs.volume_unencrypted": "Encrypt existing EBS volumes by copying snapshots with encryption enabled.",
-  "rds.instance.publicly_accessible": "Set Publicly Accessible to No and place RDS in a private subnet.",
-  "rds.instance.no_encryption": "Encrypt RDS storage — snapshot → copy with encryption → restore to new instance.",
-  "rds.instance.no_automated_backup": "Enable automated backups with a retention period that matches your recovery objective.",
-  "dynamodb.table.no_encryption": "Enable encryption at rest — DynamoDB supports in-place updates with no downtime.",
-  "dynamodb.table.no_pitr": "Enable point-in-time recovery for continuous backups and restore to any second in the last 35 days.",
-  "s3.bucket.no_default_encryption": "Enable default bucket encryption (SSE-S3 or SSE-KMS) for all new uploads.",
-  "s3.bucket.no_mfa_delete": "Enable MFA Delete on versioned buckets — requires root credentials.",
-  "ec2.ebs.snapshot_public": "Remove public snapshot permissions — audit logs may have been exposed.",
-  "ec2.ebs.snapshot_unencrypted": "Copy snapshot with encryption enabled, then delete the original.",
-  "ec2.ami.public": "Set AMI visibility to private — rotate secrets if the image was public.",
-  "cloudtrail.trail.s3_bucket_public": "Block public access on the CloudTrail log bucket immediately.",
-  "cloudtrail.trail.no_cloudwatch_logs": "Enable CloudWatch Logs integration for real-time alerting.",
-  "cloudtrail.trail.s3_bucket_no_logging": "Enable server access logging on the CloudTrail log bucket.",
-  "acm.certificate.expiring": "Renew or replace the certificate before expiry breaks HTTPS.",
-  "lambda.function.deprecated_runtime": "Upgrade to a supported runtime and test in staging first.",
-  "lambda.function.no_dlq": "Attach a dead-letter queue to capture failed async invocations.",
-  "rds.instance.no_deletion_protection": "Enable deletion protection to prevent accidental database destruction.",
-  "rds.instance.no_multi_az": "Enable Multi-AZ for automatic failover — plan a brief maintenance window.",
-  "secretsmanager.secret.no_rotation": "Enable automatic rotation on a regular interval.",
-  "ssm.parameter.plaintext_secret": "Migrate to SecureString and update applications to decrypt via KMS.",
-  "elb.load_balancer.no_access_logs": "Enable access logs to an S3 bucket for request-level visibility.",
-  "elb.load_balancer.weak_tls_policy": "Upgrade listener to TLS 1.2+ security policy.",
-  "sns.topic.no_encryption": "Enable KMS encryption on the SNS topic.",
-  "sqs.queue.no_encryption": "Enable KMS encryption on the SQS queue.",
-  // GitHub
-  "github.org.mfa_not_enforced": "GitHub organization does not require MFA for all members.",
-  "github.org.dormant_members": "Organization members with no activity in the last 90 days.",
-  "github.org.outside_collaborators": "Non-organization members with direct access to one or more repositories.",
-  "github.repo.no_branch_protection": "Default branch has no protection rules — anyone can push directly.",
-  "github.repo.no_codeowners": "Branch protection requires code-owner review but no CODEOWNERS file is present.",
-  "github.repo.no_env_protection": "Deployment environment(s) have no required reviewers — deploys can proceed without human approval.",
-  "github.repo.self_merge_allowed": "Pull requests merged by their own author with no peer review.",
-  "github.repo.insufficient_reviews": "Pull requests merged with fewer approvals than required.",
-  // GitLab
-  "gitlab.org.mfa_not_enforced": "GitLab group does not require two-factor authentication.",
-  "gitlab.org.dormant_members": "Group members with no activity in the last 90 days.",
-  "gitlab.repo.no_branch_protection": "Default branch has no protection rules — direct pushes are allowed.",
-  "gitlab.repo.self_merge_allowed": "Merge requests merged by their own author without peer review.",
-  "gitlab.repo.insufficient_reviews": "Merge requests merged with fewer approvals than required.",
-};
 
 const statusTabs = ["open", "excepted", "resolved", "all"] as const;
 type StatusTab = (typeof statusTabs)[number];
@@ -153,42 +78,86 @@ function emptyFindingsLabel(status: StatusTab): string {
 }
 type SeverityFilter = "all" | "critical_high" | "medium" | "low";
 type SortKey = "severity" | "score" | "first_seen";
+type BenchmarkFilter = "all" | FrameworkId;
 
-function loadCollapsedGroups(): Record<string, boolean> {
-  try {
-    const raw = localStorage.getItem(COLLAPSED_FINDINGS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
+function FindingIssueCard({
+  checkId,
+  items,
+  onReview,
+}: {
+  checkId: string;
+  items: Finding[];
+  onReview: (items: Finding[]) => void;
+}) {
+  const sev = items[0]?.severity ?? "low";
+  const title = checkLabels[checkId] ?? items[0]?.title ?? checkId;
+  const ops = remediationSummaryFor(checkId);
+  const count = items.length;
+  const topRisk = Math.max(...items.map((f) => f.risk_score));
+  const oldest = items.reduce((a, b) => (new Date(a.first_seen) < new Date(b.first_seen) ? a : b));
+  const affectedPreview = affectedResourcesPreview(items);
 
-function resourceName(arn: string): string {
-  // For region-scoped ARNs with no resource ID (e.g. guardduty detector, vpc flow logs),
-  // surface the region instead of an empty/generic segment
-  const parts = arn.split(":");
-  const region = parts[3] ?? "";
-  const tail = parts.pop() ?? arn;
-  const [, rest = tail] = tail.split(/\/(.+)/);
-  const [name, suffix] = rest.split("#");
-  const label = name || rest;
-  // If the label is just the service type with no meaningful ID, show the region
-  const generic = ["detector", "trail", "vpc", "flow-log", "security-group"].includes(label);
-  if (generic && region) return region;
-  if (!suffix) return label;
-  const masked = suffix.length > 12 ? `${suffix.slice(0, 4)}…${suffix.slice(-4)}` : suffix;
-  return `${label} · ${masked}`;
-}
+  return (
+    <article
+      role="button"
+      tabIndex={0}
+      onClick={() => onReview(items)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onReview(items);
+        }
+      }}
+      className={`group cursor-pointer rounded-xl border border-zinc-200/80 border-l-[3px] bg-white px-4 py-4 transition hover:border-zinc-300 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/30 ${sevBorder[sev] ?? sevBorder.low}`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2.5">
+            <span
+              className={`inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ring-1 ${sevBadge[sev] ?? sevBadge.low}`}
+            >
+              {severityLabel(sev)}
+            </span>
+            <span className="text-xs font-medium text-zinc-500">
+              {count} resource{count === 1 ? "" : "s"}
+            </span>
+          </div>
+          <h3 className="mt-2 text-[15px] font-semibold leading-snug text-zinc-900">{title}</h3>
+        </div>
+        <div className="relative shrink-0 self-start">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReview(items);
+            }}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 group-hover:bg-indigo-700 active:scale-[0.98]"
+          >
+            Review
+            <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+            </svg>
+          </button>
+          <p className="pointer-events-none absolute left-1/2 top-full mt-4 w-max -translate-x-1/2 whitespace-nowrap text-center leading-none">
+            <span className="text-xs font-medium text-zinc-400">Risk </span>
+            <span className={`text-lg font-bold tabular-nums ${sevRiskTone[sev] ?? sevRiskTone.low}`}>{topRisk}</span>
+          </p>
+        </div>
+      </div>
 
-function daysAgo(iso: string): string {
-  const d = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-  if (d <= 0) return "today";
-  if (d === 1) return "1d";
-  if (d < 30) return `${d}d`;
-  if (d < 365) return `${Math.floor(d / 30)}mo`;
-  return `${Math.floor(d / 365)}y`;
+      <p className="mt-2.5 text-sm leading-relaxed text-zinc-600">{ops.impact}</p>
+      <p className="mt-1 text-[13px] leading-relaxed text-zinc-500">{ops.fix}</p>
+
+      <div className="mt-3.5 rounded-lg bg-zinc-50/90 px-3 py-2.5 ring-1 ring-zinc-100/80">
+        {affectedPreview ? (
+          <p className="truncate font-mono text-[13px] text-zinc-600">{affectedPreview}</p>
+        ) : (
+          <p className="text-[13px] text-zinc-500">No resource names available</p>
+        )}
+        <p className="mt-1 text-xs text-zinc-400">First seen {daysAgo(oldest.first_seen)}</p>
+      </div>
+    </article>
+  );
 }
 
 function lastScanLabel(iso: string): string {
@@ -206,6 +175,7 @@ function matchesSeverityFilter(f: Finding, filter: SeverityFilter): boolean {
 
 function sortLabel(k: SortKey): string {
   if (k === "first_seen") return "Age";
+  if (k === "score") return "Risk";
   return k.charAt(0).toUpperCase() + k.slice(1);
 }
 
@@ -214,14 +184,142 @@ function sortIcon(k: SortKey, active: SortKey, dir: "asc" | "desc"): string {
   return dir === "asc" ? "↑" : "↓";
 }
 
+function frameworksForCheck(checkId: string, apiMap: Record<string, string[]> | undefined): string[] {
+  return apiMap?.[checkId] ?? CHECK_FRAMEWORK_MAP[checkId] ?? [];
+}
+
+function matchesBenchmarkFilter(
+  f: Finding,
+  benchmarkFilter: BenchmarkFilter,
+  apiMap: Record<string, string[]> | undefined,
+): boolean {
+  if (benchmarkFilter === "all") return true;
+  return frameworksForCheck(f.check_id, apiMap).includes(benchmarkFilter);
+}
+
+function BenchmarkScopeSelect({
+  value,
+  onChange,
+}: {
+  value: BenchmarkFilter;
+  onChange: (v: BenchmarkFilter) => void;
+}) {
+  return (
+    <div className="relative shrink-0">
+      <svg
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-indigo-600/75"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.75}
+          d="M9 12.75L11.25 15 15 9.75m-3-7.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285z"
+        />
+      </svg>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as BenchmarkFilter)}
+        aria-label="Findings scope by benchmark"
+        className="h-10 min-w-[13rem] cursor-pointer appearance-none rounded-xl border border-zinc-300/90 bg-white pl-9 pr-9 text-sm font-semibold text-zinc-800 shadow-sm outline-none transition hover:border-zinc-400 focus:border-indigo-400 focus:ring-2 focus:ring-indigo-500/20"
+      >
+        <option value="all">All benchmarks</option>
+        {FRAMEWORKS.map((fw) => (
+          <option key={fw.id} value={fw.id}>
+            {fw.label}
+          </option>
+        ))}
+      </select>
+      <svg
+        className="pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+      </svg>
+    </div>
+  );
+}
+
+function MetricStrip({
+  totals,
+  active,
+  onSelect,
+  highlightActive = true,
+}: {
+  totals: { open: number; critical: number; high: number; medium: number; low: number };
+  active: SeverityFilter;
+  onSelect: (f: SeverityFilter) => void;
+  highlightActive?: boolean;
+}) {
+  const chTotal = totals.critical + totals.high;
+  const segments: {
+    key: SeverityFilter;
+    label: string;
+    value: number;
+    prominent?: boolean;
+    accent?: "red" | "amber" | "neutral";
+  }[] = [
+    { key: "all", label: "Open", value: totals.open, prominent: true, accent: "neutral" },
+    { key: "critical_high", label: "Crit + high", value: chTotal, prominent: true, accent: "red" },
+    { key: "medium", label: "Medium", value: totals.medium, accent: "amber" },
+    { key: "low", label: "Low", value: totals.low, accent: "neutral" },
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      {segments.map((seg) => {
+        const isActive = highlightActive && active === seg.key;
+        const tone =
+          seg.accent === "red"
+            ? isActive
+              ? "bg-red-50 text-red-800 ring-red-200/70"
+              : "text-red-700 hover:bg-red-50/50"
+            : seg.accent === "amber"
+              ? isActive
+                ? "bg-amber-50 text-amber-900 ring-amber-200/70"
+                : "text-amber-800 hover:bg-amber-50/40"
+              : isActive
+                ? "bg-zinc-100 text-zinc-900 ring-zinc-200/80"
+                : "text-zinc-700 hover:bg-zinc-50/80";
+
+        return (
+          <button
+            key={seg.key}
+            type="button"
+            onClick={() => onSelect(seg.key)}
+            className={`inline-flex min-w-[4.75rem] flex-col items-start rounded-lg px-3.5 py-2 transition ${tone} ${isActive ? "ring-1" : ""}`}
+          >
+            <span className={`tabular-nums leading-none ${seg.prominent ? "text-2xl font-bold" : "text-xl font-semibold"}`}>
+              {seg.value}
+            </span>
+            <span
+              className={`mt-1 uppercase tracking-wide ${seg.prominent ? "text-[11px] font-semibold text-zinc-500" : "text-[11px] font-medium text-zinc-400"}`}
+            >
+              {seg.label}
+            </span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 const ALL_CHECK_IDS = Object.keys(checkLabels);
 
 function TagSearchInput({
   tags,
   onTagsChange,
+  className,
 }: {
   tags: string[];
   onTagsChange: (t: string[]) => void;
+  className?: string;
 }) {
   const [input, setInput] = useState("");
   const [open, setOpen] = useState(false);
@@ -296,7 +394,7 @@ function TagSearchInput({
   return (
     <div className="relative" ref={containerRef}>
       {/* Main bar — left: chips+input scrollable, right: actions pinned */}
-      <div className="flex items-center h-10 w-80 rounded-xl border border-zinc-200 bg-white shadow-sm transition focus-within:border-zinc-400 focus-within:ring-2 focus-within:ring-zinc-950/[0.06]">
+      <div className={`flex h-10 items-center rounded-xl border border-zinc-200/90 bg-zinc-50/50 transition focus-within:border-zinc-300 focus-within:bg-white focus-within:ring-1 focus-within:ring-zinc-950/[0.06] ${className ?? "w-80"}`}>
         {/* Scrollable chips + input */}
         <div
           className="flex items-center gap-1.5 flex-1 min-w-0 h-full pl-3 overflow-hidden cursor-text"
@@ -451,6 +549,7 @@ export default function Findings() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [status, setStatus] = useState<StatusTab>("open");
   const [selected, setSelected] = useState<Finding | null>(null);
+  const [drawerGroup, setDrawerGroup] = useState<Finding[] | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("severity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [severityFilter, setSeverityFilter] = useState<SeverityFilter>("all");
@@ -458,19 +557,58 @@ export default function Findings() {
     const raw = searchParams.get("checks");
     return raw ? raw.split(",").filter(Boolean) : [];
   });
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => loadCollapsedGroups());
+  const [benchmarkFilter, setBenchmarkFilter] = useState<BenchmarkFilter>(() => {
+    const fw = searchParams.get("framework");
+    if (fw && FRAMEWORKS.some((f) => f.id === fw)) return fw as FrameworkId;
+    return "all";
+  });
+
+  const frameworkMapQ = useQuery({
+    queryKey: ["check-frameworks"],
+    queryFn: () => api<{ checks: Record<string, string[]> }>("/v1/controls/check-frameworks"),
+    staleTime: 300_000,
+  });
+
+  function openReview(items: Finding[]) {
+    const top = items.reduce((best, f) => (f.risk_score > best.risk_score ? f : best), items[0]);
+    setDrawerGroup(items.length > 1 ? items : null);
+    setSelected(top);
+    setDrawerResolved(false);
+  }
+
+  function closeDrawer() {
+    setSelected(null);
+    setDrawerGroup(null);
+    setDrawerResolved(false);
+    setVerifying(false);
+  }
 
   function handleTagsChange(tags: string[]) {
     setSearchTags(tags);
-    if (tags.length > 0) {
-      setSearchParams({ checks: tags.join(",") }, { replace: true });
-    } else {
-      setSearchParams({}, { replace: true });
-    }
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (tags.length > 0) next.set("checks", tags.join(","));
+      else next.delete("checks");
+      return next;
+    }, { replace: true });
+  }
+
+  function handleBenchmarkChange(fw: BenchmarkFilter) {
+    setBenchmarkFilter(fw);
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      if (fw === "all") next.delete("framework");
+      else next.set("framework", fw);
+      return next;
+    }, { replace: true });
   }
   useEffect(() => {
-    localStorage.setItem(COLLAPSED_FINDINGS_KEY, JSON.stringify(collapsed));
-  }, [collapsed]);
+    try {
+      localStorage.removeItem(COLLAPSED_FINDINGS_KEY);
+    } catch {
+      /* ignore */
+    }
+  }, []);
 
   const downloadCsv = useCallback(async () => {
     const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
@@ -489,6 +627,12 @@ export default function Findings() {
   const q = useQuery({
     queryKey: ["findings", status],
     queryFn: () => api<FindingPage>(`/v1/findings?status=${status}&limit=500`),
+    refetchInterval: verifying ? 3000 : false,
+  });
+
+  const openMetricsQ = useQuery({
+    queryKey: ["findings", "open"],
+    queryFn: () => api<FindingPage>(`/v1/findings?status=open&limit=500`),
     refetchInterval: verifying ? 3000 : false,
   });
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: () => api<Account[]>("/v1/accounts") });
@@ -536,19 +680,38 @@ export default function Findings() {
     },
   });
 
+  function handleMetricSelect(filter: SeverityFilter) {
+    setSeverityFilter(filter);
+    if (status !== "open") setStatus("open");
+  }
+
   const findings = q.data?.items ?? [];
-  const totals = useMemo(() => {
+  const checkFrameworksApi = frameworkMapQ.data?.checks;
+
+  const openFindingsForMetrics = openMetricsQ.data?.items ?? (status === "open" ? findings : []);
+
+  const metricBenchmarkScoped = useMemo(
+    () => openFindingsForMetrics.filter((f) => matchesBenchmarkFilter(f, benchmarkFilter, checkFrameworksApi)),
+    [openFindingsForMetrics, benchmarkFilter, checkFrameworksApi],
+  );
+
+  const metricTotals = useMemo(() => {
     const t = { open: 0, critical: 0, high: 0, medium: 0, low: 0 };
-    for (const f of findings) {
+    for (const f of metricBenchmarkScoped) {
       t.open++;
       if (f.severity in t) t[f.severity as keyof typeof t]++;
     }
     return t;
-  }, [findings]);
+  }, [metricBenchmarkScoped]);
+
+  const benchmarkScopedFindings = useMemo(
+    () => findings.filter((f) => matchesBenchmarkFilter(f, benchmarkFilter, checkFrameworksApi)),
+    [findings, benchmarkFilter, checkFrameworksApi],
+  );
 
   const rows = useMemo(() => {
-    const arr = findings.filter((f) => {
-      if (!matchesSeverityFilter(f, severityFilter)) return false;
+    const arr = benchmarkScopedFindings.filter((f) => {
+      if (status === "open" && !matchesSeverityFilter(f, severityFilter)) return false;
       if (searchTags.length === 0) return true;
       // OR logic: finding matches any tag (exact check_id or text search)
       return searchTags.some((tag) => {
@@ -565,18 +728,33 @@ export default function Findings() {
       return sortDir === "asc" ? cmp : -cmp;
     });
     return arr;
-  }, [findings, searchTags, severityFilter, sortKey, sortDir]);
+  }, [benchmarkScopedFindings, searchTags, severityFilter, sortKey, sortDir, status]);
 
-  const grouped = useMemo(() => {
-    if (sortKey !== "severity" || status !== "open") return null;
+  const displayGroups = useMemo(() => {
     const map = new Map<string, Finding[]>();
     for (const f of rows) {
       const list = map.get(f.check_id) ?? [];
       list.push(f);
       map.set(f.check_id, list);
     }
-    return [...map.entries()].sort(([, a], [, b]) => (sevWeight[a[0].severity] ?? 9) - (sevWeight[b[0].severity] ?? 9) || b.length - a.length);
-  }, [rows, sortKey]);
+    const entries = [...map.entries()];
+    entries.sort(([, a], [, b]) => {
+      let cmp = 0;
+      if (sortKey === "severity") {
+        cmp =
+          (sevWeight[a[0].severity] ?? 9) - (sevWeight[b[0].severity] ?? 9) ||
+          Math.max(...b.map((f) => f.risk_score)) - Math.max(...a.map((f) => f.risk_score));
+      } else if (sortKey === "score") {
+        cmp = Math.max(...b.map((f) => f.risk_score)) - Math.max(...a.map((f) => f.risk_score));
+      } else {
+        const aOldest = Math.min(...a.map((f) => new Date(f.first_seen).getTime()));
+        const bOldest = Math.min(...b.map((f) => new Date(f.first_seen).getTime()));
+        cmp = bOldest - aOldest;
+      }
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    return entries;
+  }, [rows, sortKey, sortDir]);
 
   function toggleSort(k: SortKey) {
     if (sortKey === k) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -586,14 +764,8 @@ export default function Findings() {
     }
   }
 
-  const pctOf = (n: number) => totals.open === 0 ? "—" : `${Math.round((n / totals.open) * 100)}% of open`;
-  const chTotal = totals.critical + totals.high;
-  const summaryCards = [
-    { key: "all" as SeverityFilter, label: "Open", value: totals.open, tone: "text-zinc-900", hint: `${chTotal} crit/high · ${totals.medium} med · ${totals.low} low`, dot: "bg-zinc-400", glow: "" },
-    { key: "critical_high" as SeverityFilter, label: "Critical · High", value: chTotal, tone: "text-red-600", hint: pctOf(chTotal), dot: "bg-red-500", glow: "bg-gradient-to-br from-red-50/60 to-white" },
-    { key: "medium" as SeverityFilter, label: "Medium", value: totals.medium, tone: "text-amber-600", hint: pctOf(totals.medium), dot: "bg-amber-500", glow: "bg-gradient-to-br from-amber-50/50 to-white" },
-    { key: "low" as SeverityFilter, label: "Low", value: totals.low, tone: "text-zinc-600", hint: pctOf(totals.low), dot: "bg-zinc-300", glow: "" },
-  ];
+  const chTotal = metricTotals.critical + metricTotals.high;
+  const hasUrgent = chTotal > 0;
 
   if (!accounts.isLoading && accounts.data && !connectedId) {
     return (
@@ -627,31 +799,46 @@ export default function Findings() {
   }
 
   return (
-    <div className="w-full px-8 py-7">
-      <div className="mb-7 flex items-start justify-between gap-6">
-        <div className="min-w-0">
+    <div className="w-full px-6 py-6">
+      <div className="mb-5">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Findings</h1>
-          <p className="mt-1 text-sm text-zinc-500">Security posture issues from the latest account scan.{scanRun.data?.finished_at && <> Last scan {lastScanLabel(scanRun.data.finished_at)}.</>}</p>
+          {scanRun.data?.finished_at && (
+            <span className="text-sm text-zinc-500">Last scan {lastScanLabel(scanRun.data.finished_at)}</span>
+          )}
+          {benchmarkFilter !== "all" && (
+            <span className="text-sm font-medium text-indigo-700/90">{frameworkLabel(benchmarkFilter)} scope</span>
+          )}
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <button onClick={downloadCsv} className="rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950">Export</button>
-          <button onClick={() => { if (isRefreshing) return; qc.invalidateQueries({ queryKey: ["findings"] }); setIsRefreshing(true); }} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-950 disabled:opacity-50 disabled:cursor-not-allowed">{isRefreshing && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}Refresh</button>
-          {connectedId && <button onClick={() => triggerScan(connectedId)} disabled={scanTriggered || isRunning} className="inline-flex items-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{(scanTriggered || isRunning) && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}</button>}
+        <div className="mt-3 flex min-h-[4.25rem] flex-wrap items-center justify-between gap-x-4 gap-y-3">
+          <MetricStrip
+            totals={metricTotals}
+            active={severityFilter}
+            onSelect={handleMetricSelect}
+            highlightActive={status === "open"}
+          />
+          <div className="flex shrink-0 items-center gap-2">
+            <button onClick={downloadCsv} className="inline-flex items-center rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900">Export</button>
+            <button onClick={() => { if (isRefreshing) return; qc.invalidateQueries({ queryKey: ["findings"] }); setIsRefreshing(true); }} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50">{isRefreshing && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}Refresh</button>
+            {connectedId && <button onClick={() => triggerScan(connectedId)} disabled={scanTriggered || isRunning} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{(scanTriggered || isRunning) && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}</button>}
+          </div>
         </div>
       </div>
 
       {isScanActive && (
-        <ScanProgressBar
-          phase={isRunning ? "running" : "starting"}
-          progress={scanProgress.progress}
-          elapsedMs={scanProgress.elapsedMs}
-          remainingMs={scanProgress.remainingMs}
-          finishing={scanProgress.finishing}
-          indeterminate={scanProgress.indeterminate}
-        />
+        <div className="mb-3">
+          <ScanProgressBar
+            phase={isRunning ? "running" : "starting"}
+            progress={scanProgress.progress}
+            elapsedMs={scanProgress.elapsedMs}
+            remainingMs={scanProgress.remainingMs}
+            finishing={scanProgress.finishing}
+            indeterminate={scanProgress.indeterminate}
+          />
+        </div>
       )}
       {scanStatus === "error" && scanRun.data?.error && (
-        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           <div>
             <span className="font-semibold">Last scan failed</span>
             {scanRun.data.failed_at && (
@@ -664,126 +851,87 @@ export default function Findings() {
         </div>
       )}
 
-      <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {summaryCards.map((card) => (
-          <button
-            key={card.key}
-            onClick={() => setSeverityFilter(card.key)}
-            className={`group relative overflow-hidden rounded-xl border px-4 py-3 text-left shadow-sm shadow-zinc-950/[0.04] transition hover:border-zinc-300 hover:shadow-md ${card.glow || "bg-white"} ${severityFilter === card.key ? "border-zinc-300 ring-2 ring-zinc-950/[0.04]" : "border-zinc-200"}`}
-          >
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="truncate text-[11px] font-semibold uppercase tracking-[0.13em] text-zinc-500">{card.label}</span>
-              <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${card.dot}`} />
-            </div>
-            <div className={`text-[2rem] font-bold tabular-nums leading-none tracking-tight ${card.tone}`}>{card.value}</div>
-            <div className="mt-1.5 truncate text-xs font-medium tabular-nums text-zinc-500">{card.hint}</div>
-          </button>
-        ))}
-      </div>
-
-      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex w-fit items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">{statusTabs.map((s) => <button key={s} onClick={() => setStatus(s)} className={`rounded-lg px-4 py-2 text-sm font-semibold transition-all ${status === s ? "bg-zinc-950 text-white shadow-sm" : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"}`}>{statusTabLabels[s]}</button>)}</div>
-        <div className="flex items-center gap-2">
-          <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} />
-          <div className="flex h-10 items-center gap-0.5 rounded-xl border border-zinc-200 bg-white px-1.5 shadow-sm">{(["severity", "score", "first_seen"] as SortKey[]).map((k) => <button key={k} onClick={() => toggleSort(k)} className={`inline-flex h-7 items-center gap-1 rounded-lg px-3 text-sm font-medium transition-all ${sortKey === k ? "bg-zinc-100 text-zinc-950 font-semibold" : "text-zinc-400 hover:bg-zinc-50 hover:text-zinc-700"}`}>{sortLabel(k)}{sortKey === k && <span className="text-xs text-zinc-500">{sortIcon(k, sortKey, sortDir)}</span>}</button>)}</div>
-        </div>
-      </div>
-
-      {q.isLoading && <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center text-sm text-zinc-400">Loading…</div>}
-      {!q.isLoading && rows.length === 0 && <div className="rounded-2xl border border-zinc-200 bg-white px-4 py-16 text-center"><p className="text-sm font-semibold text-zinc-700">{emptyFindingsLabel(status)}</p><p className="mt-1 text-sm text-zinc-400">{status === "open" ? "Run a scan to check your account for IAM issues." : "Nothing to show here."}</p></div>}
-
-      {rows.length > 0 && (
-        <div className="space-y-2.5 pb-8">
-          {(grouped ?? [["all", rows] as [string, Finding[]]]).map(([key, items]) => {
-            const isGrouped = grouped !== null;
-            const sev = items[0]?.severity ?? "low";
-            const label = checkLabels[key] ?? key;
-            const description = checkDescriptions[key];
-            const isCollapsed = !!collapsed[key];
-            return (
-              <div
-                key={key}
-                className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04] transition-shadow hover:border-zinc-300 hover:shadow-md"
+      <div
+        className={`overflow-hidden rounded-xl border bg-white shadow-sm shadow-zinc-950/[0.03] ${
+          hasUrgent ? "border-red-200/60" : "border-zinc-200/80"
+        }`}
+      >
+        <div
+          className={`flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${
+            hasUrgent ? "border-red-100/80 bg-gradient-to-r from-red-50/40 via-white to-white" : "border-zinc-100 bg-zinc-50/40"
+          }`}
+        >
+          <div className="flex items-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1">
+            {statusTabs.map((s) => (
+              <button
+                key={s}
+                onClick={() => setStatus(s)}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  status === s
+                    ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-200/80"
+                    : "text-zinc-500 hover:text-zinc-800"
+                }`}
               >
-                {isGrouped && (
-                  <button
-                    type="button"
-                    onClick={() => setCollapsed((prev) => ({ ...prev, [key]: !prev[key] }))}
-                    className="grid w-full grid-cols-[auto_auto_minmax(0,1fr)_44px_44px] items-center gap-3 bg-gradient-to-r from-zinc-50/80 to-white pl-5 pr-3 py-3.5 text-left transition-colors hover:from-zinc-100/60"
-                  >
-                    <svg
-                      className={`h-3.5 w-3.5 transition-transform duration-150 ${isCollapsed ? "-rotate-90 text-zinc-600" : "text-zinc-500"}`}
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                    </svg>
-                    <span className={`inline-block w-[72px] text-center rounded border py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] ${sevBadge[sev] ?? sevBadge.low}`}>
-                      {sev}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-[15px] font-semibold text-zinc-900">{label}</span>
-                        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-zinc-500">
-                          {items.length}
-                        </span>
-                      </div>
-                      {description && (
-                        <p className="mt-0.5 text-xs font-medium text-zinc-600 leading-normal">{description}</p>
-                      )}
-                    </div>
-                    <span className="hidden text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 md:block">Score</span>
-                    <span className="hidden text-center text-[10px] font-semibold uppercase tracking-[0.1em] text-zinc-500 md:block">Age</span>
-                  </button>
-                )}
-
-                {/* Animated accordion — CSS grid-template-rows transition */}
-                <div
-                  className="grid transition-[grid-template-rows] duration-[140ms] ease-out"
-                  style={{ gridTemplateRows: isCollapsed ? "0fr" : "1fr" }}
+                {statusTabLabels[s]}
+              </button>
+            ))}
+          </div>
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-3 sm:justify-end">
+            <BenchmarkScopeSelect value={benchmarkFilter} onChange={handleBenchmarkChange} />
+            <TagSearchInput tags={searchTags} onTagsChange={handleTagsChange} className="min-w-0 flex-1 max-w-md" />
+            <div className="flex shrink-0 items-center gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1">
+              {(["severity", "score", "first_seen"] as SortKey[]).map((k) => (
+                <button
+                  key={k}
+                  onClick={() => toggleSort(k)}
+                  className={`inline-flex h-9 items-center gap-1 rounded-lg px-3.5 text-sm font-medium transition ${
+                    sortKey === k ? "bg-white font-semibold text-zinc-900 shadow-sm ring-1 ring-zinc-200/80" : "text-zinc-500 hover:text-zinc-700"
+                  }`}
                 >
-                  <div className="overflow-hidden">
-                    <div className={`divide-y divide-zinc-100 ${isGrouped ? `border-t border-zinc-100 ${sevExpandedBg[sev] ?? sevExpandedBg.low} ${sevAccent[sev] ?? ""}` : ""}`}>
-                      {items.map((f) => (
-                        <div
-                          key={f.id}
-                          onClick={() => setSelected(f)}
-                          className={`group grid cursor-pointer grid-cols-[minmax(0,1fr)_44px_44px] items-center gap-3 py-2.5 pr-3 transition-colors duration-[120ms] hover:bg-zinc-100/50 ${isGrouped ? "pl-10" : "pl-5"}`}
-                        >
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-medium text-zinc-700 transition-colors group-hover:text-zinc-900">
-                              {resourceName(f.resource_arn)}
-                            </div>
-                            {!isGrouped && description && (
-                              <p className="mt-0.5 truncate text-xs text-zinc-600">{description}</p>
-                            )}
-                          </div>
-                          <div className="flex justify-center">
-                            <span className="text-xs font-medium tabular-nums text-zinc-500">
-                              {f.risk_score}
-                            </span>
-                          </div>
-                          <div className="text-center">
-                            <span className="text-xs font-medium tabular-nums text-zinc-500">{daysAgo(f.first_seen)}</span>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
+                  {sortLabel(k)}
+                  {sortKey === k && <span className="text-xs text-zinc-400">{sortIcon(k, sortKey, sortDir)}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-      )}
+
+        {q.isLoading && (
+          <div className="px-4 py-12 text-center text-sm text-zinc-400">Loading…</div>
+        )}
+        {!q.isLoading && rows.length === 0 && (
+          <div className="px-4 py-12 text-center">
+            <p className="text-sm font-semibold text-zinc-700">
+              {benchmarkFilter !== "all"
+                ? `No findings for ${frameworkLabel(benchmarkFilter)}`
+                : emptyFindingsLabel(status)}
+            </p>
+            <p className="mt-1 text-xs text-zinc-400">
+              {benchmarkFilter !== "all"
+                ? "Try All benchmarks or a different status tab."
+                : status === "open"
+                  ? "Run a scan to check your account for IAM issues."
+                  : "Nothing to show here."}
+            </p>
+          </div>
+        )}
+        {rows.length > 0 && (
+          <div className="grid gap-3 bg-zinc-50/60 p-3 sm:gap-3.5 sm:p-4">
+            {displayGroups.map(([checkId, items]) => (
+              <FindingIssueCard key={checkId} checkId={checkId} items={items} onReview={openReview} />
+            ))}
+          </div>
+        )}
+      </div>
 
       <FindingDrawer
         finding={selected}
+        relatedFindings={drawerGroup ?? undefined}
+        onSelectRelated={(f) => setSelected(f)}
         accountId={connectedId ?? null}
         resolved={drawerResolved}
         verifying={verifying}
-        onClose={() => { setSelected(null); setDrawerResolved(false); setVerifying(false); }}
+        onClose={closeDrawer}
         onAction={(id, action) => {
           if (action === "recheck") setVerifying(true);
           act.mutate({ id, action });

@@ -48,9 +48,7 @@ NARRATIVES: dict[str, str] = {
         "Infrastructure changes are subject to change management controls. "
         "Vigil collects GitHub and GitLab branch protection evidence including required reviewers, "
         "dismiss-stale-reviews enforcement, CODEOWNERS file presence, and deployment environment protection. "
-        "Self-merge checks flag PRs merged by their own author. "
-        "CloudTrail infrastructure events are correlated with GitHub PR merges by timestamp (±60 minutes) "
-        "to provide a linked change record for the audit period."
+        "Self-merge checks flag PRs merged by their own author."
     ),
     "CC7.2": (
         "Security events and anomalies are detected and monitored. "
@@ -63,8 +61,6 @@ NARRATIVES: dict[str, str] = {
         "Changes to infrastructure are authorized, documented, and tracked. "
         "Vigil collects CloudTrail management events for infrastructure-changing operations "
         "(security group rule changes, IAM user/role creation, S3 policy updates, KMS key operations). "
-        "These events are correlated with GitHub and GitLab pull requests merged within ±60 minutes, "
-        "linking each infrastructure change to an approved code review where applicable. "
         "Branch protection and required-reviewer evidence from GitHub/GitLab is included in this control."
     ),
 
@@ -99,8 +95,8 @@ NARRATIVES: dict[str, str] = {
         "in the same window, supporting credential disablement per CIS guidance."
     ),
     "CIS 1.22": (
-        "Vigil scans IAM role policies for wildcard Action or Resource on dangerous write paths, "
-        "and flags customer-managed policies that grant full administrative scope."
+        "Vigil scans IAM role policies for Action: '*' on customer-managed policies "
+        "(CIS full-admin pattern also requires Resource: '*')."
     ),
     "CIS 1.20": (
         "Vigil verifies that a support role exists in the account for incident management. "
@@ -253,7 +249,7 @@ SHORT_ANSWERS: dict[str, str] = {
     "CC6.8": "Malware and threat detection controls include GuardDuty, Security Hub, IMDSv2, and VPC flow log checks.",
     "CC7.1": "Infrastructure changes require review; branch protection, CODEOWNERS, and PR merge evidence is collected from GitHub/GitLab.",
     "CC7.2": "Security monitoring is active; CloudTrail, Config, GuardDuty, and Security Hub status are verified each scan.",
-    "CC8.1": "Infrastructure changes are tracked via CloudTrail events correlated with merged pull requests where SCM is connected.",
+    "CC8.1": "Infrastructure write events are collected from CloudTrail; GitHub/GitLab branch protection evidence supports authorized changes.",
     "CIS 1.5": "Root account MFA is verified from the IAM account summary at each scan.",
     "CIS 1.10": "Console IAM users without MFA devices are enumerated and reported as findings.",
     "CIS 2.1": "Multi-region CloudTrail enablement is verified from trail configuration snapshots.",
@@ -267,7 +263,7 @@ KNOWN_GAPS: dict[str, list[str]] = {
     "CC6.1": ["Physical access to data centers is out of scope — attest separately for colo/on-prem."],
     "CC6.2": ["Password complexity policy minimum length is not fully automated — confirm in IAM password policy."],
     "CC7.1": ["Emergency break-glass deploys outside SCM are not captured unless logged in CloudTrail."],
-    "CC8.1": ["Changes made directly in the AWS Console without a linked PR appear in CloudTrail only."],
+    "CC8.1": ["Changes made directly in the AWS Console appear in CloudTrail only — process attestation may be required."],
     "CIS 1.20": ["AWS Support role existence is checked; support plan enrollment is manual attestation."],
     "CIS 1.16": ["Vigil automates policy attachment checks; manual attestation still needed for business justification."],
 }

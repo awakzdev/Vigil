@@ -5,7 +5,7 @@ import json
 import uuid
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.models.control import Control, CheckControl
@@ -50,9 +50,19 @@ def seed_controls(db: Session) -> int:
                 select(CheckControl.check_id).where(CheckControl.control_id == ctrl.id)
             ).all()
         )
-        for check_id in entry.get("checks", []):
+        desired = set(entry.get("checks", []))
+        for check_id in desired:
             if check_id not in existing_links:
                 db.add(CheckControl(id=uuid.uuid4(), check_id=check_id, control_id=ctrl.id))
+
+        stale = existing_links - desired
+        if stale:
+            db.execute(
+                delete(CheckControl).where(
+                    CheckControl.control_id == ctrl.id,
+                    CheckControl.check_id.in_(stale),
+                )
+            )
 
     db.commit()
     return upserted

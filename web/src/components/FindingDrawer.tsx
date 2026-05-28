@@ -1,7 +1,12 @@
-import { useState, useEffect, type ReactNode } from "react";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 import { BLAST_RADIUS_CHECKS } from "../data/blastRadiusChecks";
+import { checkLabels } from "../data/checkLabels";
+import { remediationSummaryFor } from "../data/remediationSummaries";
+import { daysAgo, resourceDisplayName, resourceTypeLabel } from "../lib/findingDisplay";
+
+const DRAWER_MAX_W = "max-w-[640px]";
 
 type Finding = {
   id: string;
@@ -46,6 +51,38 @@ type Remediation = {
   cli: string;
   risk: string;
 };
+
+function OperationalInsights({
+  impact,
+  risk,
+  fix,
+  affected,
+}: {
+  impact: string;
+  risk: string;
+  fix: string;
+  affected?: string | null;
+}) {
+  const rows: { label: string; value: string }[] = [
+    { label: "Impact", value: impact },
+    { label: "Risk", value: risk },
+    { label: "Fix", value: fix },
+  ];
+  if (affected) rows.push({ label: "Affected", value: affected });
+
+  return (
+    <div className="divide-y divide-zinc-100 rounded-lg bg-white ring-1 ring-zinc-200/80">
+      {rows.map(({ label, value }) => (
+        <div key={label} className="flex gap-4 px-3.5 py-2.5 first:pt-3 last:pb-3">
+          <span className="w-[4.5rem] shrink-0 pt-px text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+            {label}
+          </span>
+          <p className="min-w-0 flex-1 text-[13px] leading-snug text-zinc-700">{value}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 const remediations: Record<string, Remediation> = {
   "iam.user.no_mfa": {
@@ -169,7 +206,7 @@ aws iam delete-policy --policy-arn <policy-arn>`,
     risk: "Stale policies are low-risk but add noise to access reviews and may be accidentally re-attached with broad permissions later.",
   },
   "iam.policy.wildcard_resource": {
-    why: "This policy grants write or sensitive actions on Resource: \"*\" — meaning they apply to every resource in the account. Even when the action list is explicit, a wildcard resource makes the permission unreasonably broad and hard to audit.",
+    why: "This policy grants write or sensitive actions on Resource: \"*\" — they apply to every resource of that type in the account. CIS benchmarks only require fixing full admin (Action: '*' with Resource: '*'); this is optional least-privilege hygiene, not a scored compliance fail.",
     console: [
       "Open IAM → Roles → select the role → Permissions tab",
       "Find the policy listed in the finding evidence",
@@ -1063,18 +1100,6 @@ const identityRemediations: Record<string, Remediation> = {
     ],
     cli: "",
     risk: "Unprotected branches allow unauthorized commits to reach production without review or audit trail.",
-  },
-  "github.repo.no_codeowners": {
-    why: "Without a CODEOWNERS file, GitHub cannot automatically request reviews from the right team when code in a particular area is changed. Code reviews end up assigned ad-hoc, making it easy for sensitive paths (auth, payments, infra) to be reviewed by people unfamiliar with the area — or not reviewed at all.",
-    console: [
-      "Create a file named CODEOWNERS in the repo root, .github/, or docs/",
-      "Map file paths to GitHub teams or individuals, e.g.: /* @org/platform-team",
-      "Add more specific rules for sensitive directories, e.g.: /src/auth/ @org/security",
-      "Commit the file to the default branch",
-      "In branch protection settings, enable 'Require review from Code Owners'",
-    ],
-    cli: "",
-    risk: "Sensitive code paths may be reviewed by people without the context to spot security issues, undermining the control value of required reviews.",
   },
   "github.repo.no_env_protection": {
     why: "GitHub deployment environments without required reviewers allow workflows to deploy to production without any human approval gate. This bypasses the change management control that ensures at least one person signs off before code reaches production.",
@@ -3083,7 +3108,7 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
   );
 }
 
-type Tab = "overview" | "remediation" | "whatif";
+type Tab = "overview" | "resources" | "remediation" | "evidence" | "timeline" | "whatif";
 type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; used_actions?: string[]; granularity?: "action" | "service"; statements_removed?: number; statements_modified?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
 
 const MISLEADING_INLINE_POLICY_NAMES = new Set([
@@ -3367,7 +3392,7 @@ function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () 
       {open && (
         <div className="fixed inset-0 z-[70] flex items-end justify-end">
           <div className="absolute inset-0 bg-black/20 backdrop-blur-[1px]" onClick={() => setOpen(false)} />
-          <div className="relative w-full max-w-[560px] rounded-t-2xl bg-white shadow-2xl p-6 space-y-4">
+          <div className="relative w-full max-w-[640px] rounded-t-2xl bg-white shadow-2xl p-6 space-y-4">
             <div className="flex items-center justify-between">
               <h3 className="text-base font-semibold text-zinc-900">Document exception</h3>
               <button onClick={() => setOpen(false)} className="text-zinc-400 hover:text-zinc-600">
@@ -3431,7 +3456,113 @@ function ExceptionButton({ findingId, onDone }: { findingId: string; onDone: () 
   );
 }
 
-export function FindingDrawer({ finding, accountId, onClose, onAction, resolved, verifying }: { finding: Finding | null; accountId: string | null; onClose: () => void; onAction: (id: string, action: "recheck" | "resolve") => void; resolved?: boolean; verifying?: boolean }) {
+function AffectedResourcesPanel({
+  findings,
+  activeId,
+  onSelect,
+  checkId,
+  defaultExpanded = false,
+}: {
+  findings: Finding[];
+  activeId: string;
+  onSelect: (f: Finding) => void;
+  checkId: string;
+  defaultExpanded?: boolean;
+}) {
+  const [search, setSearch] = useState("");
+  const [expanded, setExpanded] = useState(defaultExpanded);
+  const preview = 5;
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return findings;
+    return findings.filter((f) => {
+      const name = resourceDisplayName(f).toLowerCase();
+      return name.includes(q) || f.resource_arn.toLowerCase().includes(q);
+    });
+  }, [findings, search]);
+
+  const visible = expanded ? filtered : filtered.slice(0, preview);
+  const hidden = filtered.length - visible.length;
+  const typeLabel = resourceTypeLabel(checkId);
+
+  return (
+    <div className="rounded-lg bg-white ring-1 ring-zinc-200/80">
+      <div className="flex items-start justify-between gap-3 px-3.5 pt-3 pb-2">
+        <div>
+          <h3 className="text-[13px] font-semibold text-zinc-900">{typeLabel}</h3>
+          <p className="mt-0.5 text-[11px] text-zinc-500">{findings.length} in this account</p>
+        </div>
+        {findings.length > 6 && (
+          <input
+            type="search"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search…"
+            className="w-32 rounded-lg border-0 bg-zinc-100 px-2.5 py-1.5 text-xs text-zinc-800 outline-none ring-1 ring-zinc-200/60 placeholder:text-zinc-400 focus:ring-indigo-500/30"
+          />
+        )}
+      </div>
+      <ul className="mt-1 space-y-0.5 px-1.5 pb-2">
+        {visible.map((f) => {
+          const active = f.id === activeId;
+          return (
+            <li key={f.id}>
+              <button
+                type="button"
+                onClick={() => onSelect(f)}
+                className={`flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-left text-[13px] transition ${
+                  active ? "bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/60" : "text-zinc-700 hover:bg-zinc-50"
+                }`}
+              >
+                <span className="min-w-0 truncate font-medium">{resourceDisplayName(f)}</span>
+                <span className="shrink-0 text-[11px] tabular-nums text-zinc-400">{daysAgo(f.first_seen)}</span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="mb-2 px-3.5 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+        >
+          +{hidden} more
+        </button>
+      )}
+      {expanded && filtered.length > preview && (
+        <button
+          type="button"
+          onClick={() => setExpanded(false)}
+          className="mb-2 px-3.5 text-[11px] font-medium text-zinc-500 hover:text-zinc-700"
+        >
+          Show less
+        </button>
+      )}
+    </div>
+  );
+}
+
+export function FindingDrawer({
+  finding,
+  relatedFindings,
+  onSelectRelated,
+  accountId,
+  onClose,
+  onAction,
+  resolved,
+  verifying,
+}: {
+  finding: Finding | null;
+  relatedFindings?: Finding[];
+  onSelectRelated?: (f: Finding) => void;
+  accountId: string | null;
+  onClose: () => void;
+  onAction: (id: string, action: "recheck" | "resolve") => void;
+  resolved?: boolean;
+  verifying?: boolean;
+}) {
   const [tab, setTab] = useState<Tab>("overview");
   const [remTab, setRemTab] = useState<"console" | "cli">("console");
   const [countdown, setCountdown] = useState(5);
@@ -3447,6 +3578,8 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
 
   useEffect(() => { setTab("overview"); setRemTab("console"); }, [finding?.id]);
 
+  const multiResource = (relatedFindings?.length ?? 0) > 1;
+
   useEffect(() => {
     if (!resolved) { setCountdown(5); return; }
     setCountdown(5);
@@ -3458,6 +3591,12 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
   if (!finding) return null;
 
   const rem = identityRemediations[finding.check_id] ?? remediations[finding.check_id] ?? fallbackRemediation;
+  const ops = remediationSummaryFor(finding.check_id);
+  const affectedLabel = multiResource
+    ? relatedFindings
+      ? `${relatedFindings.length} resources`
+      : null
+    : resourceDisplayName(finding);
   const isIdentityCheck = finding.check_id.startsWith("github.") || finding.check_id.startsWith("gitlab.");
   const headerBadge = sevHeaderBadge[finding.severity] ?? sevHeaderBadge.low;
   const wash = sevWash[finding.severity] ?? sevWash.low;
@@ -3491,29 +3630,39 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
+    ...(multiResource ? [{ id: "resources" as Tab, label: "Resources" }] : []),
     { id: "remediation", label: "Remediation" },
+    ...(hasEvidence ? [{ id: "evidence" as Tab, label: "Evidence" }] : []),
+    { id: "timeline", label: "Timeline" },
     ...(showBlastRadius ? [{ id: "whatif" as Tab, label: "What If" }] : []),
   ];
+  const hasException =
+    finding.status === "excepted" ||
+    !!finding.exception_reason ||
+    !!finding.exception_approved_by;
 
-  return <><div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" onClick={onClose} /><div className="fixed right-0 top-0 z-50 flex h-full w-full max-w-[560px] flex-col overflow-hidden bg-white shadow-2xl">
+  return <><div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" onClick={onClose} /><div className={`fixed right-0 top-0 z-50 flex h-full w-full ${DRAWER_MAX_W} flex-col overflow-hidden bg-white shadow-2xl`}>
     <div className={`relative bg-gradient-to-b ${wash} px-7 pt-6 pb-4`}>
       <button onClick={onClose} className="absolute right-5 top-5 rounded-md p-1 text-zinc-300 transition hover:bg-white/70 hover:text-zinc-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
       <div className="flex items-center gap-2.5 pr-10"><span className="text-xs font-medium text-zinc-500">{category}</span><span className="text-zinc-300">·</span><span className={`inline-flex items-center rounded border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ${headerBadge}`}>{finding.severity}</span></div>
-      <h2 className="mt-2 pr-8 text-[17px] font-semibold leading-snug text-zinc-900">{finding.title}</h2>
-      <div className="mt-4 rounded-lg border border-black/[0.07] bg-white/60 px-3 py-2.5">
-        <div className="text-[11px] font-medium text-zinc-400 mb-0.5">Resource</div>
-        <div className="group relative">
-          <p className="truncate font-mono text-xs text-zinc-700">{finding.resource_arn}</p>
-          <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden max-w-xs rounded-lg border border-zinc-200 bg-white px-3 py-2 shadow-lg group-hover:block"><p className="break-all font-mono text-xs text-zinc-700 leading-relaxed">{finding.resource_arn}</p></div>
+      <h2 className="mt-2 pr-8 text-[17px] font-semibold leading-snug text-zinc-900">{checkLabels[finding.check_id] ?? finding.title}</h2>
+      {!multiResource && (
+        <div className="mt-4 rounded-lg border border-black/[0.07] bg-white/60 px-3 py-2.5">
+          <div className="text-[11px] font-medium text-zinc-400 mb-0.5">Resource</div>
+          <div className="group relative">
+            <p className="truncate font-mono text-xs text-zinc-700">{resourceDisplayName(finding)}</p>
+            <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden max-w-xs rounded-lg border border-zinc-200 bg-white px-3 py-2 shadow-lg group-hover:block"><p className="break-all font-mono text-xs text-zinc-700 leading-relaxed">{finding.resource_arn}</p></div>
+          </div>
         </div>
-      </div>
+      )}
       {/* Segmented tab control */}
-      <div className="mt-4 flex gap-0.5 rounded-xl bg-black/[0.06] p-1">
+      <div className="mt-4 -mx-1 overflow-x-auto pb-0.5">
+        <div className="flex min-w-max gap-0.5 rounded-xl bg-black/[0.06] p-1">
         {tabs.map((t) => (
           <button
             key={t.id}
             onClick={() => setTab(t.id)}
-            className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-1.5 text-[13px] font-medium transition-all ${
+            className={`flex items-center justify-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-medium transition-all ${
               tab === t.id ? "bg-white text-zinc-900 shadow-sm" : "text-zinc-500 hover:text-zinc-700"
             }`}
           >
@@ -3525,22 +3674,44 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
             {t.label}
           </button>
         ))}
+        </div>
       </div>
     </div>
-    <div className="flex-1 space-y-4 overflow-y-auto bg-stone-50 px-7 pb-6 pt-5">
+    <div className="flex-1 space-y-3 overflow-y-auto bg-stone-50 px-7 pb-6 pt-4">
       {tab === "overview" && <>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"><div className="mb-1.5 text-sm font-semibold text-zinc-800">Why it matters</div><p className="text-sm leading-6 text-zinc-600">{rem.why}</p></div>
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm"><div className="mb-1.5 text-sm font-semibold text-zinc-800">Risk</div><p className="text-sm leading-6 text-zinc-600">{rem.risk}</p></div>
-        </div>
-        {hasEvidence && <div>
-          <div className="mb-2 text-sm font-semibold text-zinc-700">Scan details</div>
-          <EvidenceSection
-            evidence={finding.evidence}
-            checkId={finding.check_id}
-            cloudTrailLogging={cloudTrailLogging}
-          />
-        </div>}
+        <OperationalInsights
+          impact={ops.impact}
+          risk={ops.risk}
+          fix={ops.fix}
+          affected={affectedLabel}
+        />
+        {hasException && (
+          <div className="rounded-lg bg-amber-50/80 px-3.5 py-3 ring-1 ring-amber-200/70">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-800/80">Exception</p>
+            {finding.exception_reason && (
+              <p className="mt-1 text-[13px] leading-snug text-amber-900/90">{finding.exception_reason}</p>
+            )}
+            <dl className="mt-2 space-y-1 text-[13px] leading-snug">
+              {finding.exception_approved_by && (
+                <div className="flex gap-2">
+                  <dt className="shrink-0 text-amber-800/70">By</dt>
+                  <dd className="text-amber-900">{finding.exception_approved_by}</dd>
+                </div>
+              )}
+              {finding.exception_expires_at && (
+                <div className="flex gap-2">
+                  <dt className="shrink-0 text-amber-800/70">Expires</dt>
+                  <dd className="text-amber-900">
+                    {new Date(finding.exception_expires_at).toLocaleDateString()}
+                  </dd>
+                </div>
+              )}
+              {!finding.exception_reason && !finding.exception_approved_by && (
+                <p className="text-amber-800/80">Approved exception on this finding.</p>
+              )}
+            </dl>
+          </div>
+        )}
         {showPolicyGen && (
           <GeneratePolicySection
             accountId={accountId!}
@@ -3548,26 +3719,75 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
             cloudTrailLogging={cloudTrailLogging}
           />
         )}
-        <div className="flex items-center gap-3 border-t border-zinc-200/70 pt-4 pb-1 text-xs text-zinc-400">
-          <span>First seen {new Date(finding.first_seen).toLocaleDateString()}</span>
-          <span className="text-zinc-300">·</span>
-          <span>Last seen {new Date(finding.last_seen).toLocaleDateString()}</span>
-          <span className="text-zinc-300">·</span>
-          <span>Score <span className="font-semibold text-zinc-500">{finding.risk_score}</span></span>
-        </div>
       </>}
+      {tab === "resources" && multiResource && relatedFindings && onSelectRelated && (
+        <AffectedResourcesPanel
+          findings={relatedFindings}
+          activeId={finding.id}
+          onSelect={onSelectRelated}
+          checkId={finding.check_id}
+          defaultExpanded
+        />
+      )}
       {tab === "remediation" && (
-        <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden shadow-sm">
-          <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3">
-            <span className="text-sm font-semibold text-zinc-700">Steps</span>
-            {!isIdentityCheck && (
-              <div className="flex gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5">{(["console", "cli"] as const).map((t) => <button key={t} onClick={() => setRemTab(t)} className={`rounded-full px-3.5 py-1 text-[13px] font-medium transition-all ${remTab === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-600"}`}>{t === "cli" ? "AWS CLI" : "Console"}</button>)}</div>
-            )}
+        <div className="space-y-3">
+          <OperationalInsights impact={ops.impact} risk={ops.risk} fix={ops.fix} />
+          <div className="overflow-hidden rounded-lg border border-zinc-200/80 bg-white">
+            <div className="flex items-center justify-between border-b border-zinc-100 px-3.5 py-2.5">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Steps</span>
+              {!isIdentityCheck && (
+                <div className="flex gap-0.5 rounded-full border border-zinc-200 bg-zinc-50 p-0.5">{(["console", "cli"] as const).map((t) => <button key={t} onClick={() => setRemTab(t)} className={`rounded-full px-3 py-0.5 text-[12px] font-medium transition-all ${remTab === t ? "bg-zinc-900 text-white shadow-sm" : "text-zinc-400 hover:text-zinc-600"}`}>{t === "cli" ? "CLI" : "Console"}</button>)}</div>
+              )}
+            </div>
+            <div className="px-3.5 py-3">
+              {(isIdentityCheck || remTab === "console") && (
+                <ol className="space-y-2">
+                  {rem.console.map((item, i) => (
+                    <li key={i} className="flex gap-2.5 text-[13px] leading-snug text-zinc-700">
+                      <span className={`mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded text-[10px] font-bold ${step}`}>{i + 1}</span>
+                      <span className="min-w-0">{item}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {!isIdentityCheck && remTab === "cli" && <CliBlock code={resolvedCli(finding)} />}
+            </div>
           </div>
-          <div className="bg-zinc-50/70 p-5">
-            {(isIdentityCheck || remTab === "console") && <ol className="space-y-3">{rem.console.map((item, i) => <li key={i} className="flex gap-3 text-sm leading-6 text-zinc-700"><span className={`mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-full text-[11px] font-bold ${step}`}>{i + 1}</span>{item}</li>)}</ol>}
-            {!isIdentityCheck && remTab === "cli" && <CliBlock code={resolvedCli(finding)} />}
-          </div>
+        </div>
+      )}
+      {tab === "evidence" && hasEvidence && (
+        <EvidenceSection
+          evidence={finding.evidence}
+          checkId={finding.check_id}
+          cloudTrailLogging={cloudTrailLogging}
+        />
+      )}
+      {tab === "timeline" && (
+        <div className="rounded-lg bg-white ring-1 ring-zinc-200/80">
+          <dl className="divide-y divide-zinc-100">
+            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Status</dt>
+              <dd className="text-[13px] font-medium capitalize text-zinc-900">{finding.status}</dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">First seen</dt>
+              <dd className="text-right text-[13px] text-zinc-900">
+                {new Date(finding.first_seen).toLocaleDateString()}
+                <span className="mt-0.5 block text-[11px] text-zinc-400">{daysAgo(finding.first_seen)}</span>
+              </dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Last seen</dt>
+              <dd className="text-right text-[13px] text-zinc-900">
+                {new Date(finding.last_seen).toLocaleDateString()}
+                <span className="mt-0.5 block text-[11px] text-zinc-400">{daysAgo(finding.last_seen)}</span>
+              </dd>
+            </div>
+            <div className="flex items-baseline justify-between gap-4 px-3.5 py-2.5">
+              <dt className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Risk</dt>
+              <dd className="text-[13px] font-semibold tabular-nums text-zinc-900">{finding.risk_score}</dd>
+            </div>
+          </dl>
         </div>
       )}
       {tab === "whatif" && showBlastRadius && (
@@ -3580,7 +3800,7 @@ export function FindingDrawer({ finding, accountId, onClose, onAction, resolved,
       <ExceptionButton findingId={finding.id} onDone={onClose} />
     </div>
     {resolved && (
-      <div className="fixed right-0 top-0 z-[60] flex h-full w-full max-w-[560px] flex-col items-center justify-center bg-white/85 backdrop-blur-md">
+      <div className={`fixed right-0 top-0 z-[60] flex h-full w-full ${DRAWER_MAX_W} flex-col items-center justify-center bg-white/85 backdrop-blur-md`}>
         <div className="relative flex items-center justify-center">
           <div className="absolute h-36 w-36 animate-ping rounded-full bg-emerald-400 opacity-10" style={{ animationDuration: "1.4s" }} />
           <div className="relative flex h-32 w-32 items-center justify-center rounded-full bg-emerald-500" style={{ boxShadow: "0 0 0 12px rgba(16,185,129,0.12), 0 0 60px rgba(16,185,129,0.45)" }}>

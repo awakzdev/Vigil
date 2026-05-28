@@ -84,7 +84,7 @@ class ManageUrlOut(BaseModel):
 
 
 def _frontend_url() -> str:
-    return settings.API_PUBLIC_URL.replace(":8000", ":5173")
+    return settings.FRONTEND_URL
 
 
 def _callback_uri() -> str:

@@ -10,6 +10,7 @@ import AuthCallback from "./pages/AuthCallback";
 import Account from "./pages/Account";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
+import DetectionCoverage from "./pages/DetectionCoverage";
 import Controls from "./pages/Controls";
 import GitHubIntegration from "./pages/GitHubIntegration";
 import GitHubIntegrationEdit from "./pages/GitHubIntegrationEdit";
@@ -39,6 +40,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="/accounts" element={<Accounts />} />
             <Route path="/account" element={<Account />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/detection" element={<DetectionCoverage />} />
             <Route path="/controls" element={<Controls />} />
             <Route path="/integrations" element={<Integrations />} />
             <Route path="/integrations/github" element={<GitHubIntegration />} />

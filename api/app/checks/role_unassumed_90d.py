@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.checks.base import FindingDraft, score
+from app.checks.iam_role_exclusions import is_operational_check_excluded_role
 from app.models import IamRole
 
 CHECK_ID = "iam.role.unassumed_90d"
@@ -17,7 +18,7 @@ def run(db: Session, account_id) -> list[FindingDraft]:
     roles = db.scalars(select(IamRole).where(IamRole.account_id == account_id)).all()
     out: list[FindingDraft] = []
     for r in roles:
-        if "/aws-service-role/" in r.arn:
+        if is_operational_check_excluded_role(r.arn, r.name):
             continue
         ref = r.last_assumed or r.created
         if ref and ref >= cutoff:

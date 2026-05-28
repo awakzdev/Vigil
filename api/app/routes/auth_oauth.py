@@ -46,8 +46,7 @@ def _gitlab_callback_uri() -> str:
 
 
 def _frontend_url() -> str:
-    base = settings.API_PUBLIC_URL.replace(":8000", ":5173")
-    return base
+    return settings.FRONTEND_URL
 
 
 def _valid_link_token(link_token: str | None) -> bool:
@@ -176,6 +175,8 @@ def google_login(link_token: str | None = None):
         "prompt": "select_account",
         "state": state,
     }
+    if settings.APP_ENV == "production" and settings.GOOGLE_ALLOWED_DOMAIN:
+        params["hd"] = settings.GOOGLE_ALLOWED_DOMAIN
     return RedirectResponse(f"{_GOOGLE_AUTH_URL}?{urlencode(params)}")
 
 
@@ -213,6 +214,9 @@ def google_callback(
 
         if not email or not google_id:
             return _callback_error(state, "google", "no_email")
+
+        if settings.APP_ENV == "production" and settings.GOOGLE_ALLOWED_DOMAIN and not email.endswith(f"@{settings.GOOGLE_ALLOWED_DOMAIN}"):
+            return _callback_error(state, "google", "domain_not_allowed")
 
         # link flow: attach google_id to existing account
         if state and state.startswith("link:"):

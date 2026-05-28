@@ -618,10 +618,17 @@ def run_scan(account_id: str) -> dict:
     try:
         stats: dict = {}
 
+        _TOTAL_STEPS = 23  # 21 collectors + checks + snapshots
+        _step_counter = 0
+
         def _step(name: str, fn):
-            nonlocal step
+            nonlocal step, _step_counter
             step = name
-            return fn()
+            result = fn()
+            _step_counter += 1
+            run.stats = {**stats, "_progress_step": _step_counter, "_progress_total": _TOTAL_STEPS}
+            db.commit()
+            return result
 
         stats.update(_step("collect_iam", lambda: collect_iam(db, acc)))
         stats["s3_account_public_access_block"] = _step(
@@ -657,14 +664,16 @@ def run_scan(account_id: str) -> dict:
 
         step = "load_check_config"
         org_obj = db.get(Org, acc.org_id)
-        check_cfg = (org_obj.settings or {}).get("checks", {}) if org_obj else {}
+        org_settings = org_obj.settings if org_obj else {}
 
         step = "run_checks"
         drafts = []
         check_ids_run: set[str] = set()
         check_errors: list[dict] = []
+        from app.services.check_settings import is_check_enabled
+
         for mod in ALL_CHECKS:
-            if check_cfg.get(mod.CHECK_ID, {}).get("enabled", True) is False:
+            if not is_check_enabled(org_settings, mod.CHECK_ID):
                 continue
             check_ids_run.add(mod.CHECK_ID)
             try:
@@ -943,19 +952,26 @@ def send_weekly_digests() -> dict:
                 skipped += 1
                 continue
 
-            open_findings = db.scalars(
-                select(Finding).where(
-                    Finding.account_id == acc.id,
-                    Finding.status == "open",
-                ).order_by(Finding.risk_score.desc())
-            ).all()
+            from app.services.check_settings import hidden_check_ids
 
-            new_this_week = db.scalars(
-                select(Finding).where(
-                    Finding.account_id == acc.id,
-                    Finding.first_seen >= since,
-                )
-            ).all()
+            org_settings = org.settings or {}
+            hidden = hidden_check_ids(org_settings)
+
+            open_q = select(Finding).where(
+                Finding.account_id == acc.id,
+                Finding.status == "open",
+            )
+            if hidden:
+                open_q = open_q.where(Finding.check_id.notin_(hidden))
+            open_findings = db.scalars(open_q.order_by(Finding.risk_score.desc())).all()
+
+            new_q = select(Finding).where(
+                Finding.account_id == acc.id,
+                Finding.first_seen >= since,
+            )
+            if hidden:
+                new_q = new_q.where(Finding.check_id.notin_(hidden))
+            new_this_week = db.scalars(new_q).all()
 
             from sqlalchemy import func as sa_func
             resolved_count = db.scalar(

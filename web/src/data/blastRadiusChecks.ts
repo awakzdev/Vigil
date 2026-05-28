@@ -71,7 +71,6 @@ export const BLAST_RADIUS_CHECKS = new Set([
   "github.org.dormant_members",
   "github.org.outside_collaborators",
   "github.repo.no_branch_protection",
-  "github.repo.no_codeowners",
   "github.repo.no_env_protection",
   "github.repo.self_merge_allowed",
   "github.repo.insufficient_reviews",

@@ -26,6 +26,8 @@ function oauthErrorMessage(code: string): string {
       return "That GitLab account is already linked to another user.";
     case "google_already_linked":
       return "That Google account is already linked to another user.";
+    case "domain_not_allowed":
+      return "Google sign-in is restricted to company accounts only.";
     case "no_account_for_idp":
       return "No account matches that sign-in. Sign up first, then connect this provider.";
     case "server_error":
@@ -47,36 +49,6 @@ function readStoredMfaToken(): string | null {
   return sessionStorage.getItem(MFA_STORAGE_KEY);
 }
 
-function SamplePackCta({
-  loading,
-  error,
-  onDownload,
-}: {
-  loading: boolean;
-  error: string | null;
-  onDownload: () => void;
-}) {
-  return (
-    <div className="mt-6 rounded-xl border border-white/[0.08] bg-white/[0.02] px-5 py-4 text-center">
-      <p className="text-sm font-medium text-zinc-300">Preview before connecting AWS</p>
-      <p className="mt-1.5 text-xs leading-relaxed text-zinc-500">
-        Download a sample SOC 2 evidence pack with control status, timeline, exceptions, and raw
-        evidence references.
-      </p>
-      {error && (
-        <p className="mt-2 text-xs text-red-400">{error}</p>
-      )}
-      <button
-        type="button"
-        onClick={onDownload}
-        disabled={loading}
-        className="mt-3 inline-flex items-center justify-center rounded-lg border border-zinc-600/60 bg-transparent px-4 py-2 text-xs font-medium text-zinc-300 transition hover:border-zinc-500 hover:bg-white/[0.03] disabled:opacity-60"
-      >
-        {loading ? "Preparing…" : "Download sample pack"}
-      </button>
-    </div>
-  );
-}
 
 export default function Login() {
   const nav = useNavigate();
@@ -88,8 +60,6 @@ export default function Login() {
   const [err, setErr] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [sampleLoading, setSampleLoading] = useState(false);
-  const [sampleError, setSampleError] = useState<string | null>(null);
 
   const [mfaToken, setMfaToken] = useState<string | null>(null);
   const [mfaCode, setMfaCode] = useState("");
@@ -209,27 +179,6 @@ export default function Login() {
     }
   }
 
-  async function downloadSamplePack() {
-    setSampleLoading(true);
-    setSampleError(null);
-    try {
-      const res = await fetch(`${BASE}/v1/exports/sample-evidence-pack?framework=soc2`);
-      if (!res.ok) throw new Error("Download failed");
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `vigil-sample-soc-2-${new Date().toISOString().slice(0, 10)}.zip`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch {
-      setSampleError("Could not download sample pack. Try again.");
-    } finally {
-      setSampleLoading(false);
-    }
-  }
 
   if (mfaToken) {
     return (
@@ -413,11 +362,6 @@ export default function Login() {
           </div>
         </div>
 
-        <SamplePackCta
-          loading={sampleLoading}
-          error={sampleError}
-          onDownload={downloadSamplePack}
-        />
       </div>
     </div>
   );

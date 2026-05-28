@@ -17,6 +17,8 @@ from app.models import Finding, FindingEvent, EvidenceSnapshot, ScanRun
 from app.models.cloudtrail import CloudTrailEvent
 from app.models.control import Control, CheckControl
 from app.models.aws_account import AwsAccount
+from app.models.org import Org
+from app.services.check_settings import hidden_check_ids
 from app.models.github import CiPipeline, IdentityProvider, IdentityUser, PullRequest, Repo, RepoProtection, WorkflowRun
 from app.services.pdf_report import build_pdf
 
@@ -68,6 +70,10 @@ def build_evidence_pack(
             Finding.status.in_(["open", "excepted"]),
         )
     ).all()
+    org = db.get(Org, org_id)
+    hidden = hidden_check_ids(org.settings if org else {})
+    if hidden:
+        open_findings = [f for f in open_findings if f.check_id not in hidden]
 
     snapshots = db.scalars(
         select(EvidenceSnapshot).where(

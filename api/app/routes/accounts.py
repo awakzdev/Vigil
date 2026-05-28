@@ -48,7 +48,10 @@ class AccountOut(BaseModel):
     account_id: str | None
     status: str
     external_id: str
+    role_arn: str | None = None
     cfn_launch_url: str | None = None
+    cfn_template_url: str | None = None
+    cfn_cli_command: str | None = None
     last_scan_at: datetime | None = None
 
 
@@ -67,6 +70,33 @@ def _launch_url(external_id: str) -> str:
     return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
 
 
+def _cli_command(external_id: str) -> str:
+    return (
+        "aws cloudformation create-stack \\\n"
+        "  --stack-name VigilReadOnly \\\n"
+        f"  --template-url {settings.CFN_TEMPLATE_URL} \\\n"
+        "  --parameters \\\n"
+        f"    ParameterKey=ExternalId,ParameterValue={external_id} \\\n"
+        f"    ParameterKey=VigilAccountPrincipal,ParameterValue={settings.TRUST_PRINCIPAL_ARN} \\\n"
+        "  --capabilities CAPABILITY_NAMED_IAM"
+    )
+
+
+def _account_out(acc: AwsAccount) -> AccountOut:
+    return AccountOut(
+        id=str(acc.id),
+        label=acc.label,
+        account_id=acc.account_id,
+        status=acc.status,
+        external_id=acc.external_id,
+        role_arn=acc.role_arn if acc.status == "connected" else None,
+        cfn_launch_url=_launch_url(acc.external_id),
+        cfn_template_url=settings.CFN_TEMPLATE_URL,
+        cfn_cli_command=_cli_command(acc.external_id),
+        last_scan_at=acc.last_scan_at,
+    )
+
+
 @router.post("", response_model=AccountOut, status_code=status.HTTP_201_CREATED)
 def create_account(body: AccountIn, p=Depends(current_principal), db: Session = Depends(get_db)):
     if not db.get(Org, uuid.UUID(p["org_id"])):
@@ -80,32 +110,13 @@ def create_account(body: AccountIn, p=Depends(current_principal), db: Session = 
     )
     db.add(acc)
     db.commit()
-    return AccountOut(
-        id=str(acc.id),
-        label=acc.label,
-        account_id=acc.account_id,
-        status=acc.status,
-        external_id=ext,
-        cfn_launch_url=_launch_url(ext),
-        last_scan_at=acc.last_scan_at,
-    )
+    return _account_out(acc)
 
 
 @router.get("", response_model=list[AccountOut])
 def list_accounts(p=Depends(current_principal), db: Session = Depends(get_db)):
     rows = db.scalars(select(AwsAccount).where(AwsAccount.org_id == uuid.UUID(p["org_id"]))).all()
-    return [
-        AccountOut(
-            id=str(a.id),
-            label=a.label,
-            account_id=a.account_id,
-            status=a.status,
-            external_id=a.external_id,
-            cfn_launch_url=_launch_url(a.external_id),
-            last_scan_at=a.last_scan_at,
-        )
-        for a in rows
-    ]
+    return [_account_out(a) for a in rows]
 
 
 @router.post("/{account_id}/verify", response_model=AccountOut)
@@ -129,15 +140,7 @@ def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Se
     from app.worker.tasks import run_scan
     run_scan.delay(str(acc.id))
 
-    return AccountOut(
-        id=str(acc.id),
-        label=acc.label,
-        account_id=acc.account_id,
-        status=acc.status,
-        external_id=acc.external_id,
-        cfn_launch_url=_launch_url(acc.external_id),
-        last_scan_at=acc.last_scan_at,
-    )
+    return _account_out(acc)
 
 
 @router.delete("/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1434,7 +1437,61 @@ def blast_radius(
     raise HTTPException(status.HTTP_400_BAD_REQUEST, f"blast radius not supported for check: {check_id}")
 
 
-_TIMELINE_CORRELATION_WINDOW = 3600  # ±60 minutes
+@router.get("/{account_id}/timeline")
+def get_timeline(
+    account_id: str,
+    days: int = Query(default=30, ge=1, le=90),
+    limit: int = Query(default=100, ge=1, le=500),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """CloudTrail infrastructure write events collected at scan time."""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+    ct_events = db.scalars(
+        select(CloudTrailEvent)
+        .where(CloudTrailEvent.account_id == acc.id, CloudTrailEvent.event_time >= cutoff)
+        .order_by(CloudTrailEvent.event_time.desc())
+        .limit(limit)
+    ).all()
+
+    result = [
+        {
+            "type": "cloudtrail",
+            "event_id": evt.event_id,
+            "event_name": evt.event_name,
+            "event_source": evt.event_source,
+            "event_time": evt.event_time.isoformat(),
+            "actor": evt.actor,
+            "source_ip": evt.source_ip,
+            "resources": evt.resources or [],
+        }
+        for evt in ct_events
+    ]
+
+    trails = db.scalars(
+        select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id)
+    ).all()
+    events_in_account = db.scalar(
+        select(func.count())
+        .select_from(CloudTrailEvent)
+        .where(CloudTrailEvent.account_id == acc.id)
+    ) or 0
+
+    return {
+        "events": result,
+        "total": len(result),
+        "meta": {
+            "cloudtrail_logging": any(t.is_logging for t in trails),
+            "trail_count": len(trails),
+            "events_in_account": events_in_account,
+            "last_scan_at": acc.last_scan_at.isoformat() if acc.last_scan_at else None,
+        },
+    }
 
 
 @router.get("/{account_id}/compliance-timeline")
@@ -1488,114 +1545,3 @@ def get_evidence_diff(
         at_a=_parse_dt(at_a),
         at_b=_parse_dt(at_b),
     )
-
-
-@router.get("/{account_id}/timeline")
-def get_timeline(
-    account_id: str,
-    days: int = Query(default=30, ge=1, le=90),
-    limit: int = Query(default=100, ge=1, le=500),
-    p=Depends(current_principal),
-    db: Session = Depends(get_db),
-):
-    """CloudTrail infrastructure events correlated with GitHub PR merges by timestamp (±60 min)."""
-    acc = db.get(AwsAccount, uuid.UUID(account_id))
-    if not acc or str(acc.org_id) != p["org_id"]:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
-
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-
-    ct_events = db.scalars(
-        select(CloudTrailEvent)
-        .where(CloudTrailEvent.account_id == acc.id, CloudTrailEvent.event_time >= cutoff)
-        .order_by(CloudTrailEvent.event_time.desc())
-        .limit(limit)
-    ).all()
-
-    # Load PRs from all GitHub/GitLab providers for this org
-    providers = db.scalars(
-        select(IdentityProvider).where(IdentityProvider.org_id == acc.org_id)
-    ).all()
-
-    prs: list[PullRequest] = []
-    repo_by_id: dict[uuid.UUID, Repo] = {}
-    for prov in providers:
-        repos = db.scalars(
-            select(Repo).where(Repo.provider_id == prov.id)
-        ).all()
-        for r in repos:
-            repo_by_id[r.id] = r
-        if repos:
-            repo_ids = [r.id for r in repos]
-            prs.extend(
-                db.scalars(
-                    select(PullRequest)
-                    .where(
-                        PullRequest.repo_id.in_(repo_ids),
-                        PullRequest.merged_at.isnot(None),
-                        PullRequest.merged_at >= cutoff,
-                    )
-                    .order_by(PullRequest.merged_at.desc())
-                    .limit(500)
-                ).all()
-            )
-
-    def _correlate(event_time: datetime) -> list[dict]:
-        matched = []
-        for pr in prs:
-            if pr.merged_at is None:
-                continue
-            delta = int((event_time - pr.merged_at).total_seconds())
-            if abs(delta) <= _TIMELINE_CORRELATION_WINDOW:
-                repo = repo_by_id.get(pr.repo_id)
-                matched.append({
-                    "number": pr.number,
-                    "repo": repo.name if repo else str(pr.repo_id),
-                    "merged_at": pr.merged_at.isoformat(),
-                    "merged_by": pr.merged_by,
-                    "author": pr.author,
-                    "approval_count": pr.approval_count,
-                    "required_review_count": pr.required_review_count,
-                    "self_merge": pr.self_merge,
-                    "delta_seconds": delta,
-                })
-        matched.sort(key=lambda x: abs(x["delta_seconds"]))
-        return matched
-
-    result = []
-    for evt in ct_events:
-        result.append({
-            "type": "cloudtrail",
-            "event_id": evt.event_id,
-            "event_name": evt.event_name,
-            "event_source": evt.event_source,
-            "event_time": evt.event_time.isoformat(),
-            "actor": evt.actor,
-            "source_ip": evt.source_ip,
-            "resources": evt.resources or [],
-            "correlated_prs": _correlate(evt.event_time),
-        })
-
-    trails = db.scalars(
-        select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id)
-    ).all()
-    events_in_account = db.scalar(
-        select(func.count())
-        .select_from(CloudTrailEvent)
-        .where(CloudTrailEvent.account_id == acc.id)
-    ) or 0
-
-    return {
-        "events": result,
-        "total": len(result),
-        "meta": {
-            "cloudtrail_logging": any(t.is_logging for t in trails),
-            "trail_count": len(trails),
-            "events_in_account": events_in_account,
-            "last_scan_at": acc.last_scan_at.isoformat() if acc.last_scan_at else None,
-            "scm_connected": any(
-                p.status == "connected" and p.type in ("github", "gitlab")
-                for p in providers
-            ),
-        },
-    }

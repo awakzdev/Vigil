@@ -13,6 +13,7 @@ from app.core.db import get_db
 from app.core.security import current_principal
 from app.models.org import Org, User
 from app.models import AwsAccount, Finding
+from app.services.check_settings import hidden_check_ids, optional_checks_for_ui
 from app.services.scan_schedule import (
     DEFAULT_SCANNING,
     get_scanning_settings,
@@ -82,11 +83,22 @@ class SettingsPatch(BaseModel):
     notifications: NotificationsIn | None = None
 
 
+class OptionalCheckOut(BaseModel):
+    check_id: str
+    label: str
+    summary: str
+    description: str
+    default_enabled: bool
+    enabled: bool
+
+
 class SettingsOut(BaseModel):
     checks: dict
+    optional_checks: list[OptionalCheckOut]
     scanning: dict
     notifications: dict
     scan_status: ScanStatusOut
+    account_email: str | None = None
 
 
 def _get_org(p, db: Session) -> Org:
@@ -118,8 +130,15 @@ def _scan_status(org: Org, db: Session) -> ScanStatusOut:
 @router.get("", response_model=SettingsOut)
 def get_settings(p=Depends(current_principal), db: Session = Depends(get_db)):
     org = _get_org(p, db)
-    merged = _merged(org.settings or {})
-    return SettingsOut(**merged, scan_status=_scan_status(org, db))
+    user = db.get(User, uuid.UUID(p["sub"]))
+    org_settings = org.settings or {}
+    merged = _merged(org_settings)
+    return SettingsOut(
+        **merged,
+        optional_checks=optional_checks_for_ui(org_settings),
+        scan_status=_scan_status(org, db),
+        account_email=user.email if user and user.email else None,
+    )
 
 
 @router.patch("", response_model=SettingsOut)
@@ -157,8 +176,14 @@ def patch_settings(body: SettingsPatch, p=Depends(current_principal), db: Sessio
     db.add(org)
     db.commit()
     db.refresh(org)
+    user = db.get(User, uuid.UUID(p["sub"]))
     merged = _merged(org.settings)
-    return SettingsOut(**merged, scan_status=_scan_status(org, db))
+    return SettingsOut(
+        **merged,
+        optional_checks=optional_checks_for_ui(org.settings),
+        scan_status=_scan_status(org, db),
+        account_email=user.email if user and user.email else None,
+    )
 
 
 @router.post("/test-digest", status_code=200)
@@ -189,19 +214,22 @@ def test_digest(p=Depends(current_principal), db: Session = Depends(get_db)):
 
     since = datetime.now(timezone.utc) - timedelta(days=7)
 
-    open_findings = db.scalars(
-        select(Finding).where(
-            Finding.account_id == acc.id,
-            Finding.status == "open",
-        ).order_by(Finding.risk_score.desc())
-    ).all()
+    hidden = hidden_check_ids(org_settings)
+    open_q = select(Finding).where(
+        Finding.account_id == acc.id,
+        Finding.status == "open",
+    )
+    if hidden:
+        open_q = open_q.where(Finding.check_id.notin_(hidden))
+    open_findings = db.scalars(open_q.order_by(Finding.risk_score.desc())).all()
 
-    new_this_week = db.scalars(
-        select(Finding).where(
-            Finding.account_id == acc.id,
-            Finding.first_seen >= since,
-        )
-    ).all()
+    new_q = select(Finding).where(
+        Finding.account_id == acc.id,
+        Finding.first_seen >= since,
+    )
+    if hidden:
+        new_q = new_q.where(Finding.check_id.notin_(hidden))
+    new_this_week = db.scalars(new_q).all()
 
     from sqlalchemy import func as sa_func
     resolved_count = db.scalar(

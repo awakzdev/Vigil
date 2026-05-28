@@ -12,6 +12,9 @@ from app.core.security import current_principal
 from app.data.control_narratives import narrative_for, narrative_detail_for
 from app.models import Finding, AwsAccount, EvidenceSnapshot
 from app.models.control import Control, CheckControl
+from app.models.org import Org
+from app.services.check_settings import hidden_check_ids
+from app.services.check_frameworks import check_framework_map, framework_catalog
 from app.services.compliance_timeline import build_control_history
 
 router = APIRouter()
@@ -35,6 +38,19 @@ class ControlOut(BaseModel):
     status: str          # pass | fail | no_data
     finding_count: int
     open_finding_ids: list[str]
+
+
+class CheckFrameworksOut(BaseModel):
+    frameworks: list[dict[str, str]]
+    checks: dict[str, list[str]]
+
+
+@router.get("/check-frameworks", response_model=CheckFrameworksOut)
+def get_check_frameworks(p=Depends(current_principal)):
+    return CheckFrameworksOut(
+        frameworks=framework_catalog(),
+        checks=check_framework_map(),
+    )
 
 
 @router.get("", response_model=list[ControlOut])
@@ -69,14 +85,18 @@ def list_controls(
         if acc:
             acc_id = acc.id
 
+    org = db.get(Org, uuid.UUID(p["org_id"]))
+    hidden = hidden_check_ids(org.settings if org else {})
+
     open_findings: list[Finding] = []
     if acc_id:
-        open_findings = db.scalars(
-            select(Finding).where(
-                Finding.account_id == acc_id,
-                Finding.status == "open",
-            )
-        ).all()
+        open_q = select(Finding).where(
+            Finding.account_id == acc_id,
+            Finding.status == "open",
+        )
+        if hidden:
+            open_q = open_q.where(Finding.check_id.notin_(hidden))
+        open_findings = db.scalars(open_q).all()
 
     open_by_check: dict[str, list[Finding]] = {}
     for f in open_findings:

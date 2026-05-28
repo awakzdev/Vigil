@@ -53,7 +53,6 @@
       "iam.user.no_mfa",
       "iam.role.wildcard_action",
       "iam.perm.granted_vs_used",
-      "iam.policy.wildcard_resource",
       "iam.role.trust_wildcard",
       "s3.account.public_access_not_blocked",
       "s3.bucket.public_access_not_blocked",
@@ -228,11 +227,9 @@
     "control_id": "1.22",
     "title": "Ensure IAM policies that allow full administrative privileges are not attached",
     "description": "IAM policies are the means by which privileges are granted to users, groups, or roles. Policies that grant full administrative privileges provide excessive and unnecessary permissions.",
-    "guidance": "Replace Action: '*' or Resource: '*' with scoped action lists and specific resource ARNs.",
+    "guidance": "Replace Action: '*' with Resource: '*' (full admin) with scoped action lists and specific resource ARNs.",
     "checks": [
-      "iam.role.wildcard_action",
-      "iam.policy.wildcard_resource",
-      "iam.policy.unattached"
+      "iam.role.wildcard_action"
     ]
   },
   {
@@ -361,7 +358,6 @@
       "iam.role.unassumed_90d",
       "iam.role.wildcard_action",
       "iam.perm.granted_vs_used",
-      "iam.policy.wildcard_resource",
       "iam.role.trust_wildcard",
       "iam.role.unused_services_90d",
       "iam.access_key.no_rotation_90d"

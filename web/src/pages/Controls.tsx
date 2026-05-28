@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { api, token } from "../api";
 import { labelForCheck } from "../data/checkLabels";
+import { FRAMEWORKS } from "../data/frameworks";
 
 const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
@@ -52,12 +53,6 @@ type ControlHistory = {
   events: { timestamp: string; type: string; detail: string }[];
 };
 
-const FRAMEWORKS = [
-  { id: "soc2", label: "SOC 2", fullLabel: "SOC 2 Trust Services Criteria" },
-  { id: "cis_aws_l1", label: "CIS AWS L1", fullLabel: "CIS AWS Foundations Benchmark L1" },
-  { id: "iso27001", label: "ISO 27001", fullLabel: "ISO 27001 Annex A" },
-];
-
 const AUDIT_WINDOWS = [
   { value: 30, label: "Last 30 days" },
   { value: 90, label: "Last 90 days" },
@@ -67,27 +62,68 @@ const AUDIT_WINDOWS = [
 
 type StatusFilter = "all" | "pass" | "fail" | "no_data";
 
-const statusPill: Record<string, string> = {
-  pass: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  fail: "border-red-200 bg-red-50 text-red-600",
-  no_data: "border-zinc-200 bg-zinc-50 text-zinc-500",
-};
-
 const statusAccent: Record<string, string> = {
-  pass: "border-l-emerald-300/80",
-  fail: "border-l-red-300/80",
-  no_data: "border-l-zinc-200",
+  pass: "border-l-emerald-300/50",
+  fail: "border-l-red-300/50",
+  no_data: "border-l-zinc-200/80",
 };
 
 const statusExpandedBg: Record<string, string> = {
-  pass: "bg-emerald-50/20",
-  fail: "bg-red-50/15",
+  pass: "bg-emerald-50/15",
+  fail: "bg-red-50/10",
   no_data: "bg-zinc-50/40",
 };
 
-function statusPillLabel(status: string) {
-  if (status === "no_data") return "N/A";
-  return status;
+type OpenFindingMeta = { id: string; severity: string; resource_arn: string };
+
+function StatusIndicator({ status }: { status: string }) {
+  if (status === "pass") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50/90 px-2.5 py-1 text-[11px] font-medium text-emerald-700 ring-1 ring-emerald-200/50">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500/90" aria-hidden />
+        Pass
+      </span>
+    );
+  }
+  if (status === "fail") {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-50/80 px-2.5 py-1 text-[11px] font-medium text-red-700 ring-1 ring-red-200/45">
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-red-500/75" aria-hidden />
+        Failing
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100/90 px-2.5 py-1 text-[11px] font-medium text-zinc-500 ring-1 ring-zinc-200/70">
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400/80" aria-hidden />
+      No data
+    </span>
+  );
+}
+
+function controlRowMetadata(
+  ctrl: ControlRow,
+  findingMap: Map<string, OpenFindingMeta>,
+  lastScanAt: string | null,
+): string {
+  const parts: string[] = [];
+  if (ctrl.check_ids.length > 0) {
+    parts.push(`${ctrl.check_ids.length} check${ctrl.check_ids.length === 1 ? "" : "s"} mapped`);
+  }
+  if (ctrl.status === "fail" && ctrl.open_finding_ids.length > 0) {
+    const linked = ctrl.open_finding_ids
+      .map((id) => findingMap.get(id))
+      .filter((f): f is OpenFindingMeta => !!f);
+    const urgent = linked.filter((f) => f.severity === "critical" || f.severity === "high").length;
+    if (urgent > 0) parts.push(`${urgent} critical/high`);
+    const resources = new Set(linked.map((f) => f.resource_arn)).size;
+    if (resources > 0) parts.push(`${resources} resource${resources === 1 ? "" : "s"}`);
+  }
+  if (lastScanAt) parts.push(`scanned ${lastScanLabel(lastScanAt)}`);
+  if (parts.length === 0) {
+    return ctrl.check_ids.length === 0 ? "Manual attestation required" : "Awaiting scan data";
+  }
+  return parts.join(" · ");
 }
 
 function shortFamilyLabel(label: string) {
@@ -550,13 +586,9 @@ function ControlHistoryPanel({
             <p className="mt-1 text-sm font-semibold text-emerald-700">Passing — no open mapped findings</p>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => navigate(`/timeline?view=compliance&framework=${framework}`)}
-          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
-        >
-          View compliance timeline →
-        </button>
+        <p className="text-xs text-zinc-500">
+          Pass/fail segments and events above are the compliance history for this control.
+        </p>
       </div>
       {failSegment && (
         <p className="mt-2 text-xs text-zinc-600">
@@ -763,6 +795,20 @@ export default function Controls() {
     enabled: !accounts.isLoading,
   });
 
+  const openFindingsMeta = useQuery({
+    queryKey: ["findings", "open", connectedAccount?.id, "controls-meta"],
+    queryFn: () =>
+      api<{ items: OpenFindingMeta[] }>(`/v1/findings?status=open&limit=500`),
+    enabled: !!connectedAccount && hasScanned,
+    select: (data) => {
+      const map = new Map<string, OpenFindingMeta>();
+      for (const f of data.items) map.set(f.id, f);
+      return map;
+    },
+  });
+
+  const findingMap = openFindingsMeta.data ?? new Map<string, OpenFindingMeta>();
+
   useEffect(() => {
     if (!exportOpen) return;
     function handleClick(e: MouseEvent) {
@@ -792,6 +838,10 @@ export default function Controls() {
 
   const groupedRows = useMemo(() => groupControls(filteredRows, framework), [filteredRows, framework]);
   const selectedGroup = groupedRows.find((group) => group.key === selectedFamilyKey) ?? groupedRows[0] ?? null;
+  const totalLinkedFindings = useMemo(
+    () => rows.reduce((sum, row) => sum + row.finding_count, 0),
+    [rows],
+  );
 
   function openControl(ctrl: ControlRow) {
     setSelectedFamilyKey(controlFamily(framework, ctrl.control_id).key);
@@ -848,6 +898,7 @@ export default function Controls() {
   }
 
   return (
+    <div className="min-h-full bg-zinc-100/35">
     <div className="w-full px-8 py-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
@@ -953,11 +1004,14 @@ export default function Controls() {
       {controls.isLoading && <LoadingSkeleton />}
 
       {!controls.isLoading && connectedAccount && (
-        <div className="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-3" role="tablist" aria-label="Compliance framework">
+        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3" role="tablist" aria-label="Compliance framework">
           {FRAMEWORKS.map((fw) => {
             const pct =
               fw.id === "soc2" ? soc2Rate.data : fw.id === "cis_aws_l1" ? cisRate.data : isoRate.data;
             const isActive = framework === fw.id;
+            const fwFailed = isActive ? failed : null;
+            const fwPassed = isActive ? passed : null;
+            const fwFindings = isActive ? totalLinkedFindings : null;
             return (
               <button
                 key={fw.id}
@@ -969,18 +1023,32 @@ export default function Controls() {
                   setSelectedFamilyKey(null);
                   setExpanded(null);
                 }}
-                className={`rounded-xl border-2 px-4 py-3.5 text-left transition-all ${
+                className={`rounded-xl border px-4 py-3.5 text-left transition-all ${
                   isActive
-                    ? "border-indigo-300 bg-indigo-50/80 text-zinc-900 shadow-sm ring-2 ring-indigo-500/10"
-                    : "border-zinc-200 bg-white text-zinc-900 hover:border-indigo-200 hover:bg-indigo-50/30"
+                    ? "border-indigo-200/80 bg-white text-zinc-900 shadow-md shadow-zinc-950/[0.04] ring-1 ring-indigo-500/10"
+                    : "border-zinc-200/80 bg-white/80 text-zinc-900 shadow-sm shadow-zinc-950/[0.02] hover:border-indigo-200/60 hover:bg-white hover:shadow-md"
                 }`}
               >
-                <div className="text-sm font-bold">{fw.label}</div>
-                <div className="mt-0.5 text-xs text-zinc-500">{fw.fullLabel}</div>
-                <div className={`mt-3 text-2xl font-bold tabular-nums ${pct == null ? "text-zinc-300" : passRateColor(pct)}`}>
-                  {pct == null ? "—" : `${pct}%`}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold">{fw.label}</div>
+                    <div className="mt-0.5 text-xs text-zinc-500">{fw.fullLabel}</div>
+                  </div>
+                  <div className={`text-2xl font-bold tabular-nums leading-none ${pct == null ? "text-zinc-300" : passRateColor(pct)}`}>
+                    {pct == null ? "—" : `${pct}%`}
+                  </div>
                 </div>
-                <div className={`mt-2 h-1.5 overflow-hidden rounded-full ${isActive ? "bg-indigo-100" : "bg-zinc-100"}`}>
+                {isActive && fwFailed != null && fwPassed != null && (
+                  <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-zinc-500">
+                    {fwFailed > 0 && <span className="text-red-600/90">{fwFailed} failing</span>}
+                    <span className="text-emerald-600/90">{fwPassed} passing</span>
+                    {noData > 0 && <span>{noData} no data</span>}
+                    {fwFindings != null && fwFindings > 0 && (
+                      <span>{fwFindings} finding{fwFindings === 1 ? "" : "s"} linked</span>
+                    )}
+                  </div>
+                )}
+                <div className={`mt-3 h-1.5 overflow-hidden rounded-full ${isActive ? "bg-indigo-100/80" : "bg-zinc-100"}`}>
                   <div
                     className={`h-full rounded-full transition-all ${pct == null ? "bg-zinc-200" : passRateBarColor(pct)}`}
                     style={{ width: `${pct ?? 0}%` }}
@@ -993,8 +1061,8 @@ export default function Controls() {
       )}
 
       {!controls.isLoading && total > 0 && (
-        <div className="mb-4 space-y-2">
-          <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
+        <div className="mb-5 space-y-3">
+          <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200/80 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
             {(
               [
                 { id: "all" as const, label: "All", count: total },
@@ -1022,20 +1090,36 @@ export default function Controls() {
             ))}
           </div>
           {topBlocker && statusFilter !== "pass" && (
-            <p className="text-xs text-zinc-500">
-              Top blocker:{" "}
-              <button
-                type="button"
-                onClick={() => {
-                  setStatusFilter("fail");
-                  openControl(topBlocker);
-                }}
-                className="font-semibold text-red-600 hover:text-red-700"
-              >
-                {topBlocker.control_id}
-              </button>
-              {" "}({findingLabel(topBlocker.finding_count)})
-            </p>
+            <div className="rounded-xl border border-red-200/60 bg-gradient-to-r from-red-50/40 via-white to-white px-4 py-3.5 shadow-sm shadow-zinc-950/[0.03]">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600/90">
+                    Highest-impact blocker
+                  </p>
+                  <p className="mt-1 text-sm font-semibold text-zinc-900">
+                    <span className="font-mono text-xs font-medium text-zinc-500">{topBlocker.control_id}</span>
+                    <span className="mx-1.5 text-zinc-300">·</span>
+                    {shortControlTitle(topBlocker.title)}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-600">
+                    {findingLabel(topBlocker.finding_count)} blocking this control — address first for fastest audit progress.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusFilter("fail");
+                    openControl(topBlocker);
+                  }}
+                  className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 sm:self-center"
+                >
+                  Review control
+                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                  </svg>
+                </button>
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -1053,12 +1137,12 @@ export default function Controls() {
           )}
 
           {!controls.isLoading && groupedRows.length > 0 && selectedGroup && (
-              <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-sm shadow-zinc-950/[0.04]">
-                <div className="flex flex-col gap-3 border-b border-zinc-100 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-md shadow-zinc-950/[0.05] ring-1 ring-zinc-950/[0.03]">
+                <div className="flex flex-col gap-3 border-b border-zinc-100 bg-zinc-50/50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
                   <div
-                    className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]"
+                    className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200/70 bg-white p-1 shadow-sm shadow-zinc-950/[0.02]"
                     role="tablist"
-                    aria-label="Control families"
+                    aria-label="Control domains"
                   >
                     {groupedRows.map((group) => {
                       const isSelected = selectedGroup.key === group.key;
@@ -1074,13 +1158,13 @@ export default function Controls() {
                           }}
                           className={`rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
                             isSelected
-                              ? "bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200"
+                              ? "bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/80"
                               : "text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
                           }`}
                         >
                           {shortFamilyLabel(group.label)}
                           {group.failed > 0 && (
-                            <span className="text-red-500"> · {group.failed}</span>
+                            <span className="text-red-500/90"> · {group.failed}</span>
                           )}
                         </button>
                       );
@@ -1088,16 +1172,36 @@ export default function Controls() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-b border-zinc-100 px-5 py-2.5">
+                <div className="border-b border-zinc-100 bg-zinc-50/30 px-5 py-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
+                    {activeFramework.label}
+                  </p>
+                  <h2 className="mt-0.5 text-base font-bold text-zinc-900">{selectedGroup.label}</h2>
+                  <p className="mt-1 text-xs text-zinc-500">
+                    {selectedGroup.rows.length} control{selectedGroup.rows.length === 1 ? "" : "s"}
+                    {selectedGroup.failed > 0 && (
+                      <span className="text-red-600/90"> · {selectedGroup.failed} failing</span>
+                    )}
+                    {selectedGroup.passed > 0 && (
+                      <span className="text-emerald-600/90"> · {selectedGroup.passed} passing</span>
+                    )}
+                    {selectedGroup.noData > 0 && (
+                      <span> · {selectedGroup.noData} no data</span>
+                    )}
+                  </p>
+                </div>
+
+                <div className="hidden grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-100 bg-white px-5 py-2.5 sm:grid">
                   <span className="w-3.5" />
-                  <span className="w-[52px]" />
+                  <span className="w-[72px] text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Status</span>
                   <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Control</span>
                   <span className="text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Findings</span>
                 </div>
 
-                <div className="divide-y divide-zinc-100">
+                <div className="divide-y divide-zinc-100/90">
                   {selectedGroup.rows.map((ctrl) => {
                     const isExpanded = expanded === ctrl.id;
+                    const meta = controlRowMetadata(ctrl, findingMap, connectedAccount?.last_scan_at ?? null);
                     return (
                       <div key={ctrl.id}>
                         <button
@@ -1108,12 +1212,12 @@ export default function Controls() {
                             setExpanded(isExpanded ? null : ctrl.id);
                             requestAnimationFrame(() => window.scrollTo(0, scrollY));
                           }}
-                          className={`grid w-full grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-3 border-l-2 py-3.5 pl-5 pr-5 text-left transition-colors ${statusAccent[ctrl.status]} ${
-                            isExpanded ? statusExpandedBg[ctrl.status] : "hover:bg-zinc-50/80"
+                          className={`grid w-full grid-cols-1 gap-3 border-l-2 py-3.5 pl-5 pr-5 text-left transition-colors sm:grid-cols-[auto_auto_minmax(0,1fr)_auto] sm:items-center sm:gap-4 ${statusAccent[ctrl.status]} ${
+                            isExpanded ? statusExpandedBg[ctrl.status] : "hover:bg-zinc-50/70"
                           }`}
                         >
                           <svg
-                            className={`h-3.5 w-3.5 shrink-0 transition-transform duration-150 ${isExpanded ? "text-zinc-600" : "-rotate-90 text-zinc-400"}`}
+                            className={`hidden h-3.5 w-3.5 shrink-0 transition-transform duration-150 sm:block ${isExpanded ? "text-zinc-600" : "-rotate-90 text-zinc-400"}`}
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -1121,28 +1225,45 @@ export default function Controls() {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                           </svg>
 
-                          <span
-                            className={`inline-block w-[52px] shrink-0 rounded border py-0.5 text-center text-[10px] font-semibold uppercase tracking-[0.12em] ${statusPill[ctrl.status]}`}
-                          >
-                            {statusPillLabel(ctrl.status)}
-                          </span>
-
-                          <div className="min-w-0">
-                            <div className="truncate text-sm font-semibold text-zinc-900">
-                              <span className="font-mono text-xs font-medium text-zinc-500">{ctrl.control_id}</span>
-                              <span className="mx-1.5 text-zinc-300">·</span>
-                              {shortControlTitle(ctrl.title)}
-                            </div>
+                          <div className="sm:w-[72px]">
+                            <StatusIndicator status={ctrl.status} />
                           </div>
 
-                          <div className="shrink-0 text-right tabular-nums">
-                            {ctrl.status === "fail" ? (
-                              <span className={`text-sm font-semibold ${ctrl.finding_count >= 10 ? "text-red-600" : "text-red-500"}`}>
-                                {ctrl.finding_count}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                              <span className="font-mono text-xs font-semibold text-zinc-500">{ctrl.control_id}</span>
+                              <span className="text-sm font-semibold leading-snug text-zinc-900">
+                                {shortControlTitle(ctrl.title)}
                               </span>
-                            ) : (
-                              <span className="text-xs font-medium text-zinc-300">—</span>
-                            )}
+                            </div>
+                            <p className="mt-1 truncate text-xs text-zinc-500">{meta}</p>
+                          </div>
+
+                          <div className="flex shrink-0 items-center justify-between gap-3 sm:block sm:text-right">
+                            <svg
+                              className={`h-3.5 w-3.5 shrink-0 text-zinc-400 sm:hidden ${isExpanded ? "" : "-rotate-90"}`}
+                              fill="none"
+                              stroke="currentColor"
+                              viewBox="0 0 24 24"
+                            >
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                            </svg>
+                            <div className="tabular-nums">
+                              {ctrl.status === "fail" ? (
+                                <>
+                                  <span className={`text-base font-bold ${ctrl.finding_count >= 10 ? "text-red-600" : "text-red-500"}`}>
+                                    {ctrl.finding_count}
+                                  </span>
+                                  <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-zinc-400">
+                                    open
+                                  </span>
+                                </>
+                              ) : ctrl.status === "pass" ? (
+                                <span className="text-xs font-medium text-emerald-600/80">Clear</span>
+                              ) : (
+                                <span className="text-xs font-medium text-zinc-300">—</span>
+                              )}
+                            </div>
                           </div>
                         </button>
 
@@ -1209,6 +1330,7 @@ export default function Controls() {
               </div>
             )}
         </section>
+    </div>
     </div>
   );
 }

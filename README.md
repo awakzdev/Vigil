@@ -130,7 +130,7 @@ vigil-evidence-soc2-2026-05-26.zip
 
 `github.org.mfa_not_enforced` · `github.org.dormant_members` · `github.org.outside_collaborators` ·
 `github.repo.no_branch_protection` · `github.repo.self_merge_allowed` · `github.repo.insufficient_reviews` ·
-`github.repo.no_codeowners` · `github.repo.no_env_protection`
+`github.repo.no_env_protection`
 
 ### GitLab (5 checks)
 
