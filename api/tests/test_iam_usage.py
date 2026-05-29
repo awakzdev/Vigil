@@ -1,6 +1,9 @@
 from datetime import datetime, timezone
 
-from app.core.iam_usage import used_actions_from_usages
+from app.core.iam_usage import (
+    augment_used_actions_with_granted_for_service_only,
+    used_actions_from_usages,
+)
 
 
 def _usage(*, service="ec2", last_auth=None, actions_json=None):
@@ -55,3 +58,45 @@ def test_used_actions_from_legacy_strings_uses_service_window():
     actions = used_actions_from_usages(usages, cutoff)
 
     assert actions == ["ec2:DescribeInstances"]
+
+
+def test_augment_preserves_granted_actions_for_service_only_usage():
+    cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    recent = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    usages = [
+        _usage(
+            service="ec2",
+            last_auth=recent,
+            actions_json=[
+                {"action": "ec2:DescribeInstances", "last_authenticated": "2026-02-01T00:00:00+00:00"},
+            ],
+        ),
+        _usage(service="dynamodb", last_auth=recent, actions_json=None),
+    ]
+    granted = ["ec2:*", "dynamodb:PutItem", "dynamodb:GetItem", "s3:*"]
+
+    actions, warnings = augment_used_actions_with_granted_for_service_only(
+        used_actions_from_usages(usages, cutoff),
+        usages,
+        cutoff,
+        granted,
+    )
+
+    assert "ec2:DescribeInstances" in actions
+    assert "dynamodb:PutItem" in actions
+    assert "dynamodb:GetItem" in actions
+    assert "dynamodb:*" not in actions
+    assert not any("dynamodb" in w for w in warnings)
+
+
+def test_augment_warns_on_wildcard_grant_without_action_detail():
+    cutoff = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    recent = datetime(2026, 2, 1, tzinfo=timezone.utc)
+    usages = [_usage(service="dynamodb", last_auth=recent, actions_json=None)]
+
+    actions, warnings = augment_used_actions_with_granted_for_service_only(
+        [], usages, cutoff, ["*"]
+    )
+
+    assert actions == []
+    assert any("dynamodb" in w for w in warnings)

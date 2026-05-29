@@ -67,11 +67,15 @@ export default function Layout() {
             Compliance
           </NavLink>
 
-          <NavLink to="/timeline" className={navItem}>
+          <NavLink to="/history" className={navItem} title="Compliance timeline and infrastructure events">
             <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.75} viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5a2.25 2.25 0 002.25-2.25m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5a2.25 2.25 0 012.25 2.25v7.5"
+              />
             </svg>
-            Timeline
+            History
           </NavLink>
 
           <NavLink to="/integrations" className={navItem}>

@@ -18,17 +18,12 @@ type OptionalCheck = {
 type SettingsChecksData = {
   optional_checks: OptionalCheck[];
   evidence_classes?: Record<string, string>;
-  cis_benchmark_coverage?: {
-    mapped_control_count: number;
-    cis_v5_level1_total: number;
-    disclaimer: string;
-  };
 };
 
 const EVIDENCE_CLASS_LEGEND = [
   { id: "benchmark", label: "Required benchmark mapping", desc: "Mapped to SOC 2 / CIS / ISO controls; drives pass/fail." },
   { id: "supporting", label: "Supporting evidence", desc: "Corroborates control objectives; extended-tier checks." },
-  { id: "hygiene", label: "Hygiene only", desc: "Optional cleanup; off by default; not in framework scoring." },
+  { id: "hygiene", label: "Operational checks", desc: "Optional operational checks not used in compliance scoring." },
 ] as const;
 
 type SaveStatus = "idle" | "saving" | "saved" | "error";
@@ -284,15 +279,8 @@ export default function DetectionCoverage() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Detection coverage</h1>
           <p className="mt-2 max-w-2xl text-sm text-zinc-500">
-            Scanning domains, benchmark-backed checks, and optional hygiene capabilities for your cloud estate.
+            Scanning domains, benchmark-backed checks, and optional operational checks for your cloud estate.
           </p>
-          {data?.cis_benchmark_coverage && (
-            <p className="mt-2 max-w-2xl rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
-              CIS: {data.cis_benchmark_coverage.mapped_control_count} of{" "}
-              {data.cis_benchmark_coverage.cis_v5_level1_total} v5 Level 1 controls automated — curated subset, not
-              full benchmark parity. {data.cis_benchmark_coverage.disclaimer}
-            </p>
-          )}
         </div>
         <SaveIndicator status={saveStatus} error={saveError} />
       </div>
@@ -404,13 +392,13 @@ export default function DetectionCoverage() {
       <section className="space-y-4 rounded-2xl border border-zinc-200/70 bg-zinc-50/50 p-5 sm:p-6">
         <div>
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-            <h2 className="text-base font-bold text-zinc-900">Optional hygiene capabilities</h2>
+            <h2 className="text-base font-bold text-zinc-900">Optional security checks</h2>
             <span className="text-xs font-medium text-zinc-500">
-              {enabledOptional} of {optionalTotal} active
+              {enabledOptional} of {optionalTotal} enabled
             </span>
           </div>
           <p className="mt-1 text-sm text-zinc-500">
-            Extend coverage beyond benchmarks. Changes apply on the next scan.
+            Extend visibility beyond benchmark requirements.
           </p>
         </div>
 
@@ -448,7 +436,6 @@ export default function DetectionCoverage() {
                 </div>
                 <p className="mt-1 text-xs leading-snug text-zinc-600">{check.summary}</p>
                 <p className="mt-2 font-mono text-[10px] text-zinc-400">{check.check_id}</p>
-                <p className="mt-1 text-[10px] font-medium text-zinc-500">Hygiene only</p>
                 {enabled && (
                   <p className="mt-2 text-[11px] text-sky-700/80">
                     Included in Findings and evidence on next scan.

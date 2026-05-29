@@ -1,0 +1,277 @@
+import { useState } from "react";
+import { Link } from "react-router-dom";
+import { frameworkLabel } from "../data/frameworks";
+import { InfrastructureEventsList } from "./InfrastructureEventsList";
+import { ImpactList } from "./ImpactList";
+import { causeSentence, impactItems } from "../lib/historyPresentation";
+import {
+  type HistoryEvent,
+  scanAsOfDate,
+  scanDateLabel,
+  downloadEvidenceForScan,
+} from "../lib/complianceHistory";
+
+function PostureShift({ before, after }: { before: number | null; after: number | null }) {
+  if (after == null) return <span className="text-zinc-500">—</span>;
+  if (before == null || before === after)
+    return <span className="text-3xl font-bold tabular-nums tracking-tight text-zinc-950">{after}%</span>;
+  const down = after < before;
+  const pts = after - before;
+  return (
+    <span className="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
+      <span className="flex items-baseline gap-2 text-3xl font-bold tabular-nums tracking-tight">
+        <span className="text-zinc-300">{before}%</span>
+        <span className="text-xl font-normal text-zinc-300">→</span>
+        <span className={down ? "text-rose-700" : "text-emerald-700"}>{after}%</span>
+      </span>
+      <span
+        className={`rounded-md px-1.5 py-0.5 text-xs font-bold tabular-nums ${
+          down ? "bg-rose-50 text-rose-700" : "bg-emerald-50 text-emerald-700"
+        }`}
+      >
+        {pts > 0 ? "+" : "−"}
+        {Math.abs(pts)} pts
+      </span>
+    </span>
+  );
+}
+
+function ControlChangeList({
+  title,
+  tone,
+  items,
+}: {
+  title: string;
+  tone: "fail" | "pass";
+  items: { control_id: string; title: string; open_finding_count?: number }[];
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div>
+      <h4 className="text-[13px] font-semibold text-zinc-900">{title}</h4>
+      <ul className="mt-2 space-y-2">
+        {items.map((c) => (
+          <li key={c.control_id} className="rounded-lg border border-zinc-200/80 bg-white px-3 py-2 text-sm">
+            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+              <span className="font-mono text-[11px] font-semibold text-zinc-600">{c.control_id}</span>
+              <span
+                className={`text-[10px] font-bold uppercase tracking-wide ${
+                  tone === "fail" ? "text-red-700" : "text-emerald-700"
+                }`}
+              >
+                {tone === "fail" ? "PASS → FAIL" : "FAIL → PASS"}
+              </span>
+            </div>
+            <p className="mt-0.5 font-medium text-zinc-900">{c.title}</p>
+            {(c.open_finding_count ?? 0) > 0 && (
+              <p className="mt-0.5 text-xs text-zinc-500">
+                {c.open_finding_count} open finding{c.open_finding_count === 1 ? "" : "s"}
+              </p>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function CompareRow({
+  label,
+  before,
+  after,
+  betterWhen,
+}: {
+  label: string;
+  before: number | null | undefined;
+  after: number | null | undefined;
+  betterWhen: "lower" | "higher";
+}) {
+  const b = before ?? null;
+  const a = after ?? null;
+  const delta = b != null && a != null ? a - b : null;
+  const improved = delta == null || delta === 0 ? null : betterWhen === "lower" ? delta < 0 : delta > 0;
+  return (
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="text-xs text-zinc-600">{label}</span>
+      <span className="flex items-center gap-1.5 text-xs tabular-nums">
+        <span className="text-zinc-400">{b ?? "—"}</span>
+        <span className="text-zinc-300">→</span>
+        <span className="font-semibold text-zinc-900">{a ?? "—"}</span>
+        {delta != null && delta !== 0 && (
+          <span
+            className={`ml-1 rounded px-1 text-[10px] font-semibold ${
+              improved ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-700"
+            }`}
+          >
+            {delta > 0 ? `+${delta}` : delta}
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
+function CompareGrid({ previous, current }: { previous: HistoryEvent; current: HistoryEvent }) {
+  const ps = previous.snapshot;
+  const cs = current.snapshot;
+  return (
+    <div className="mt-2 divide-y divide-indigo-100/70">
+      <CompareRow label="Score" before={previous.posture_after} after={current.posture_after} betterWhen="higher" />
+      <CompareRow label="Passing controls" before={ps?.controls_passed} after={cs?.controls_passed} betterWhen="higher" />
+      <CompareRow label="Failing controls" before={ps?.controls_failed} after={cs?.controls_failed} betterWhen="lower" />
+      <CompareRow label="No data" before={ps?.controls_no_data} after={cs?.controls_no_data} betterWhen="lower" />
+    </div>
+  );
+}
+
+export function HistorySnapshotDrawer({
+  event,
+  previousEvent,
+  accountId,
+  periodDays,
+  initialTab,
+  expandInfrastructure = false,
+  onClose,
+}: {
+  event: HistoryEvent;
+  previousEvent: HistoryEvent | null;
+  accountId: string;
+  periodDays: number;
+  initialTab: "snapshot" | "compare";
+  expandInfrastructure?: boolean;
+  onClose: () => void;
+}) {
+  const [downloading, setDownloading] = useState(false);
+  const snap = event.snapshot;
+  const cause = causeSentence(event);
+  const impacts = impactItems(event);
+  const showCompare = initialTab === "compare" && previousEvent;
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/25 backdrop-blur-[2px]" onClick={onClose} aria-hidden />
+      <div
+        className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col overflow-hidden bg-white shadow-2xl"
+        role="dialog"
+        aria-labelledby="history-snapshot-title"
+      >
+        <header className="flex shrink-0 items-start justify-between gap-3 border-b border-zinc-200 px-5 py-4">
+          <div className="min-w-0">
+            <h2 id="history-snapshot-title" className="text-lg font-semibold text-zinc-950">
+              {scanDateLabel(event.timestamp)}
+            </h2>
+            <p className="mt-0.5 text-sm text-zinc-500">{frameworkLabel(event.framework)}</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+            aria-label="Close"
+          >
+            <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </header>
+
+        <div className="flex-1 overflow-y-auto px-5 py-5">
+          {event.type !== "baseline_established" ? (
+            <PostureShift before={event.posture_before} after={event.posture_after} />
+          ) : (
+            <p className="text-3xl font-bold tabular-nums tracking-tight text-zinc-950">
+              {event.posture_after != null ? `${event.posture_after}%` : "—"}
+            </p>
+          )}
+
+          {cause && event.type !== "baseline_established" && (
+            <p className="mt-3 text-base leading-snug text-zinc-900">
+              <span className="font-semibold">{cause.control}</span>{" "}
+              <span className={cause.tone === "bad" ? "text-rose-600" : cause.tone === "good" ? "text-emerald-600" : "text-zinc-500"}>
+                {cause.text}
+              </span>
+            </p>
+          )}
+
+          {event.type === "baseline_established" && (
+            <p className="mt-2 text-sm leading-relaxed text-zinc-600">
+              First recorded posture for this framework in the selected window.
+            </p>
+          )}
+
+          {impacts.length > 0 && (
+            <div className="mt-5">
+              <ImpactList items={impacts} size="sm" />
+            </div>
+          )}
+
+          {showCompare && previousEvent && (
+            <div className="mt-6 border-t border-zinc-100 pt-5">
+              <p className="text-[13px] font-semibold text-zinc-900">
+                Compared to {scanDateLabel(previousEvent.timestamp)}
+              </p>
+              <CompareGrid previous={previousEvent} current={event} />
+            </div>
+          )}
+
+          {event.type !== "baseline_established" &&
+            (event.diff.newly_failed.length > 0 || event.diff.newly_passed.length > 0) && (
+              <div className="mt-6 space-y-4 border-t border-zinc-100 pt-5">
+                <ControlChangeList title="Controls that failed" tone="fail" items={event.diff.newly_failed} />
+                <ControlChangeList title="Controls that passed" tone="pass" items={event.diff.newly_passed} />
+              </div>
+            )}
+
+          <div className="mt-6 border-t border-zinc-100 pt-5">
+            <p className="text-sm leading-relaxed text-zinc-500">
+              <span className="font-semibold tabular-nums text-zinc-900">{snap?.controls_passed ?? "—"}</span> passing
+              <span className="mx-1.5 text-zinc-300">·</span>
+              <span className="font-semibold tabular-nums text-zinc-900">{snap?.controls_failed ?? "—"}</span> failing
+              <span className="mx-1.5 text-zinc-300">·</span>
+              <span className="font-semibold tabular-nums text-zinc-900">{snap?.controls_no_data ?? "—"}</span> no data
+              <span className="mx-1.5 text-zinc-300">·</span>
+              <span className="font-semibold tabular-nums text-zinc-900">
+                {snap?.findings_opened ?? event.findings_opened}
+              </span>{" "}
+              findings opened
+            </p>
+          </div>
+
+          <div className="mt-4">
+            <InfrastructureEventsList
+              accountId={accountId}
+              onDate={scanAsOfDate(event.timestamp)}
+              count={event.infrastructure_events_count ?? 0}
+              defaultExpanded={expandInfrastructure}
+            />
+          </div>
+
+          <div className="mt-5 border-t border-zinc-100 pt-4">
+            <button
+              type="button"
+              disabled={downloading}
+              onClick={() => {
+                setDownloading(true);
+                void downloadEvidenceForScan(
+                  accountId,
+                  event.framework,
+                  event.timestamp,
+                  periodDays,
+                ).finally(() => setDownloading(false));
+              }}
+              className="inline-flex h-11 w-full items-center justify-center rounded-lg bg-indigo-600 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {downloading ? "Generating…" : "Generate Audit Package"}
+            </button>
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+              Evidence as of {scanAsOfDate(event.timestamp)}. Rolling packs on{" "}
+              <Link to="/controls" className="font-medium text-indigo-600 hover:text-indigo-800">
+                Compliance
+              </Link>
+              .
+            </p>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}

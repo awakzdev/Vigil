@@ -48,11 +48,98 @@ def used_actions_from_usages(usages: list[IamPermUsage], cutoff: datetime) -> li
     return sorted(seen.values(), key=str.lower)
 
 
+def service_has_tracked_actions_in_window(usage: IamPermUsage, cutoff: datetime) -> bool:
+    """True when IAM returned per-action last-access within the window."""
+    if not usage.actions_json:
+        return False
+    for entry in usage.actions_json:
+        if isinstance(entry, str):
+            if usage.last_authenticated and usage.last_authenticated >= cutoff:
+                return True
+            continue
+        if not isinstance(entry, dict):
+            continue
+        la = _parse_dt(entry.get("last_authenticated"))
+        if la is not None and la >= cutoff:
+            return True
+    return False
+
+
 def used_services_from_usages(usages: list[IamPermUsage], cutoff: datetime) -> set[str]:
     return {
         u.service for u in usages
         if u.last_authenticated is not None and u.last_authenticated >= cutoff
     }
+
+
+def services_with_action_evidence(usages: list[IamPermUsage], cutoff: datetime) -> set[str]:
+    return {
+        u.service for u in usages
+        if u.last_authenticated is not None
+        and u.last_authenticated >= cutoff
+        and service_has_tracked_actions_in_window(u, cutoff)
+    }
+
+
+def services_with_service_only_evidence(usages: list[IamPermUsage], cutoff: datetime) -> set[str]:
+    used = used_services_from_usages(usages, cutoff)
+    with_actions = services_with_action_evidence(usages, cutoff)
+    return used - with_actions
+
+
+def augment_used_actions_with_granted_for_service_only(
+    tracked_actions: list[str],
+    usages: list[IamPermUsage],
+    cutoff: datetime,
+    granted_actions: list[str],
+) -> tuple[list[str], list[str]]:
+    """When IAM reports service use without action detail, keep already-granted actions for that service.
+
+    Does not invent service:* wildcards. Returns (actions, warnings).
+    """
+    seen: dict[str, str] = {a.lower(): a for a in tracked_actions}
+    warnings: list[str] = []
+    tracked_svcs = {a.split(":")[0].lower() for a in tracked_actions if ":" in a}
+    granted_has_star = any(g == "*" for g in granted_actions)
+
+    for u in usages:
+        svc = (u.service or "").lower()
+        if not svc:
+            continue
+        if u.last_authenticated is None or u.last_authenticated < cutoff:
+            continue
+        if service_has_tracked_actions_in_window(u, cutoff):
+            continue
+        if svc in tracked_svcs:
+            continue
+
+        preserved: list[str] = []
+        for g in granted_actions:
+            if g == "*":
+                continue
+            if not g.endswith(":*") and ":" in g and g.split(":")[0].lower() == svc:
+                preserved.append(g)
+
+        if preserved:
+            for action in preserved:
+                key = action.lower()
+                if key not in seen:
+                    seen[key] = action
+            continue
+
+        if granted_has_star or any(
+            g.endswith(":*") and g.split(":")[0].lower() == svc for g in granted_actions
+        ):
+            warnings.append(
+                f"{svc}: IAM reported service-level use only (no tracked actions). "
+                "Granted permissions are wildcard — re-scan or use Access Analyzer for action-level output."
+            )
+        else:
+            warnings.append(
+                f"{svc}: IAM reported service-level use only; no matching inline grants for this service."
+            )
+
+    return sorted(seen.values(), key=str.lower), warnings
 
 
 def unused_services_from_usages(usages: list[IamPermUsage], cutoff: datetime) -> set[str]:

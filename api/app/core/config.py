@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     CFN_TEMPLATE_URL: str = (
         "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/vigil-readonly-role.yaml"
     )
+    CFN_REMEDIATION_TEMPLATE_URL: str = (
+        "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/vigil-remediation-runner-ec2.yaml"
+    )
+
+    # Customer EventBridge bus where vigil-remediation-runner stack is deployed.
+    REMEDIATION_EVENT_BUS_REGION: str = "us-east-1"
+    REMEDIATION_EVENT_BUS_NAME: str = "default"
+    REMEDIATION_PLAN_TTL_MINUTES: int = 60
 
     # When True (default) hitting /v1/auth/{github,gitlab,google} *without*
     # a link_token creates a new user+org if no existing user matches the
@@ -56,8 +64,8 @@ class Settings(BaseSettings):
     # Generate: python -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
     EVIDENCE_PACK_SIGNING_KEY: str = ""
 
-    # Immutable evidence vault (WORM) — scaffold only; upload not wired.
-    # Base S3 location for archived packs, e.g. s3://vigil-evidence-vault/prod
+    # Immutable evidence vault (WORM) — uploads on evidence-pack export when enabled.
+    # Base S3 location for archived packs, e.g. s3://vigil-worm-storage/vigil
     EVIDENCE_VAULT_ENABLED: bool = False
     EVIDENCE_VAULT_S3_URI: str = ""
     EVIDENCE_VAULT_S3_REGION: str = ""
@@ -65,6 +73,11 @@ class Settings(BaseSettings):
     EVIDENCE_VAULT_RETENTION_DAYS: int = 365
     # none | presigned | approved_link (future auditor read path)
     EVIDENCE_VAULT_AUDITOR_ACCESS_MODE: str = "none"
+
+    # Go HCL patch binary (repo-aware Terraform PRs). Default: /usr/local/bin/hclpatch
+    HCLPATCH_BIN: str = "/usr/local/bin/hclpatch"
+    # Skip terraform fmt/validate when binary missing (dev only).
+    TERRAFORM_VALIDATE_SKIP: bool = False
 
 
 @lru_cache

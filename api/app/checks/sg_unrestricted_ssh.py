@@ -29,7 +29,12 @@ def run(db: Session, account_id) -> list[FindingDraft]:
             title=f"Security group `{sg.group_name}` allows unrestricted SSH (0.0.0.0/0 on port 22)",
             severity="high",
             risk_score=score("high"),
-            evidence={"group_id": sg.group_id, "group_name": sg.group_name, "region": sg.region},
+            evidence={
+                "group_id": sg.group_id,
+                "group_name": sg.group_name,
+                "region": sg.region,
+                "exposing_rules": (sg.public_exposure or {}).get("ssh") or [],
+            },
         )
         for sg in sgs
     ]

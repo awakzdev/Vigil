@@ -1,7 +1,8 @@
-"""Collect significant CloudTrail write events for correlation analysis.
+"""Collect significant CloudTrail write events for the infrastructure timeline.
 
 Uses LookupEvents to pull infrastructure-changing events from the last 90 days.
-Only collects management/write events (not read-only calls) for a focused signal.
+Prefers explicit TRACKED_EVENTS; otherwise keeps non-readOnly API calls for
+high-signal AWS services (IAM, S3, EC2, KMS, etc.).
 """
 from __future__ import annotations
 
@@ -21,29 +22,60 @@ from app.models.cloudtrail import CloudTrailEvent
 
 log = structlog.get_logger()
 
-# High-signal write events to collect for correlation
 TRACKED_EVENTS = {
-    # IAM
     "CreateUser", "DeleteUser", "AttachUserPolicy", "DetachUserPolicy",
     "CreateRole", "DeleteRole", "AttachRolePolicy", "DetachRolePolicy",
-    "CreatePolicy", "DeletePolicy",
+    "CreatePolicy", "DeletePolicy", "PutRolePolicy", "DeleteRolePolicy",
+    "PutUserPolicy", "DeleteUserPolicy", "UpdateAssumeRolePolicy",
     "AddUserToGroup", "RemoveUserFromGroup",
-    # Security groups
     "AuthorizeSecurityGroupIngress", "RevokeSecurityGroupIngress",
     "AuthorizeSecurityGroupEgress", "RevokeSecurityGroupEgress",
     "CreateSecurityGroup", "DeleteSecurityGroup",
-    # S3
     "PutBucketPolicy", "DeleteBucketPolicy", "PutBucketAcl",
-    "PutBucketPublicAccessBlock",
-    # EC2 / compute
-    "RunInstances", "TerminateInstances",
-    # KMS
-    "CreateKey", "DisableKey", "ScheduleKeyDeletion",
-    # CloudTrail
-    "StopLogging", "DeleteTrail",
-    # Config / GuardDuty
+    "PutBucketPublicAccessBlock", "CreateBucket", "DeleteBucket",
+    "RunInstances", "TerminateInstances", "ModifyInstanceAttribute",
+    "CreateKey", "DisableKey", "ScheduleKeyDeletion", "PutKeyPolicy",
+    "StopLogging", "DeleteTrail", "UpdateTrail", "CreateTrail",
     "DeleteDetector", "StopConfigurationRecorder",
+    "CreateFunction", "UpdateFunctionConfiguration",
+    "ModifyDBInstance", "CreateDBInstance",
 }
+
+_READ_PREFIXES = (
+    "Get", "List", "Describe", "Head", "BatchGet", "Lookup", "Scan",
+    "Query", "Select", "Test", "Validate", "Filter", "Check",
+)
+
+_SIGNAL_EVENT_SOURCES = (
+    "iam.amazonaws.com",
+    "s3.amazonaws.com",
+    "ec2.amazonaws.com",
+    "kms.amazonaws.com",
+    "cloudtrail.amazonaws.com",
+    "rds.amazonaws.com",
+    "lambda.amazonaws.com",
+    "elasticloadbalancing.amazonaws.com",
+    "secretsmanager.amazonaws.com",
+    "ssm.amazonaws.com",
+    "dynamodb.amazonaws.com",
+    "sns.amazonaws.com",
+    "sqs.amazonaws.com",
+    "guardduty.amazonaws.com",
+    "config.amazonaws.com",
+    "securityhub.amazonaws.com",
+    "access-analyzer.amazonaws.com",
+)
+
+_SKIP_EVENT_NAMES = frozenset({
+    "ConsoleLogin",
+    "CredentialVerification",
+    "Decrypt",
+    "GenerateDataKey",
+    "UpdateInstanceInformation",
+    "UpdateInstanceAssociationStatus",
+    "PutComplianceItems",
+    "PutInventory",
+})
 
 _LOOKBACK_DAYS = 90
 _MAX_EVENTS_PER_RUN = 1000
@@ -65,11 +97,40 @@ def _dedupe_resources(resources: list[dict]) -> list[dict]:
 
 
 def _lookup_regions(sess) -> list[str]:
-    """Regions where LookupEvents must run (trail home regions, else all opted-in)."""
     trails = _discover_trails(sess)
     if trails:
         return sorted({t.get("HomeRegion") or "us-east-1" for t in trails})
     return _get_regions(sess)
+
+
+def _should_collect(ct_event: dict, event_name: str) -> bool:
+    if not event_name or event_name in _SKIP_EVENT_NAMES:
+        return False
+    if event_name in TRACKED_EVENTS:
+        return True
+    if ct_event.get("readOnly") is True:
+        return False
+    if any(event_name.startswith(prefix) for prefix in _READ_PREFIXES):
+        return False
+    source = (ct_event.get("eventSource") or "").lower()
+    if not any(sig in source for sig in _SIGNAL_EVENT_SOURCES):
+        return False
+    event_type = ct_event.get("eventType") or ""
+    if event_type and event_type not in ("AwsApiCall", "AwsServiceEvent"):
+        return False
+    return True
+
+
+def _parse_cloudtrail_event(evt: dict, now: datetime) -> tuple[dict, str, str]:
+    ct_event = evt.get("CloudTrailEvent") or "{}"
+    if isinstance(ct_event, str):
+        try:
+            ct_event = json.loads(ct_event)
+        except Exception:
+            ct_event = {}
+    event_name = evt.get("EventName", "") or ct_event.get("eventName", "")
+    event_source = evt.get("EventSource", "") or ct_event.get("eventSource", "")
+    return ct_event, event_name, event_source
 
 
 def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
@@ -86,6 +147,8 @@ def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
 
     collected = 0
     seen_event_ids: set[str] = set()
+    scanned = 0
+    skipped_readonly = 0
 
     for region in regions:
         if collected >= _MAX_EVENTS_PER_RUN:
@@ -100,21 +163,17 @@ def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
             )
             for page in pages:
                 for evt in page.get("Events", []):
-                    event_name = evt.get("EventName", "")
-                    if event_name not in TRACKED_EVENTS:
+                    scanned += 1
+                    ct_event, event_name, event_source = _parse_cloudtrail_event(evt, now)
+                    if not _should_collect(ct_event, event_name):
+                        if ct_event.get("readOnly") is True:
+                            skipped_readonly += 1
                         continue
 
                     event_id = evt.get("EventId", "")
                     if not event_id or event_id in seen_event_ids:
                         continue
                     seen_event_ids.add(event_id)
-
-                    ct_event = evt.get("CloudTrailEvent") or "{}"
-                    if isinstance(ct_event, str):
-                        try:
-                            ct_event = json.loads(ct_event)
-                        except Exception:
-                            ct_event = {}
 
                     actor = (
                         (ct_event.get("userIdentity") or {}).get("arn")
@@ -133,7 +192,7 @@ def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
                         account_id=account.id,
                         event_id=event_id,
                         event_name=event_name,
-                        event_source=evt.get("EventSource", ""),
+                        event_source=event_source,
                         event_time=event_time,
                         actor=actor,
                         source_ip=source_ip,
@@ -142,7 +201,12 @@ def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
                         last_seen=now,
                     ).on_conflict_do_update(
                         constraint="uq_cloudtrail_event_account_id",
-                        set_={"last_seen": now, "raw": ct_event},
+                        set_={
+                            "last_seen": now,
+                            "raw": ct_event,
+                            "event_name": event_name,
+                            "event_source": event_source,
+                        },
                     )
                     db.execute(stmt)
                     collected += 1
@@ -170,5 +234,7 @@ def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
         account_id=str(account.id),
         collected=collected,
         regions=len(regions),
+        scanned=scanned,
+        skipped_readonly=skipped_readonly,
     )
     return collected

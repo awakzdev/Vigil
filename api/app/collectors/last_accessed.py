@@ -96,23 +96,48 @@ def _persist_completed_job(
     return count
 
 
+def _append_tracked_action(
+    actions: list[dict],
+    *,
+    service_ns: str,
+    name: str | None,
+    last_accessed,
+) -> None:
+    if not name or last_accessed is None:
+        return
+    if ":" not in name and service_ns:
+        name = f"{service_ns}:{name}"
+    if hasattr(last_accessed, "isoformat"):
+        last_accessed = last_accessed.isoformat()
+    key = name.lower()
+    for existing in actions:
+        if existing.get("action", "").lower() == key:
+            return
+    actions.append({"action": name, "last_authenticated": last_accessed})
+
+
 def _tracked_actions_from_svc(svc: dict) -> list | None:
-    """Extract used actions from AWS TrackedActionsLastAccessed payload."""
+    """Extract used actions from IAM action-level last-accessed payloads."""
     service_ns = (svc.get("ServiceNamespace") or "").lower()
-    action_entries = svc.get("TrackedActionsLastAccessed") or []
-    if not action_entries:
-        return None
     actions: list[dict] = []
-    for entry in action_entries:
-        name = entry.get("ActionName")
-        la = entry.get("LastAccessedTime")
-        if not name or la is None:
-            continue
-        if ":" not in name and service_ns:
-            name = f"{service_ns}:{name}"
-        if hasattr(la, "isoformat"):
-            la = la.isoformat()
-        actions.append({"action": name, "last_authenticated": la})
+
+    for entry in svc.get("TrackedActionsLastAccessed") or []:
+        _append_tracked_action(
+            actions,
+            service_ns=service_ns,
+            name=entry.get("ActionName"),
+            last_accessed=entry.get("LastAccessedTime"),
+        )
+
+    # Some API responses still surface ActionLastAccessed (LastAuthenticated) instead of TrackedActions*.
+    for entry in svc.get("ActionLastAccessed") or []:
+        _append_tracked_action(
+            actions,
+            service_ns=service_ns,
+            name=entry.get("ActionName"),
+            last_accessed=entry.get("LastAuthenticated"),
+        )
+
     return actions or None
 
 
@@ -127,11 +152,11 @@ def _upsert(db: Session, account_id, principal_arn: str, svc: dict) -> None:
         last_authenticated=svc.get("LastAuthenticated"),
         actions_json=actions,
     )
+    update_cols: dict = {"last_authenticated": stmt.excluded.last_authenticated}
+    if actions is not None:
+        update_cols["actions_json"] = stmt.excluded.actions_json
     stmt = stmt.on_conflict_do_update(
         index_elements=["account_id", "principal_arn", "service"],
-        set_={
-            "last_authenticated": stmt.excluded.last_authenticated,
-            "actions_json": stmt.excluded.actions_json,
-        },
+        set_=update_cols,
     )
     db.execute(stmt)

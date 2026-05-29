@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from app.data.control_narratives import narrative_detail_for, narrative_for
+from app.data.control_narratives import narrative_detail_for, narrative_for, scope_limitations_for
 
 _MAPPINGS_PATH = Path(__file__).resolve().parents[1] / "data" / "control_mappings.json"
 
@@ -12,6 +12,14 @@ def test_narrative_detail_includes_short_and_refs():
     assert detail["short_answer"]
     assert detail["long_answer"] == narrative_for("soc2", "CC6.1")
     assert len(detail["evidence_refs"]) >= 2
+    assert not any("Physical access" in g for g in detail["known_gaps"])
+
+
+def test_physical_scope_limitation_is_pack_level_not_cc61():
+    soc2_limits = scope_limitations_for("soc2")
+    assert any("Physical security" in line for line in soc2_limits)
+    detail = narrative_detail_for("soc2", "CC6.1", ["iam.user.no_mfa"])
+    assert not any("physical" in g.lower() for g in detail["known_gaps"])
 
 
 def test_cis_narrative_lookup():

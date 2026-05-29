@@ -1,0 +1,48 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DenyInsecureTransport",
+      "Effect": "Deny",
+      "Principal": "*",
+      "Action": "s3:*",
+      "Resource": [
+        "arn:aws:s3:::vigil-worm-storage",
+        "arn:aws:s3:::vigil-worm-storage/*"
+      ],
+      "Condition": {
+        "Bool": {
+          "aws:SecureTransport": "false"
+        }
+      }
+    },
+    {
+      "Sid": "AllowVigilApiVaultWriter",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::946796614687:root"
+      },
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketObjectLockConfiguration"
+      ],
+      "Resource": "arn:aws:s3:::vigil-worm-storage"
+    },
+    {
+      "Sid": "AllowVigilApiVaultObjectWrite",
+      "Effect": "Allow",
+      "Principal": {
+        "AWS": "arn:aws:iam::946796614687:root"
+      },
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:GetObjectVersion",
+        "s3:PutObjectRetention",
+        "s3:PutObjectLegalHold",
+        "s3:GetObjectRetention"
+      ],
+      "Resource": "arn:aws:s3:::vigil-worm-storage/*"
+    }
+  ]
+}

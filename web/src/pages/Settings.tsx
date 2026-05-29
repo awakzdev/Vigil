@@ -389,7 +389,7 @@ export default function Settings() {
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600/80">Subsystem</span>
               </div>
               <h3 className="mt-3 text-sm font-bold text-zinc-900">Detection coverage</h3>
-              <p className="mt-1 text-xs text-zinc-500">Benchmark checks and optional hygiene modules.</p>
+              <p className="mt-1 text-xs text-zinc-500">Benchmark checks and optional operational modules.</p>
               <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-600">
                 <span>
                   <span className="font-semibold tabular-nums text-zinc-900">{BENCHMARK_CHECK_COUNT}</span> benchmark
@@ -556,7 +556,7 @@ export default function Settings() {
                     </p>
                   )}
                   <p className="text-zinc-500">
-                    S3 upload is plan-only until the vault bucket and IAM are provisioned. See docs/evidence-vault.md.
+                    Enable EVIDENCE_VAULT_ENABLED and point EVIDENCE_VAULT_S3_URI at your Object Lock bucket. See docs/evidence-vault.md.
                   </p>
                 </div>
               )}

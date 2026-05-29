@@ -17,6 +17,13 @@ import {
   verbStyles,
 } from "../lib/timelineDisplay";
 
+interface RelatedFinding {
+  finding_id: string;
+  check_id: string;
+  title: string;
+  severity: string;
+}
+
 interface TimelineEvent {
   type: "cloudtrail";
   event_id: string;
@@ -25,7 +32,9 @@ interface TimelineEvent {
   event_time: string;
   actor: string | null;
   source_ip: string | null;
+  region?: string | null;
   resources: { type: string | null; name: string | null }[];
+  related_findings?: RelatedFinding[];
 }
 
 interface Account {
@@ -85,7 +94,7 @@ function emptyTimelineCopy(meta: TimelineMeta | undefined, days: number) {
   if (meta.events_in_account === 0) {
     return {
       title: "No infrastructure changes found",
-      body: "No tracked write events in the last 90 days.",
+      body: "No write events stored yet. Run a fresh scan — the collector now ingests non-readOnly API calls across IAM, S3, EC2, and more.",
     };
   }
   return {
@@ -164,71 +173,6 @@ function VerbIcon({ verb }: { verb: ReturnType<typeof eventVerb> }) {
     <svg className={cls} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z" />
     </svg>
-  );
-}
-
-type IamHistoryResponse = {
-  as_of: string;
-  snapshot_count: number;
-  summary: Record<string, number>;
-  note: string;
-  entities: Record<string, { entity_id: string; taken_at: string; data: Record<string, unknown> }[]>;
-};
-
-function IamHistoryPanel({ accountId }: { accountId: string }) {
-  const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
-  const [open, setOpen] = useState(false);
-  const { data, isLoading } = useQuery<IamHistoryResponse>({
-    queryKey: ["iam-history", accountId, asOf],
-    queryFn: () => api(`/v1/accounts/${accountId}/iam-history?as_of=${asOf}`),
-    enabled: open && !!accountId,
-  });
-
-  return (
-    <div className="mt-10 rounded-2xl border border-zinc-200 bg-white">
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
-      >
-        <div>
-          <p className="text-sm font-semibold text-zinc-900">IAM roster from snapshots</p>
-          <p className="mt-0.5 text-xs text-zinc-500">Point-in-time users, roles, and keys for audit sampling (not live IAM).</p>
-        </div>
-        <Chevron open={open} />
-      </button>
-      {open && (
-        <div className="border-t border-zinc-100 px-5 pb-5 pt-4">
-          <label className="flex flex-wrap items-center gap-2 text-xs text-zinc-600">
-            As of
-            <input
-              type="date"
-              value={asOf}
-              onChange={(e) => setAsOf(e.target.value)}
-              className="rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-800"
-            />
-          </label>
-          {isLoading && <p className="mt-3 text-xs text-zinc-400">Loading snapshot roster…</p>}
-          {data && (
-            <div className="mt-3 space-y-3 text-xs text-zinc-700">
-              <p className="text-zinc-500">{data.note}</p>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(data.summary).map(([k, n]) => (
-                  <span key={k} className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-mono">
-                    {k}: {n}
-                  </span>
-                ))}
-              </div>
-              {data.snapshot_count === 0 ? (
-                <p className="text-zinc-500">No snapshots on or before this date — run scans earlier in the audit period.</p>
-              ) : (
-                <p className="text-zinc-600">{data.snapshot_count} entities from collected scan evidence.</p>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -348,6 +292,7 @@ function ExpandedEvidence({ evt }: { evt: TimelineEvent }) {
       <div className="grid gap-5 lg:grid-cols-3 lg:gap-7">
         <MetaSection title="Identity">
           <MetaField label="Actor" value={parsed.label} emphasis />
+          {parsed.hint && <p className="-mt-2 text-[11px] leading-relaxed text-zinc-500">{parsed.hint}</p>}
           {showRole && <MetaField label="Role" value={parsed.role} />}
           {parsed.user && sessionIsEmail && parsed.user !== parsed.label && (
             <MetaField label="User" value={parsed.user} />
@@ -390,6 +335,24 @@ function ExpandedEvidence({ evt }: { evt: TimelineEvent }) {
           <MetaField label="Region" value={region || "—"} />
           <MetaField label="Event time" value={fmtEventTime(evt.event_time)} />
         </MetaSection>
+
+        {evt.related_findings && evt.related_findings.length > 0 && (
+          <MetaSection title="Related findings">
+            <ul className="space-y-2">
+              {evt.related_findings.map((rf) => (
+                <li key={rf.finding_id}>
+                  <a
+                    href={`/findings?finding=${rf.finding_id}`}
+                    className="text-[13px] font-medium text-indigo-600 hover:text-indigo-800"
+                  >
+                    {rf.title}
+                  </a>
+                  <span className="ml-2 text-[11px] text-zinc-500">{rf.check_id}</span>
+                </li>
+              ))}
+            </ul>
+          </MetaSection>
+        )}
 
         <MetaSection title="Resources">
           {resources.length === 0 ? (
@@ -494,6 +457,7 @@ export default function Timeline() {
 
   const [days, setDays] = useState(30);
   const [serviceFilter, setServiceFilter] = useState<ServiceFilter>("all");
+  const [includeOperationalNoise, setIncludeOperationalNoise] = useState(false);
   const [accountId, setAccountId] = useState<string>("");
 
   const { data: accounts } = useQuery<Account[]>({
@@ -505,8 +469,11 @@ export default function Timeline() {
   const effectiveAccountId = accountId || connected[0]?.id || "";
 
   const { data, isLoading, error } = useQuery<TimelineResponse>({
-    queryKey: ["timeline", effectiveAccountId, days],
-    queryFn: () => api(`/v1/accounts/${effectiveAccountId}/timeline?days=${days}&limit=200`),
+    queryKey: ["timeline", effectiveAccountId, days, includeOperationalNoise],
+    queryFn: () =>
+      api(
+        `/v1/accounts/${effectiveAccountId}/timeline?days=${days}&limit=200&include_operational_noise=${includeOperationalNoise}`,
+      ),
     enabled: !!effectiveAccountId,
   });
 
@@ -522,14 +489,7 @@ export default function Timeline() {
   const grouped = useMemo(() => groupByDate(filteredEvents), [filteredEvents]);
 
   return (
-    <div className="w-full pl-2 pr-4 py-6 sm:pl-3 sm:pr-6">
-      <div className="mb-7 flex items-start justify-between gap-6">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Timeline</h1>
-          <p className="mt-1 text-sm text-zinc-500">CloudTrail infrastructure changes from your last scan.</p>
-        </div>
-      </div>
-
+    <div className="w-full max-w-3xl">
       <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex flex-wrap items-center gap-2">
           {connected.length > 1 && (
@@ -572,6 +532,16 @@ export default function Timeline() {
               </option>
             ))}
           </select>
+
+          <label className="inline-flex h-[42px] cursor-pointer items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3 text-xs font-medium text-zinc-600 shadow-sm">
+            <input
+              type="checkbox"
+              checked={includeOperationalNoise}
+              onChange={(e) => setIncludeOperationalNoise(e.target.checked)}
+              className="rounded border-zinc-300"
+            />
+            Include operational noise (SSM, Lambda, …)
+          </label>
         </div>
 
         {data && (
@@ -628,8 +598,6 @@ export default function Timeline() {
           ))}
         </div>
       )}
-
-      {effectiveAccountId && <IamHistoryPanel accountId={effectiveAccountId} />}
     </div>
   );
 }

@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
   Vigil read-only IAM role for compliance scanning. Enumerates AWS config
-  across IAM, storage, compute, networking, and security services. No write
-  access. Role retained on stack deletion.
+  across IAM, account contacts (CIS 1.1/1.2), IAM server certificates (CIS 1.18),
+  storage, compute, networking, and security services. No write access.
+  Role retained on stack deletion — update the stack to pick up new read actions.
 
 Parameters:
   VigilAccountPrincipal:
@@ -17,6 +18,35 @@ Parameters:
     Type: String
     Default: VigilReadOnly
     Description: IAM role name. Do not change on stack updates.
+  EnableAccessAnalyzerMonitorRole:
+    Type: String
+    Default: "No"
+    AllowedValues: ["Yes", "No"]
+    Description: >
+      Create a separate IAM role for IAM Access Analyzer policy generation (reads CloudTrail
+      logs in S3). Optional — only needed for Vigil Advanced suggested-policy (ARN scope).
+  CloudTrailLogsBucketName:
+    Type: String
+    Default: ""
+    Description: >
+      S3 bucket name where CloudTrail delivers logs (not ARN). Required when monitor role is Yes.
+      For organization trails in another account, create the monitor role manually and grant
+      bucket/KMS access there; leave this No.
+  CloudTrailLogsBucketPrefix:
+    Type: String
+    Default: "AWSLogs/"
+    Description: Optional key prefix under the bucket (include trailing slash if used).
+  CloudTrailLogsKmsKeyArn:
+    Type: String
+    Default: ""
+    Description: KMS key ARN if CloudTrail log objects are SSE-KMS encrypted (optional).
+
+Conditions:
+  CreateMonitorRole:
+    Fn::And:
+      - !Equals [!Ref EnableAccessAnalyzerMonitorRole, "Yes"]
+      - !Not [!Equals [!Ref CloudTrailLogsBucketName, ""]]
+  HasCloudTrailKmsKey: !Not [!Equals [!Ref CloudTrailLogsKmsKeyArn, ""]]
 
 Resources:
   VigilRole:
@@ -72,6 +102,20 @@ Resources:
                 Action:
                   - iam:GenerateServiceLastAccessedDetails
                   - iam:GetServiceLastAccessedDetails
+                Resource: "*"
+
+              - Sid: IamServerCertificates
+                Effect: Allow
+                Action:
+                  - iam:ListServerCertificates
+                  - iam:GetServerCertificate
+                Resource: "*"
+
+              - Sid: AccountContacts
+                Effect: Allow
+                Action:
+                  - account:GetContactInformation
+                  - account:GetAlternateContact
                 Resource: "*"
 
               - Sid: S3BucketConfiguration
@@ -144,6 +188,10 @@ Resources:
                 Effect: Allow
                 Action:
                   - access-analyzer:ListAnalyzers
+                  - access-analyzer:StartPolicyGeneration
+                  - access-analyzer:GetGeneratedPolicy
+                  - access-analyzer:ListPolicyGenerations
+                  - access-analyzer:CancelPolicyGeneration
                 Resource: "*"
 
               - Sid: ConfigServiceConfiguration
@@ -234,6 +282,65 @@ Resources:
                   - organizations:DescribeAccount
                 Resource: "*"
 
+  AccessAnalyzerMonitorRole:
+    Type: AWS::IAM::Role
+    Condition: CreateMonitorRole
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RoleName: !Sub "${RoleName}AccessAnalyzerMonitor"
+      Description: >
+        Lets IAM Access Analyzer read CloudTrail S3 logs for policy generation. Assumed by
+        access-analyzer.amazonaws.com — not by Vigil directly.
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: access-analyzer.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: AccessAnalyzerCloudTrailRead
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              Fn::If:
+                - HasCloudTrailKmsKey
+                - - Sid: CloudTrailDiscovery
+                    Effect: Allow
+                    Action:
+                      - cloudtrail:DescribeTrails
+                      - cloudtrail:GetTrailStatus
+                    Resource: "*"
+                  - Sid: CloudTrailLogRead
+                    Effect: Allow
+                    Action:
+                      - s3:GetObject
+                      - s3:ListBucket
+                    Resource:
+                      - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}"
+                      - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}/${CloudTrailLogsBucketPrefix}*"
+                  - Sid: CloudTrailLogDecrypt
+                    Effect: Allow
+                    Action:
+                      - kms:Decrypt
+                      - kms:DescribeKey
+                    Resource: !Ref CloudTrailLogsKmsKeyArn
+                - - Sid: CloudTrailDiscovery
+                    Effect: Allow
+                    Action:
+                      - cloudtrail:DescribeTrails
+                      - cloudtrail:GetTrailStatus
+                    Resource: "*"
+                  - Sid: CloudTrailLogRead
+                    Effect: Allow
+                    Action:
+                      - s3:GetObject
+                      - s3:ListBucket
+                    Resource:
+                      - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}"
+                      - !Sub "arn:aws:s3:::${CloudTrailLogsBucketName}/${CloudTrailLogsBucketPrefix}*"
+
 Outputs:
   RoleArn:
     Description: Paste this ARN into Vigil to finish onboarding.
@@ -241,3 +348,9 @@ Outputs:
   ExternalId:
     Description: ExternalId required to assume the role.
     Value: !Ref ExternalId
+  AccessAnalyzerMonitorRoleArn:
+    Condition: CreateMonitorRole
+    Description: >
+      Pass to Vigil (Advanced policy generation). IAM Access Analyzer assumes this role to read
+      CloudTrail logs — not the VigilReadOnly role.
+    Value: !GetAtt AccessAnalyzerMonitorRole.Arn

@@ -16,17 +16,34 @@ OPTIONAL_CHECKS: list[dict] = [
         "default_enabled": False,
     },
     {
-        "check_id": "github.repo.no_codeowners",
-        "label": "GitHub repo missing CODEOWNERS",
+        "check_id": "git.repo.no_codeowners",
+        "label": "Git repo missing CODEOWNERS",
         "summary": "No CODEOWNERS file in standard locations",
         "description": (
-            "Repositories without a CODEOWNERS file cannot use GitHub code-owner review rules. "
-            "This is optional hygiene — SOC 2 change-management evidence uses branch protection and "
-            "required PR approvals, not CODEOWNERS. Off by default."
+            "Git repositories synced from GitHub or GitLab without a CODEOWNERS file cannot use "
+            "code-owner review rules. Optional security check — SOC 2 change-management evidence uses "
+            "branch protection and required merge request approvals, not CODEOWNERS alone. Off by default."
         ),
         "default_enabled": False,
     },
 ]
 
-OPTIONAL_CHECK_IDS = frozenset(c["check_id"] for c in OPTIONAL_CHECKS)
+# Provider-specific finding check_ids toggled with the parent optional check (one UI switch).
+OPTIONAL_LINKED: dict[str, list[str]] = {
+    "git.repo.no_codeowners": ["github.repo.no_codeowners", "gitlab.repo.no_codeowners"],
+}
+
+# Legacy settings key before git.repo.no_codeowners unified the toggle.
+OPTIONAL_SETTINGS_ALIASES: dict[str, str] = {
+    "github.repo.no_codeowners": "git.repo.no_codeowners",
+}
+
+OPTIONAL_CHECK_IDS = frozenset(
+    {c["check_id"] for c in OPTIONAL_CHECKS}
+    | {lid for linked in OPTIONAL_LINKED.values() for lid in linked}
+)
 OPTIONAL_BY_ID = {c["check_id"]: c for c in OPTIONAL_CHECKS}
+
+for _parent, _linked in OPTIONAL_LINKED.items():
+    for _cid in _linked:
+        OPTIONAL_BY_ID.setdefault(_cid, OPTIONAL_BY_ID[_parent])

@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
 import { labelForCheck } from "../data/checkLabels";
 import { FRAMEWORKS } from "../data/frameworks";
+import { EvidencePackExportPanel } from "../components/EvidencePackExportPanel";
+import type { EvidenceCoverage } from "../lib/evidenceCoverage";
 
 const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
@@ -59,20 +61,12 @@ type ControlHistory = {
 };
 
 const AUDIT_WINDOWS = [
+  { value: "last_scan", label: "Last scan (point-in-time)" },
   { value: 30, label: "Last 30 days" },
   { value: 90, label: "Last 90 days" },
   { value: 180, label: "Last 180 days" },
   { value: 365, label: "Last 365 days" },
-];
-
-type EvidenceCoverage = {
-  coverage_label: string;
-  coverage_ratio: number;
-  warning: string | null;
-  period_start: string;
-  period_end: string;
-  successful_scans_in_period: number;
-};
+] as const;
 
 type StatusFilter = "all" | "pass" | "fail" | "no_data";
 
@@ -88,7 +82,7 @@ const statusExpandedBg: Record<string, string> = {
   no_data: "bg-zinc-50/40",
 };
 
-type OpenFindingMeta = { id: string; severity: string; resource_arn: string };
+type OpenFindingMeta = { id: string; check_id: string; severity: string; resource_arn: string };
 
 function StatusIndicator({ status }: { status: string }) {
   if (status === "pass") {
@@ -111,6 +105,35 @@ function StatusIndicator({ status }: { status: string }) {
     <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100/90 px-2.5 py-1 text-[11px] font-medium text-zinc-500 ring-1 ring-zinc-200/70">
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-400/80" aria-hidden />
       No data
+    </span>
+  );
+}
+
+/** Fixed-size findings column badge (56×28px) — width must not vary by digit count. */
+function FindingCountBadge({ count, status }: { count: number; status: string }) {
+  if (status === "fail") {
+    return (
+      <span
+        className="inline-flex h-7 w-14 items-center justify-center rounded-md bg-red-50 text-sm font-bold tabular-nums leading-none text-red-700 ring-1 ring-red-200/60"
+        aria-label={`${count} open findings`}
+      >
+        {count}
+      </span>
+    );
+  }
+  if (status === "pass") {
+    return (
+      <span
+        className="inline-flex h-7 w-14 items-center justify-center rounded-md bg-emerald-50/70 text-[11px] font-semibold text-emerald-600/70 ring-1 ring-emerald-200/50"
+        aria-hidden
+      >
+        —
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex h-7 w-14 items-center justify-center text-xs text-zinc-300" aria-hidden>
+      —
     </span>
   );
 }
@@ -214,6 +237,18 @@ function groupControls(rows: ControlRow[], framework: string): ControlGroup[] {
     if (row.status === "fail") group.failed += 1;
     if (row.status === "no_data") group.noData += 1;
     groups.set(family.key, group);
+  }
+
+  for (const group of groups.values()) {
+    group.rows.sort((a, b) => {
+      const statusRank = (s: ControlRow["status"]) => (s === "fail" ? 0 : s === "no_data" ? 1 : 2);
+      const rankDiff = statusRank(a.status) - statusRank(b.status);
+      if (rankDiff !== 0) return rankDiff;
+      if (a.status === "fail" && b.status === "fail") {
+        return b.finding_count - a.finding_count;
+      }
+      return a.control_id.localeCompare(b.control_id);
+    });
   }
 
   return Array.from(groups.values());
@@ -366,42 +401,99 @@ function CoverageTierBadge({ tier, label }: { tier?: string; label?: string | nu
   );
 }
 
+function DisclosureSection({
+  title,
+  badge,
+  children,
+  className = "",
+}: {
+  title: string;
+  badge?: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <details className={`group rounded-xl border border-zinc-200/80 bg-zinc-50/40 ${className}`}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-2.5 marker:content-none [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-center gap-2">
+          <svg
+            className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition group-open:rotate-90"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
+            aria-hidden
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{title}</span>
+          {badge ? <span className="truncate text-xs font-medium normal-case text-zinc-600">{badge}</span> : null}
+        </span>
+      </summary>
+      <div className="border-t border-zinc-200/70 px-4 pb-3 pt-2.5">{children}</div>
+    </details>
+  );
+}
+
+function formatCheckSummary(checkIds: string[], max = 4) {
+  if (checkIds.length === 0) return "Manual attestation required";
+  const labels = checkIds.map((id) => labelForCheck(id));
+  if (labels.length <= max) return labels.join(", ");
+  return `${labels.slice(0, max).join(", ")} + ${labels.length - max} more`;
+}
+
+const EMPTY_CHECK_COUNTS = new Map<string, number>();
+
 function MappedChecksList({
   checkIds,
   checkTiers = {},
   checkEvidenceClasses = {},
+  findingCountByCheck = EMPTY_CHECK_COUNTS,
 }: {
   checkIds: string[];
   checkTiers?: Record<string, string>;
   checkEvidenceClasses?: Record<string, string>;
+  findingCountByCheck?: Map<string, number>;
 }) {
   const navigate = useNavigate();
-  const grouped = useMemo(() => groupCheckIds(checkIds), [checkIds]);
+  const sortedCheckIds = useMemo(
+    () =>
+      [...checkIds].sort(
+        (a, b) => (findingCountByCheck.get(b) ?? 0) - (findingCountByCheck.get(a) ?? 0),
+      ),
+    [checkIds, findingCountByCheck],
+  );
+  const grouped = useMemo(() => groupCheckIds(sortedCheckIds), [sortedCheckIds]);
 
   return (
-    <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Mapped checks</p>
-      <p className="mt-1 text-xs font-medium text-zinc-600">
-        {checkIds.length} check{checkIds.length === 1 ? "" : "s"} evaluated for this control
+    <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-3.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+        Mapped checks ({checkIds.length})
       </p>
-      <div className="mt-3.5 space-y-3">
+      <p className="mt-0.5 text-[11px] text-zinc-500">How Vigil evaluates this control · hover a row for check ID</p>
+      <div className="mt-2.5 space-y-2.5">
         {grouped.map(([group, ids]) => (
           <div key={group}>
             <p className="mb-1.5 text-xs font-semibold text-zinc-700">{group}</p>
             <ul className="overflow-hidden rounded-lg border border-zinc-200 bg-white divide-y divide-zinc-100">
-              {ids.map((cid) => (
+              {ids.map((cid) => {
+                const openCount = findingCountByCheck.get(cid) ?? 0;
+                return (
                 <li key={cid}>
                   <button
                     type="button"
+                    title={cid}
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => navigate(`/findings?checks=${encodeURIComponent(cid)}`)}
-                    className="group flex w-full items-center gap-3 px-3.5 py-3 text-left transition-colors hover:bg-zinc-50/80"
+                    className="group flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-zinc-50/80"
                   >
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-semibold leading-snug text-zinc-900 group-hover:text-indigo-700">
                         {labelForCheck(cid)}
+                        {openCount > 0 && (
+                          <span className="ml-1.5 tabular-nums text-red-600/90">({openCount})</span>
+                        )}
                       </p>
-                      <p className="mt-0.5 truncate font-mono text-[11px] text-zinc-500">{cid}</p>
                       <div className="mt-1 flex flex-wrap items-center gap-1.5">
                         {checkTiers[cid] === "extended" && (
                           <span className="text-[10px] font-medium text-sky-700">Supports control objective</span>
@@ -420,7 +512,8 @@ function MappedChecksList({
                     </svg>
                   </button>
                 </li>
-              ))}
+              );
+              })}
             </ul>
           </div>
         ))}
@@ -444,7 +537,7 @@ function buildQuestionnaireDraft(control: ControlRow, periodDays: number): Quest
     notes.push(`Evidence: ${control.evidence_refs.slice(0, 3).join("; ")}`);
   }
   if (control.known_gaps.length > 0) {
-    notes.push(`Known gaps: ${control.known_gaps.join(" ")}`);
+    notes.push(`Scope limitations: ${control.known_gaps.join(" ")}`);
   }
 
   if (control.check_ids.length === 0) {
@@ -477,7 +570,7 @@ function questionnaireDraftText(draft: QuestionnaireDraft) {
 function questionnaireMeta(control: ControlRow) {
   if (control.check_ids.length === 0) {
     return {
-      label: "Questionnaire template",
+      label: "Auditor response template",
       hint: "Not automated in Vigil — manual attestation for auditors.",
       box: "border-zinc-200 bg-zinc-50/80",
       labelColor: "text-zinc-600",
@@ -488,7 +581,7 @@ function questionnaireMeta(control: ControlRow) {
   const status = control.status;
   if (status === "pass") {
     return {
-      label: "Questionnaire answer",
+      label: "Auditor response template",
       hint: "Adapt for Vanta, Drata, or auditor forms.",
       box: "border-violet-200/80 bg-violet-50/40",
       labelColor: "text-violet-600",
@@ -498,7 +591,7 @@ function questionnaireMeta(control: ControlRow) {
   }
   if (status === "fail") {
     return {
-      label: "Questionnaire template",
+      label: "Auditor response template",
       hint: "Control is failing — add remediation status before submitting.",
       box: "border-amber-200/80 bg-amber-50/40",
       labelColor: "text-amber-800",
@@ -507,7 +600,7 @@ function questionnaireMeta(control: ControlRow) {
     };
   }
   return {
-    label: "Questionnaire template",
+    label: "Auditor response template",
     hint: "Not evaluated yet — run a scan first.",
     box: "border-zinc-200 bg-zinc-50/80",
     labelColor: "text-zinc-600",
@@ -527,88 +620,64 @@ function ControlAuditEvidenceBlock({
 }) {
   const statusLine =
     control.status === "pass"
-      ? `Passing — 0 open findings mapped to ${control.control_id} in the last ${periodDays} days.`
+      ? `Passing — 0 open findings in the last ${periodDays} days`
       : control.status === "fail"
-        ? `${control.finding_count} open finding(s) mapped to ${control.control_id}.`
-        : "Not yet evaluated — run a scan and ensure mapped checks have data.";
+        ? `${control.finding_count} open finding${control.finding_count === 1 ? "" : "s"}`
+        : "Not yet evaluated — run a scan";
+
+  const periodLine = coverage
+    ? `${coverage.coverage_label} · ${Math.round(coverage.coverage_ratio * 100)}% of ${periodDays}d with scans (${coverage.successful_scans_in_period} scan${coverage.successful_scans_in_period === 1 ? "" : "s"})`
+    : `Rolling ${periodDays}-day evidence window`;
+
+  const bullets = [
+    control.description ? `${control.title} — ${control.description}` : control.title,
+    `Vigil collects: ${formatCheckSummary(control.check_ids)}`,
+    periodLine,
+    `Status: ${statusLine}`,
+  ];
+  if (control.check_ids.length === 0) {
+    bullets.push("Manual attestation required — no automated Vigil checks mapped.");
+  }
 
   return (
-    <div className="mb-4 rounded-xl border border-indigo-200/70 bg-indigo-50/25 p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">Audit evidence summary</p>
-      <ol className="mt-3 space-y-3 text-xs leading-relaxed text-zinc-800">
-        <li>
-          <span className="font-semibold text-zinc-900">1. Control objective — </span>
-          {control.title}
-          {control.description ? ` — ${control.description}` : ""}
-        </li>
-        <li>
-          <span className="font-semibold text-zinc-900">2. What Vigil collects — </span>
-          {control.check_ids.length > 0
-            ? `${control.check_ids.length} automated check(s): ${control.check_ids.map((id) => labelForCheck(id)).join(", ")}.`
-            : "No automated checks — manual attestation required."}
-          {control.evidence_refs.length > 0 && (
-            <span className="block mt-1 text-zinc-600">Artifacts: {control.evidence_refs.join("; ")}</span>
-          )}
-        </li>
-        <li>
-          <span className="font-semibold text-zinc-900">3. Period completeness — </span>
-          {coverage ? (
-            <>
-              {coverage.coverage_label} ({Math.round(coverage.coverage_ratio * 100)}% of last {periodDays} days with
-              successful scans). {coverage.successful_scans_in_period} scan(s) in period.
-              {coverage.warning ? ` ${coverage.warning}` : ""}
-            </>
-          ) : (
-            `Evidence pack covers a rolling ${periodDays}-day window from each successful scan.`
-          )}
-        </li>
-        <li>
-          <span className="font-semibold text-zinc-900">4. Findings / exceptions — </span>
-          {statusLine}
-        </li>
-        <li>
-          <span className="font-semibold text-zinc-900">5. Manual gaps — </span>
-          {control.known_gaps.length > 0
-            ? control.known_gaps.join(" ")
-            : control.check_ids.length === 0
-              ? "Entire control requires manual evidence outside Vigil."
-              : "None documented for this control."}
-        </li>
-      </ol>
+    <div className="rounded-xl border border-indigo-200/70 bg-indigo-50/25 p-3.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">Auditor summary</p>
+      <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-zinc-800">
+        {bullets.map((line) => (
+          <li key={line} className="flex gap-2">
+            <span className="mt-1.5 h-1 w-1 shrink-0 rounded-full bg-indigo-400/80" aria-hidden />
+            <span>{line}</span>
+          </li>
+        ))}
+      </ul>
+      {coverage?.warning && <p className="mt-2 text-[11px] text-amber-800/90">{coverage.warning}</p>}
     </div>
   );
 }
 
 function NarrativeDetailBlock({ control }: { control: ControlRow }) {
-  if (!control.short_answer && !control.long_answer && !control.narrative) return null;
+  const hasShort = Boolean(control.short_answer?.trim());
+  const hasRefs = control.evidence_refs.length > 0;
+  if (!hasShort && !hasRefs) return null;
 
   return (
     <div className="space-y-3">
-      {control.short_answer && (
-        <div className="rounded-xl border border-zinc-200/80 bg-white/80 p-4">
+      {hasShort && (
+        <div className="rounded-xl border border-zinc-200/80 bg-white/80 p-3.5">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Short answer</p>
-          <p className="mt-1.5 text-sm leading-relaxed text-zinc-800">{control.short_answer}</p>
+          <p className="mt-1 text-sm leading-relaxed text-zinc-800">{control.short_answer}</p>
         </div>
       )}
-      {control.evidence_refs.length > 0 && (
-        <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Evidence references</p>
-          <ul className="mt-2 space-y-1">
+      {hasRefs && (
+        <DisclosureSection title="Evidence sources" badge={`${control.evidence_refs.length}`}>
+          <ul className="space-y-1">
             {control.evidence_refs.map((ref) => (
-              <li key={ref} className="text-xs leading-relaxed text-zinc-700">{ref}</li>
+              <li key={ref} className="font-mono text-[11px] leading-relaxed text-zinc-600">
+                {ref}
+              </li>
             ))}
           </ul>
-        </div>
-      )}
-      {control.known_gaps.length > 0 && (
-        <div className="rounded-xl border border-amber-200/80 bg-amber-50/30 p-4">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-amber-800">Known gaps</p>
-          <ul className="mt-2 space-y-1">
-            {control.known_gaps.map((gap) => (
-              <li key={gap} className="text-xs leading-relaxed text-amber-950/90">{gap}</li>
-            ))}
-          </ul>
-        </div>
+        </DisclosureSection>
       )}
     </div>
   );
@@ -636,31 +705,48 @@ function QuestionnaireAnswerBlock({ control, periodDays }: { control: ControlRow
         : "border-zinc-200";
 
   return (
-    <div className={`rounded-xl border p-4 ${meta.box}`}>
-      <div className="mb-2 flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className={`text-[10px] font-semibold uppercase tracking-wider ${meta.labelColor}`}>{meta.label}</p>
-          <p className={`mt-0.5 text-[11px] ${meta.labelColor} opacity-80`}>{meta.hint}</p>
-        </div>
+    <details className={`group rounded-xl border ${meta.box}`}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-2.5 marker:content-none [&::-webkit-details-marker]:hidden">
+        <span className="flex min-w-0 items-center gap-2">
+          <svg
+            className="h-3.5 w-3.5 shrink-0 text-zinc-400 transition group-open:rotate-90"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            viewBox="0 0 24 24"
+            aria-hidden
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
+          </svg>
+          <span className={`text-[10px] font-semibold uppercase tracking-wider ${meta.labelColor}`}>
+            {meta.label}
+          </span>
+        </span>
         <button
           type="button"
-          onClick={copy}
+          onClick={(e) => {
+            e.preventDefault();
+            void copy();
+          }}
           className={`inline-flex shrink-0 items-center gap-1 rounded-lg border bg-white px-2.5 py-1 text-[11px] font-semibold transition ${meta.btn}`}
         >
           {copied ? "Copied" : "Copy"}
         </button>
+      </summary>
+      <div className="border-t border-zinc-200/60 px-3.5 pb-3.5 pt-2.5">
+        <p className={`text-[11px] ${meta.labelColor} opacity-80`}>{meta.hint}</p>
+        <p className={`mt-2 text-sm leading-relaxed ${meta.textColor}`}>{content.body}</p>
+        {content.notes.length > 0 && (
+          <div className={`mt-2 space-y-1 border-t pt-2 ${noteDivider}`}>
+            {content.notes.map((note) => (
+              <p key={note} className={`text-xs leading-snug ${meta.textColor} opacity-90`}>
+                {note}
+              </p>
+            ))}
+          </div>
+        )}
       </div>
-      <p className={`text-sm leading-relaxed ${meta.textColor}`}>{content.body}</p>
-      {content.notes.length > 0 && (
-        <div className={`mt-2.5 space-y-1 border-t pt-2.5 ${noteDivider}`}>
-          {content.notes.map((note) => (
-            <p key={note} className={`text-xs leading-snug ${meta.textColor} opacity-90`}>
-              {note}
-            </p>
-          ))}
-        </div>
-      )}
-    </div>
+    </details>
   );
 }
 
@@ -681,7 +767,6 @@ function ControlHistoryPanel({
   accountId: string;
   period: number;
 }) {
-  const navigate = useNavigate();
   const history = useQuery({
     queryKey: ["control-history", controlId, framework, accountId, period],
     queryFn: () =>
@@ -696,45 +781,40 @@ function ControlHistoryPanel({
   if (history.isError || !history.data) return null;
 
   const h = history.data;
-  const failSegment = h.segments.find((s) => s.status === "fail");
+  const failSegments = h.segments.filter((s) => s.status === "fail");
+  const passSegments = h.segments.filter((s) => s.status === "pass");
+  const longestFailSeconds = failSegments.reduce((max, s) => Math.max(max, s.duration_seconds), 0);
+  const lastPassingAt =
+    passSegments.length > 0 ? passSegments[passSegments.length - 1]!.to : null;
+
+  const lines: string[] = [];
+  if (h.current_status === "fail") {
+    if (h.failing_since) {
+      lines.push(`Failing since ${formatEvidenceDate(h.failing_since)}`);
+    } else if (h.days_failing != null) {
+      lines.push(`Failing for ${h.days_failing} day${h.days_failing === 1 ? "" : "s"}`);
+    }
+  } else if (h.current_status === "pass") {
+    lines.push("Currently passing");
+  }
+  if (longestFailSeconds > 0) {
+    lines.push(`Longest failing streak: ${formatDuration(longestFailSeconds)}`);
+  }
+  if (lastPassingAt) {
+    lines.push(`Last passing evaluation: ${formatEvidenceDate(lastPassingAt)}`);
+  }
+  if (lines.length === 0) return null;
 
   return (
-    <div className="mt-4 rounded-xl border border-zinc-200/80 bg-white p-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Control history</p>
-          {h.current_status === "fail" && h.days_failing != null && (
-            <p className="mt-1 text-sm font-semibold text-red-600">
-              Failing for {h.days_failing} day{h.days_failing === 1 ? "" : "s"}
-              {h.failing_since ? ` · since ${formatEvidenceDate(h.failing_since)}` : ""}
-            </p>
-          )}
-          {h.current_status === "pass" && (
-            <p className="mt-1 text-sm font-semibold text-emerald-700">Passing — no open mapped findings</p>
-          )}
-        </div>
-        <p className="text-xs text-zinc-500">
-          Pass/fail segments and events above are the compliance history for this control.
-        </p>
-      </div>
-      {failSegment && (
-        <p className="mt-2 text-xs text-zinc-600">
-          Longest failing window in period: {formatDuration(failSegment.duration_seconds)}
-        </p>
-      )}
-      {h.events.length > 0 && (
-        <ul className="mt-3 max-h-40 space-y-1.5 overflow-y-auto border-t border-zinc-100 pt-3">
-          {h.events.slice(-5).reverse().map((evt) => (
-            <li key={`${evt.timestamp}-${evt.type}`} className="text-xs text-zinc-600">
-              <span className="font-mono text-zinc-400">{formatEvidenceDate(evt.timestamp)}</span>
-              {" · "}
-              <span className="font-medium text-zinc-700">{evt.type.replace(/_/g, " ")}</span>
-              {" — "}
-              {evt.detail}
-            </li>
-          ))}
-        </ul>
-      )}
+    <div className="rounded-xl border border-zinc-200/80 bg-white px-3.5 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Control history</p>
+      <ul className="mt-1.5 space-y-0.5">
+        {lines.map((line) => (
+          <li key={line} className="text-xs text-zinc-700">
+            {line}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -771,10 +851,13 @@ function HistoricalDiffPanel({
 
   if (snapshots.length === 0) return null;
 
+  const userFacingChanges = (diff.data?.changes ?? []).filter((c) => !c.field.startsWith("_provenance"));
+  const hiddenMeta = (diff.data?.changes.length ?? 0) - userFacingChanges.length;
+
   return (
-    <div className="mt-4 rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4">
+    <div className="mt-3">
       <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">Historical diff</p>
-      <p className="mt-1 text-xs text-zinc-600">Compare collected state at start vs end of the {period}-day audit window.</p>
+      <p className="mt-0.5 text-[11px] text-zinc-600">State at start vs end of the {period}-day window.</p>
       {snapshots.length > 1 && selected && (
         <select
           value={`${selected.entity_type}:${selected.entity_id}`}
@@ -796,22 +879,33 @@ function HistoricalDiffPanel({
         <p className="mt-3 text-xs text-zinc-500">{diff.data.message ?? "No diff available."}</p>
       )}
       {diff.data?.found && (
-        <div className="mt-3 space-y-2">
+        <div className="mt-2 space-y-2">
           {diff.data.exposure_note && (
-            <p className="text-xs font-medium text-amber-800">{diff.data.exposure_note}</p>
+            <p className="text-[11px] font-medium text-amber-800">{diff.data.exposure_note}</p>
           )}
-          {diff.data.changes.length === 0 ? (
-            <p className="text-xs text-emerald-700">No field changes detected in this window.</p>
+          {userFacingChanges.length === 0 ? (
+            <p className="text-xs text-emerald-700">
+              {hiddenMeta > 0
+                ? `No user-facing changes (${hiddenMeta} internal metadata field${hiddenMeta === 1 ? "" : "s"} hidden).`
+                : "No field changes detected in this window."}
+            </p>
           ) : (
-            <ul className="max-h-48 space-y-2 overflow-y-auto">
-              {diff.data.changes.slice(0, 10).map((c) => (
-                <li key={c.field} className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-xs">
-                  <p className="font-mono font-semibold text-zinc-800">{c.field}</p>
-                  <p className="mt-1 text-red-600 line-through">{String(c.before ?? "—")}</p>
-                  <p className="text-emerald-700">{String(c.after ?? "—")}</p>
-                </li>
-              ))}
-            </ul>
+            <>
+              {hiddenMeta > 0 && (
+                <p className="text-[10px] text-zinc-500">
+                  {hiddenMeta} internal metadata field{hiddenMeta === 1 ? "" : "s"} hidden
+                </p>
+              )}
+              <ul className="max-h-40 space-y-1.5 overflow-y-auto">
+                {userFacingChanges.slice(0, 8).map((c) => (
+                  <li key={c.field} className="rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs">
+                    <p className="font-mono text-[11px] font-semibold text-zinc-800">{c.field}</p>
+                    <p className="mt-0.5 text-red-600 line-through">{String(c.before ?? "—")}</p>
+                    <p className="text-emerald-700">{String(c.after ?? "—")}</p>
+                  </li>
+                ))}
+              </ul>
+            </>
           )}
         </div>
       )}
@@ -849,34 +943,41 @@ function EvidencePreviewPanel({
   const latest = snapshots[0]?.taken_at;
 
   return (
-    <div className="rounded-xl border border-indigo-100 bg-indigo-50/30 p-4">
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Evidence collected</p>
-      <p className="mt-1.5 text-sm font-semibold text-zinc-900">
+    <>
+      <p className="text-xs text-zinc-700">
         {snapshot_count === 0
           ? "No snapshots in this audit window"
           : `${snapshot_count} snapshot${snapshot_count === 1 ? "" : "s"} in the last ${period} days`}
+        {latest ? ` · latest ${formatEvidenceDate(latest)}` : ""}
       </p>
-      {latest && (
-        <p className="mt-1 text-xs text-zinc-500">Most recent: {formatEvidenceDate(latest)}</p>
-      )}
       {entityTypes.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5">
-          {entityTypes.slice(0, 8).map((type) => (
-            <span key={type} className="rounded-md bg-white/90 px-2 py-0.5 font-mono text-[10px] text-indigo-700 ring-1 ring-indigo-100">
+        <div className="mt-2 flex flex-wrap gap-1">
+          {entityTypes.slice(0, 6).map((type) => (
+            <span
+              key={type}
+              className="rounded-md bg-white px-1.5 py-0.5 font-mono text-[10px] text-indigo-700 ring-1 ring-indigo-100/80"
+            >
               {type}
             </span>
           ))}
-          {entityTypes.length > 8 && (
-            <span className="rounded-md px-2 py-0.5 text-[10px] text-zinc-500">+{entityTypes.length - 8} more</span>
+          {entityTypes.length > 6 && (
+            <span className="px-1 text-[10px] text-zinc-500">+{entityTypes.length - 6}</span>
           )}
         </div>
       )}
       <HistoricalDiffPanel accountId={accountId} snapshots={snapshots} period={period} />
-    </div>
+    </>
   );
 }
 
-function useFrameworkPassRate(framework: string, accountId: string | undefined, enabled: boolean) {
+type FrameworkStats = {
+  passRate: number | null;
+  failed: number;
+  passed: number;
+  total: number;
+};
+
+function useFrameworkStats(framework: string, accountId: string | undefined, enabled: boolean) {
   return useQuery({
     queryKey: ["controls", framework, accountId],
     queryFn: () =>
@@ -884,13 +985,132 @@ function useFrameworkPassRate(framework: string, accountId: string | undefined, 
         `/v1/controls?framework=${framework}${accountId ? `&account_id=${accountId}` : ""}`
       ),
     enabled,
-    select: (rows) => {
+    select: (rows): FrameworkStats => {
       const total = rows.length;
-      if (total === 0) return null;
       const passed = rows.filter((r) => r.status === "pass").length;
-      return Math.round((passed / total) * 100);
+      const failed = rows.filter((r) => r.status === "fail").length;
+      return {
+        passRate: total > 0 ? Math.round((passed / total) * 100) : null,
+        failed,
+        passed,
+        total,
+      };
     },
   });
+}
+
+/** Compact framework switcher + summary strip (revert: git history pre FrameworkNav, or ask for "revert framework checkpoint"). */
+function FrameworkNav({
+  selectedId,
+  statsById,
+  framework,
+  topBlocker,
+  onSelect,
+  onOpenTopBlocker,
+  exportControl,
+}: {
+  selectedId: string;
+  statsById: Record<string, FrameworkStats | undefined>;
+  framework: (typeof FRAMEWORKS)[number];
+  topBlocker: ControlRow | null;
+  onSelect: (id: string) => void;
+  onOpenTopBlocker: () => void;
+  exportControl?: ReactNode;
+}) {
+  const stats = statsById[selectedId];
+  const passRate = stats?.passRate ?? null;
+
+  return (
+    <header className="mb-2 border-b border-zinc-200/80 pb-3">
+      <div
+        className="inline-flex rounded-lg border border-zinc-200/80 bg-zinc-100/70 p-0.5"
+        role="tablist"
+        aria-label="Compliance framework"
+      >
+        {FRAMEWORKS.map((fw) => {
+          const isActive = selectedId === fw.id;
+          const tabStats = statsById[fw.id];
+          const tabPct = tabStats?.passRate;
+          return (
+            <button
+              key={fw.id}
+              type="button"
+              role="tab"
+              aria-selected={isActive}
+              onClick={() => onSelect(fw.id)}
+              className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 sm:flex-none ${
+                isActive
+                  ? "bg-white text-zinc-900 shadow-sm"
+                  : "text-zinc-600 hover:text-zinc-900"
+              }`}
+            >
+              {fw.label}
+              {tabPct != null && (
+                <span
+                  className={`ml-1.5 tabular-nums font-bold ${
+                    isActive ? passRateColor(tabPct) : "text-zinc-400"
+                  }`}
+                >
+                  {tabPct}%
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {(stats || exportControl) && (
+        <div
+          className={`mt-2.5 flex gap-4 ${stats ? "items-end justify-between" : "justify-end"}`}
+        >
+          {stats && (
+            <div className="min-w-0 flex-1">
+              <h2 className="flex flex-wrap items-baseline gap-x-2 gap-y-0">
+                <span className="text-base font-bold text-zinc-950">{framework.label}</span>
+                {passRate != null && (
+                  <>
+                    <span className={`text-base font-bold tabular-nums ${passRateColor(passRate)}`}>
+                      {passRate}%
+                    </span>
+                    <span className="text-xs font-medium text-zinc-400">passing</span>
+                  </>
+                )}
+              </h2>
+              {stats.total === 0 && (
+                <p className="mt-1 text-sm text-zinc-500">No controls mapped</p>
+              )}
+              {passRate != null && stats.total > 0 && (
+                <div className="mt-2 flex max-w-xs items-center gap-2">
+                  <div className="h-1.5 w-[14rem] shrink-0 overflow-hidden rounded-full bg-zinc-200/90">
+                    <div
+                      className={`h-full rounded-full transition-all ${passRate > 0 ? passRateBarColor(passRate) : "bg-transparent"}`}
+                      style={{ width: `${Math.min(100, Math.max(0, passRate))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {topBlocker && stats.failed > 0 && (
+                <p className="mt-1.5 text-xs leading-snug text-zinc-600">
+                  <span className="text-zinc-500">Top blocker: </span>
+                  <button
+                    type="button"
+                    onClick={onOpenTopBlocker}
+                    className="font-medium text-indigo-700 hover:text-indigo-900 hover:underline"
+                  >
+                    <span className="font-mono text-[11px] text-zinc-500">{topBlocker.control_id}</span>
+                    {" "}
+                    {shortControlTitle(topBlocker.title)}
+                    <span className="tabular-nums text-red-600/90"> ({topBlocker.finding_count} findings)</span>
+                  </button>
+                </p>
+              )}
+            </div>
+          )}
+          {exportControl}
+        </div>
+      )}
+    </header>
+  );
 }
 
 export default function Controls() {
@@ -905,7 +1125,7 @@ export default function Controls() {
   const [selectedFamilyKey, setSelectedFamilyKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
-  const [period, setPeriod] = useState(90);
+  const [periodKey, setPeriodKey] = useState<string | number>(90);
   const [asOf, setAsOf] = useState("");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [exportOpen, setExportOpen] = useState(false);
@@ -947,34 +1167,48 @@ export default function Controls() {
     }
   }, [controls.data, urlControl, framework]);
 
-  const cisCoverage = useQuery({
-    queryKey: ["benchmark-coverage", "cis_aws_l1"],
-    queryFn: () =>
-      api<{ mapped_control_count: number; cis_v5_level1_total: number }>(
-        "/v1/controls/benchmark-coverage/cis_aws_l1"
-      ),
-    enabled: framework === "cis_aws_l1",
-  });
-
   const openFindingsMeta = useQuery({
     queryKey: ["findings", "open", connectedAccount?.id, "controls-meta"],
     queryFn: () =>
       api<{ items: OpenFindingMeta[] }>(`/v1/findings?status=open&limit=500`),
     enabled: !!activeAccount && hasScanned,
     select: (data) => {
-      const map = new Map<string, OpenFindingMeta>();
-      for (const f of data.items) map.set(f.id, f);
-      return map;
+      const byId = new Map<string, OpenFindingMeta>();
+      const countByCheck = new Map<string, number>();
+      for (const f of data.items) {
+        byId.set(f.id, f);
+        countByCheck.set(f.check_id, (countByCheck.get(f.check_id) ?? 0) + 1);
+      }
+      return { byId, countByCheck };
     },
   });
 
-  const findingMap = openFindingsMeta.data ?? new Map<string, OpenFindingMeta>();
+  const findingMap = openFindingsMeta.data?.byId ?? new Map<string, OpenFindingMeta>();
+  const findingCountByCheck = openFindingsMeta.data?.countByCheck ?? new Map<string, number>();
+
+  const exportWindow = useMemo(() => {
+    if (periodKey === "last_scan" && activeAccount?.last_scan_at) {
+      return {
+        period: 30,
+        asOf: activeAccount.last_scan_at.slice(0, 10),
+        label: "Last scan",
+      };
+    }
+    const p = Number(periodKey);
+    return {
+      period: p,
+      asOf: asOf.trim() || undefined,
+      label: `Last ${p} days`,
+    };
+  }, [periodKey, asOf, activeAccount?.last_scan_at]);
 
   const evidenceCoverage = useQuery({
-    queryKey: ["evidence-coverage", activeAccount?.id, period, asOf],
+    queryKey: ["evidence-coverage", activeAccount?.id, exportWindow.period, exportWindow.asOf],
     queryFn: () => {
-      const params = new URLSearchParams({ period: String(period) });
-      if (asOf.trim()) params.set("as_of", asOf.trim());
+      const params = new URLSearchParams({
+        period: String(exportWindow.period),
+      });
+      if (exportWindow.asOf) params.set("as_of", exportWindow.asOf);
       return api<EvidenceCoverage>(
         `/v1/accounts/${activeAccount!.id}/evidence-coverage?${params}`
       );
@@ -993,9 +1227,15 @@ export default function Controls() {
     return () => document.removeEventListener("mousedown", handleClick);
   }, [exportOpen]);
 
-  const soc2Rate = useFrameworkPassRate("soc2", connectedAccount?.id, hasScanned);
-  const cisRate = useFrameworkPassRate("cis_aws_l1", connectedAccount?.id, hasScanned);
-  const isoRate = useFrameworkPassRate("iso27001", connectedAccount?.id, hasScanned);
+  const soc2Stats = useFrameworkStats("soc2", connectedAccount?.id, hasScanned);
+  const cisStats = useFrameworkStats("cis_aws_l1", connectedAccount?.id, hasScanned);
+  const isoStats = useFrameworkStats("iso27001", connectedAccount?.id, hasScanned);
+
+  const frameworkStatsById: Record<string, FrameworkStats | undefined> = {
+    soc2: soc2Stats.data,
+    cis_aws_l1: cisStats.data,
+    iso27001: isoStats.data,
+  };
 
   const rows = controls.data ?? [];
   const passed = rows.filter((r) => r.status === "pass").length;
@@ -1011,11 +1251,6 @@ export default function Controls() {
 
   const groupedRows = useMemo(() => groupControls(filteredRows, framework), [filteredRows, framework]);
   const selectedGroup = groupedRows.find((group) => group.key === selectedFamilyKey) ?? groupedRows[0] ?? null;
-  const totalLinkedFindings = useMemo(
-    () => rows.reduce((sum, row) => sum + row.finding_count, 0),
-    [rows],
-  );
-
   function openControl(ctrl: ControlRow) {
     setSelectedFamilyKey(controlFamily(framework, ctrl.control_id).key);
     setExpanded(ctrl.id);
@@ -1027,17 +1262,18 @@ export default function Controls() {
     return failing.reduce((worst, row) => (row.finding_count > worst.finding_count ? row : worst));
   }, [rows]);
 
-  async function downloadPack() {
+  async function downloadPack(opts?: { framework?: string; period?: number; asOf?: string }) {
     if (!activeAccount) return;
     setDownloading(true);
     try {
       const tok = token();
       const params = new URLSearchParams({
-        framework,
+        framework: opts?.framework ?? framework,
         account_id: activeAccount.id,
-        period: String(period),
+        period: String(opts?.period ?? exportWindow.period),
       });
-      if (asOf.trim()) params.set("as_of", asOf.trim());
+      const asOfVal = opts?.asOf ?? exportWindow.asOf;
+      if (asOfVal) params.set("as_of", asOfVal);
       const res = await fetch(`${BASE}/v1/exports/evidence-pack?${params}`, {
         headers: { Authorization: `Bearer ${tok}` },
       });
@@ -1046,7 +1282,7 @@ export default function Controls() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `vigil-evidence-${framework}-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.download = `vigil-evidence-${opts?.framework ?? framework}-${(asOfVal ?? new Date().toISOString().slice(0, 10))}.zip`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (e) {
@@ -1078,145 +1314,17 @@ export default function Controls() {
   return (
     <div className="min-h-full bg-zinc-100/35">
     <div className="w-full px-8 py-8">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Compliance</h1>
-          <p className="mt-1.5 text-sm text-zinc-500">
-            {activeFramework.fullLabel}
-            {connectedAccount?.account_id && (
-              <span className="text-zinc-400"> · account {connectedAccount.account_id}</span>
-            )}
-            {connectedAccount?.last_scan_at && (
-              <span className="text-zinc-400">
-                {" "}
-                · Last scan {lastScanLabel(connectedAccount.last_scan_at)}
-              </span>
-            )}
-            {passRate != null && (
-              <span className="text-zinc-400"> · {passed}/{total} controls passing</span>
-            )}
-          </p>
-          {framework === "cis_aws_l1" && cisCoverage.data && (
-            <p className="mt-2 max-w-2xl rounded-lg border border-amber-200/80 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
-              CIS v5 Level 1 matrix:{" "}
-              {cisCoverage.data.cis_v5_matrix?.automated ?? "—"} automated,{" "}
-              {cisCoverage.data.cis_v5_matrix?.partial ?? 0} partial,{" "}
-              {cisCoverage.data.cis_v5_matrix?.manual ?? "—"} manual attestation (of{" "}
-              {cisCoverage.data.cis_v5_matrix?.control_count ?? cisCoverage.data.cis_v5_level1_total} controls).{" "}
-              Compliance tab maps {cisCoverage.data.mapped_control_count} control rows to Vigil checks.
-            </p>
+      <div className={`mb-4 ${exportOpen ? "relative z-[100]" : ""}`}>
+        <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Compliance</h1>
+        <p className="mt-1.5 text-sm text-zinc-500">
+          {connectedAccount?.account_id && <span>Account {connectedAccount.account_id}</span>}
+          {connectedAccount?.last_scan_at && (
+            <span className="text-zinc-400">
+              {connectedAccount?.account_id ? " · " : ""}
+              Last scan {lastScanLabel(connectedAccount.last_scan_at)}
+            </span>
           )}
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {connectedAccount && (
-            <div ref={exportRef} className="relative">
-              <button
-                type="button"
-                onClick={() => setExportOpen((open) => !open)}
-                aria-expanded={exportOpen}
-                aria-haspopup="dialog"
-                className={`inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-semibold shadow-sm transition ${
-                  exportOpen
-                    ? "border-indigo-300 bg-indigo-50 text-indigo-800 ring-2 ring-indigo-500/10"
-                    : "border-indigo-200 bg-indigo-50/60 text-indigo-700 hover:border-indigo-300 hover:bg-indigo-50"
-                }`}
-              >
-                <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                </svg>
-                Evidence pack
-              </button>
-              {exportOpen && (
-                <div
-                  role="dialog"
-                  aria-label="Evidence pack export"
-                  className="absolute right-0 top-full z-50 mt-2 w-72 rounded-2xl border border-indigo-100 bg-gradient-to-b from-indigo-50/70 to-white p-5 shadow-lg shadow-indigo-950/10 ring-1 ring-black/5"
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-600">Evidence pack</p>
-                  <p className="mt-2 text-sm font-semibold text-zinc-900">{activeFramework.label}</p>
-                  <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-                    Auditor-ready ZIP with INDEX.csv, per-control JSON snapshots, and PDF summary.
-                  </p>
-                  <div className="mt-5">
-                    <label htmlFor="evidence-period" className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                      Audit window
-                    </label>
-                    <select
-                      id="evidence-period"
-                      value={period}
-                      onChange={(e) => setPeriod(Number(e.target.value))}
-                      className="mt-1.5 w-full appearance-none rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
-                    >
-                      {AUDIT_WINDOWS.map((window) => (
-                        <option key={window.value} value={window.value}>
-                          {window.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="mt-4">
-                    <label htmlFor="evidence-as-of" className="block text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                      As of date (optional)
-                    </label>
-                    <input
-                      id="evidence-as-of"
-                      type="date"
-                      value={asOf}
-                      onChange={(e) => setAsOf(e.target.value)}
-                      max={new Date().toISOString().slice(0, 10)}
-                      className="mt-1.5 w-full rounded-xl border border-zinc-200 bg-white px-3 py-2.5 text-sm font-medium text-zinc-700 outline-none focus:border-indigo-300 focus:ring-2 focus:ring-indigo-500/20"
-                    />
-                    <p className="mt-1 text-[11px] text-zinc-500">
-                      End of audit period for Type II sampling. Leave blank for today (UTC).
-                    </p>
-                  </div>
-                  {evidenceCoverage.data && (
-                    <div
-                      className={`mt-4 rounded-xl border px-3 py-2.5 text-xs leading-relaxed ${
-                        evidenceCoverage.data.warning
-                          ? "border-amber-200/80 bg-amber-50/60 text-amber-900"
-                          : "border-emerald-200/70 bg-emerald-50/50 text-emerald-900"
-                      }`}
-                    >
-                      <p className="font-medium">
-                        Evidence coverage: {evidenceCoverage.data.coverage_label}
-                      </p>
-                      <p className="mt-0.5 text-[11px] opacity-90">
-                        {evidenceCoverage.data.successful_scans_in_period} successful scan
-                        {evidenceCoverage.data.successful_scans_in_period === 1 ? "" : "s"} in window
-                      </p>
-                      {evidenceCoverage.data.warning && (
-                        <p className="mt-1.5 text-[11px]">{evidenceCoverage.data.warning}</p>
-                      )}
-                    </div>
-                  )}
-                  <button
-                    onClick={downloadPack}
-                    disabled={downloading}
-                    className="mt-5 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    {downloading ? (
-                      <>
-                        <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                        </svg>
-                        Generating…
-                      </>
-                    ) : (
-                      <>
-                        <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                        </svg>
-                        Download ZIP
-                      </>
-                    )}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
+        </p>
       </div>
 
       {!hasScanned && connectedAccount && !controls.isLoading && (
@@ -1228,64 +1336,76 @@ export default function Controls() {
       {controls.isLoading && <LoadingSkeleton />}
 
       {!controls.isLoading && connectedAccount && (
-        <div className="mb-5 grid grid-cols-1 gap-3 sm:grid-cols-3" role="tablist" aria-label="Compliance framework">
-          {FRAMEWORKS.map((fw) => {
-            const pct =
-              fw.id === "soc2" ? soc2Rate.data : fw.id === "cis_aws_l1" ? cisRate.data : isoRate.data;
-            const isActive = framework === fw.id;
-            const fwFailed = isActive ? failed : null;
-            const fwPassed = isActive ? passed : null;
-            const fwFindings = isActive ? totalLinkedFindings : null;
-            return (
+        <FrameworkNav
+          selectedId={framework}
+          statsById={frameworkStatsById}
+          framework={activeFramework}
+          topBlocker={topBlocker}
+          onSelect={(id) => {
+            setFramework(id);
+            setSelectedFamilyKey(null);
+            setExpanded(null);
+          }}
+          onOpenTopBlocker={() => {
+            if (!topBlocker) return;
+            setStatusFilter("fail");
+            openControl(topBlocker);
+          }}
+          exportControl={
+            <div ref={exportRef} className={`relative shrink-0 ${exportOpen ? "z-[101]" : ""}`}>
               <button
-                key={fw.id}
                 type="button"
-                role="tab"
-                aria-selected={isActive}
-                onClick={() => {
-                  setFramework(fw.id);
-                  setSelectedFamilyKey(null);
-                  setExpanded(null);
-                }}
-                className={`rounded-xl border px-4 py-3.5 text-left transition-all ${
-                  isActive
-                    ? "border-indigo-200/80 bg-white text-zinc-900 shadow-md shadow-zinc-950/[0.04] ring-1 ring-indigo-500/10"
-                    : "border-zinc-200/80 bg-white/80 text-zinc-900 shadow-sm shadow-zinc-950/[0.02] hover:border-indigo-200/60 hover:bg-white hover:shadow-md"
+                onClick={() => setExportOpen((open) => !open)}
+                aria-expanded={exportOpen}
+                aria-haspopup="dialog"
+                className={`inline-flex items-center justify-center gap-2 rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                  exportOpen
+                    ? "border-indigo-300 bg-indigo-50 text-indigo-900 ring-1 ring-indigo-200/60"
+                    : "border-indigo-200 bg-indigo-50/60 text-indigo-800 hover:border-indigo-300 hover:bg-indigo-50"
                 }`}
               >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-sm font-bold">{fw.label}</div>
-                    <div className="mt-0.5 text-xs text-zinc-500">{fw.fullLabel}</div>
-                  </div>
-                  <div className={`text-2xl font-bold tabular-nums leading-none ${pct == null ? "text-zinc-300" : passRateColor(pct)}`}>
-                    {pct == null ? "—" : `${pct}%`}
-                  </div>
-                </div>
-                {isActive && fwFailed != null && fwPassed != null && (
-                  <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] font-medium text-zinc-500">
-                    {fwFailed > 0 && <span className="text-red-600/90">{fwFailed} failing</span>}
-                    <span className="text-emerald-600/90">{fwPassed} passing</span>
-                    {noData > 0 && <span>{noData} no data</span>}
-                    {fwFindings != null && fwFindings > 0 && (
-                      <span>{fwFindings} finding{fwFindings === 1 ? "" : "s"} linked</span>
-                    )}
-                  </div>
-                )}
-                <div className={`mt-3 h-1.5 overflow-hidden rounded-full ${isActive ? "bg-indigo-100/80" : "bg-zinc-100"}`}>
-                  <div
-                    className={`h-full rounded-full transition-all ${pct == null ? "bg-zinc-200" : passRateBarColor(pct)}`}
-                    style={{ width: `${pct ?? 0}%` }}
-                  />
-                </div>
+                <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Generate Audit Package
               </button>
-            );
-          })}
-        </div>
+              {exportOpen && (
+                <>
+                  <button
+                    type="button"
+                    aria-label="Close evidence pack menu"
+                    className="fixed inset-0 z-[100] cursor-default bg-zinc-950/15"
+                    onClick={() => setExportOpen(false)}
+                  />
+                  <div
+                    role="dialog"
+                    aria-label="Generate Audit Package"
+                    className="absolute right-0 top-full z-[102] mt-2 rounded-2xl border border-zinc-200/90 bg-white p-5 shadow-lg shadow-zinc-950/10"
+                  >
+                    <EvidencePackExportPanel
+                      frameworkLabel={activeFramework.label}
+                      periodKey={periodKey}
+                      onPeriodChange={setPeriodKey}
+                      asOf={asOf}
+                      onAsOfChange={setAsOf}
+                      coverage={evidenceCoverage.data}
+                      coverageLoading={evidenceCoverage.isFetching}
+                      controlsEvaluated={total}
+                      openFindings={rows.reduce((sum, r) => sum + r.finding_count, 0)}
+                      passingCount={passed}
+                      downloading={downloading}
+                      onDownload={() => void downloadPack()}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          }
+        />
       )}
 
       {!controls.isLoading && total > 0 && (
-        <div className="mb-5 space-y-3">
+        <div className="mb-3 space-y-2">
           <div className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200/80 bg-white p-1 shadow-sm shadow-zinc-950/[0.03]">
             {(
               [
@@ -1313,38 +1433,6 @@ export default function Controls() {
               </button>
             ))}
           </div>
-          {topBlocker && statusFilter !== "pass" && (
-            <div className="rounded-xl border border-red-200/60 bg-gradient-to-r from-red-50/40 via-white to-white px-4 py-3.5 shadow-sm shadow-zinc-950/[0.03]">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="min-w-0">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-red-600/90">
-                    Highest-impact blocker
-                  </p>
-                  <p className="mt-1 text-sm font-semibold text-zinc-900">
-                    <span className="font-mono text-xs font-medium text-zinc-500">{topBlocker.control_id}</span>
-                    <span className="mx-1.5 text-zinc-300">·</span>
-                    {shortControlTitle(topBlocker.title)}
-                  </p>
-                  <p className="mt-1 text-xs text-zinc-600">
-                    {findingLabel(topBlocker.finding_count)} blocking this control — address first for fastest audit progress.
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setStatusFilter("fail");
-                    openControl(topBlocker);
-                  }}
-                  className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-red-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 sm:self-center"
-                >
-                  Review control
-                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                  </svg>
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
 
@@ -1362,9 +1450,9 @@ export default function Controls() {
 
           {!controls.isLoading && groupedRows.length > 0 && selectedGroup && (
               <div className="overflow-hidden rounded-2xl border border-zinc-200/80 bg-white shadow-md shadow-zinc-950/[0.05] ring-1 ring-zinc-950/[0.03]">
-                <div className="flex flex-col gap-3 border-b border-zinc-100 bg-zinc-50/50 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+                <div className="border-b border-zinc-100 bg-zinc-50/50 px-5 py-3.5">
                   <div
-                    className="flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200/70 bg-white p-1 shadow-sm shadow-zinc-950/[0.02]"
+                    className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-zinc-200/70 bg-white p-1 shadow-sm shadow-zinc-950/[0.02]"
                     role="tablist"
                     aria-label="Control domains"
                   >
@@ -1373,6 +1461,7 @@ export default function Controls() {
                       return (
                         <button
                           key={group.key}
+                          type="button"
                           role="tab"
                           aria-selected={isSelected}
                           title={group.label}
@@ -1387,39 +1476,31 @@ export default function Controls() {
                           }`}
                         >
                           {shortFamilyLabel(group.label)}
-                          {group.failed > 0 && (
-                            <span className="text-red-500/90"> · {group.failed}</span>
-                          )}
+                          <span
+                            className={
+                              group.failed > 0
+                                ? "text-red-500/90"
+                                : isSelected
+                                  ? "text-indigo-500"
+                                  : "text-zinc-400"
+                            }
+                          >
+                            {" "}
+                            · {group.rows.length}
+                          </span>
                         </button>
                       );
                     })}
                   </div>
                 </div>
 
-                <div className="border-b border-zinc-100 bg-zinc-50/30 px-5 py-3">
-                  <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">
-                    {activeFramework.label}
-                  </p>
-                  <h2 className="mt-0.5 text-base font-bold text-zinc-900">{selectedGroup.label}</h2>
-                  <p className="mt-1 text-xs text-zinc-500">
-                    {selectedGroup.rows.length} control{selectedGroup.rows.length === 1 ? "" : "s"}
-                    {selectedGroup.failed > 0 && (
-                      <span className="text-red-600/90"> · {selectedGroup.failed} failing</span>
-                    )}
-                    {selectedGroup.passed > 0 && (
-                      <span className="text-emerald-600/90"> · {selectedGroup.passed} passing</span>
-                    )}
-                    {selectedGroup.noData > 0 && (
-                      <span> · {selectedGroup.noData} no data</span>
-                    )}
-                  </p>
-                </div>
-
-                <div className="hidden grid-cols-[auto_auto_minmax(0,1fr)_auto] items-center gap-4 border-b border-zinc-100 bg-white px-5 py-2.5 sm:grid">
+                <div className="hidden grid-cols-[auto_auto_minmax(0,1fr)_3.5rem] items-center gap-4 border-b border-zinc-200 bg-zinc-50/60 px-5 py-2.5 sm:grid">
                   <span className="w-3.5" />
-                  <span className="w-[72px] text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Status</span>
-                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Control</span>
-                  <span className="text-right text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Findings</span>
+                  <span className="w-[72px] text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Status</span>
+                  <span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">Control</span>
+                  <span className="text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-zinc-500">
+                    Findings
+                  </span>
                 </div>
 
                 <div className="divide-y divide-zinc-100/90">
@@ -1436,7 +1517,7 @@ export default function Controls() {
                             setExpanded(isExpanded ? null : ctrl.id);
                             requestAnimationFrame(() => window.scrollTo(0, scrollY));
                           }}
-                          className={`grid w-full grid-cols-1 gap-3 border-l-2 py-3.5 pl-5 pr-5 text-left transition-colors sm:grid-cols-[auto_auto_minmax(0,1fr)_auto] sm:items-center sm:gap-4 ${statusAccent[ctrl.status]} ${
+                          className={`grid w-full grid-cols-1 gap-3 border-l-2 py-4 pl-5 pr-5 text-left transition-colors sm:grid-cols-[auto_auto_minmax(0,1fr)_3.5rem] sm:items-center sm:gap-4 ${statusAccent[ctrl.status]} ${
                             isExpanded ? statusExpandedBg[ctrl.status] : "hover:bg-zinc-50/70"
                           }`}
                         >
@@ -1461,10 +1542,10 @@ export default function Controls() {
                               </span>
                               <CoverageTierBadge tier={ctrl.coverage_tier} label={ctrl.coverage_label} />
                             </div>
-                            <p className="mt-1 truncate text-xs text-zinc-500">{meta}</p>
+                            <p className="mt-1.5 line-clamp-2 text-xs leading-relaxed text-zinc-500">{meta}</p>
                           </div>
 
-                          <div className="flex shrink-0 items-center justify-between gap-3 sm:block sm:text-right">
+                          <div className="flex shrink-0 items-center justify-between gap-3 sm:justify-center sm:bg-zinc-50/30">
                             <svg
                               className={`h-3.5 w-3.5 shrink-0 text-zinc-400 sm:hidden ${isExpanded ? "" : "-rotate-90"}`}
                               fill="none"
@@ -1473,87 +1554,58 @@ export default function Controls() {
                             >
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
                             </svg>
-                            <div className="tabular-nums">
-                              {ctrl.status === "fail" ? (
-                                <>
-                                  <span className={`text-base font-bold ${ctrl.finding_count >= 10 ? "text-red-600" : "text-red-500"}`}>
-                                    {ctrl.finding_count}
-                                  </span>
-                                  <span className="mt-0.5 block text-[10px] font-medium uppercase tracking-wide text-zinc-400">
-                                    open
-                                  </span>
-                                </>
-                              ) : ctrl.status === "pass" ? (
-                                <span className="text-xs font-medium text-emerald-600/80">Clear</span>
-                              ) : (
-                                <span className="text-xs font-medium text-zinc-300">—</span>
-                              )}
-                            </div>
+                            <FindingCountBadge count={ctrl.finding_count} status={ctrl.status} />
                           </div>
                         </button>
 
                         {isExpanded && (
-                          <div className={`border-t border-zinc-100/80 px-5 pb-5 pt-4 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}>
+                          <div
+                            className={`space-y-3 border-t border-zinc-100/80 px-5 pb-5 pt-4 sm:pl-[4.75rem] ${statusExpandedBg[ctrl.status]}`}
+                          >
                             <ControlAuditEvidenceBlock
                               control={ctrl}
-                              periodDays={period}
+                              periodDays={exportWindow.period}
                               coverage={evidenceCoverage.data}
                             />
                             <NarrativeDetailBlock control={ctrl} />
-                            {(ctrl.narrative || ctrl.description) ? (
-                              <div className="mt-4">
-                                <QuestionnaireAnswerBlock control={ctrl} periodDays={period} />
-                              </div>
+
+                            {ctrl.check_ids.length === 0 ? (
+                              <p className="rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-3.5 py-2.5 text-xs leading-relaxed text-zinc-600">
+                                No automated Vigil checks map to this control yet — attest manually (e.g. IAM users
+                                only inherit access via groups or roles).
+                              </p>
                             ) : (
-                              <p className="text-sm leading-relaxed text-zinc-700">{controlSummary(ctrl)}</p>
+                              <MappedChecksList
+                                checkIds={ctrl.check_ids}
+                                checkTiers={ctrl.check_tiers}
+                                checkEvidenceClasses={ctrl.check_evidence_classes}
+                                findingCountByCheck={findingCountByCheck}
+                              />
                             )}
 
                             {activeAccount && hasScanned && ctrl.check_ids.length > 0 && (
-                              <div className={`${ctrl.narrative || ctrl.description ? "mt-4" : "mt-0"}`}>
+                              <DisclosureSection title="Advanced evidence details">
                                 <EvidencePreviewPanel
                                   controlId={ctrl.control_id}
                                   accountId={activeAccount.id}
-                                  period={period}
+                                  period={exportWindow.period}
                                 />
-                                <ControlHistoryPanel
-                                  controlId={ctrl.control_id}
-                                  framework={framework}
-                                  accountId={activeAccount.id}
-                                  period={period}
-                                />
-                              </div>
+                              </DisclosureSection>
                             )}
 
-                            {ctrl.check_ids.length === 0 && (
-                              <p className="mt-4 rounded-xl border border-dashed border-zinc-200 bg-zinc-50/60 px-4 py-3 text-xs leading-relaxed text-zinc-600">
-                                No automated Vigil checks map to this CIS control yet — attest manually for auditors
-                                (e.g. confirm IAM users have policies only via groups or roles).
-                              </p>
+                            {activeAccount && hasScanned && (
+                              <ControlHistoryPanel
+                                controlId={ctrl.control_id}
+                                framework={framework}
+                                accountId={activeAccount.id}
+                                period={exportWindow.period}
+                              />
                             )}
 
-                            {ctrl.check_ids.length > 0 && (
-                              <div className="mt-4">
-                                <MappedChecksList
-                                  checkIds={ctrl.check_ids}
-                                  checkTiers={ctrl.check_tiers}
-                                  checkEvidenceClasses={ctrl.check_evidence_classes}
-                                />
-                              </div>
-                            )}
-
-                            {ctrl.status === "fail" && ctrl.open_finding_ids.length > 0 && (
-                              <div className="mt-4 border-t border-zinc-200/70 pt-4">
-                                <button
-                                  type="button"
-                                  onClick={() => navigate(`/findings?checks=${ctrl.check_ids.join(",")}`)}
-                                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 transition-colors hover:text-indigo-800"
-                                >
-                                  View {findingLabel(ctrl.finding_count)}
-                                  <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                                  </svg>
-                                </button>
-                              </div>
+                            {(ctrl.narrative || ctrl.description || ctrl.short_answer || ctrl.long_answer) ? (
+                              <QuestionnaireAnswerBlock control={ctrl} periodDays={exportWindow.period} />
+                            ) : (
+                              <p className="text-xs leading-relaxed text-zinc-600">{controlSummary(ctrl)}</p>
                             )}
                           </div>
                         )}

@@ -17,6 +17,7 @@ Disallow: /detection
 Disallow: /controls
 Disallow: /integrations
 Disallow: /timeline
+Disallow: /history/infrastructure
 Disallow: /auth/
 
 Sitemap: https://vigil.cclab.cloud-castles.com/sitemap.xml

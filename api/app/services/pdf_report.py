@@ -1000,7 +1000,10 @@ def _draw_evidence_sources_card(pdf: FPDF, sources: list[str], *, page_check: bo
     pdf.set_y(y0 + card_h + 6)
 
 
-def _draw_usage_and_limitations(pdf: FPDF) -> None:
+def _draw_usage_and_limitations(
+    pdf: FPDF,
+    scope_limitations: list[str] | None = None,
+) -> None:
     _ensure_space(pdf, 48)
     pdf.ln(3)
     pdf.set_font("Helvetica", "B", _FONT["h3"])
@@ -1025,18 +1028,21 @@ def _draw_usage_and_limitations(pdf: FPDF) -> None:
     pdf.set_font("Helvetica", "B", _FONT["h3"])
     pdf.set_text_color(24, 24, 27)
     pdf.set_x(pdf.l_margin)
-    pdf.cell(0, 6, "Limitations", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 6, "Assumptions & scope boundaries", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(1)
     pdf.set_font("Helvetica", "", _FONT["body"])
     pdf.set_text_color(82, 82, 91)
+    for line in scope_limitations or []:
+        pdf.set_x(pdf.l_margin + 2)
+        pdf.multi_cell(pdf.epw - 2, 5, _s(f"• {line}"), align=_ALIGN)
+        pdf.ln(0.5)
     pdf.set_x(pdf.l_margin)
     pdf.multi_cell(
         pdf.epw,
         5,
         _s(
-            "This report reflects data available from connected source systems during the selected "
-            "audit period. It supports audit review but does not replace auditor judgment or "
-            "company policy evidence."
+            "This report reflects data available from connected systems during the selected audit period. "
+            "It supports audit review but does not replace auditor judgment or company policy evidence."
         ),
         align=_ALIGN,
     )
@@ -1307,6 +1313,8 @@ def build_pdf(
     sources_card_h = _estimate_evidence_sources_card_height(pdf, sources)
     _open_section(pdf, "Evidence Sources", sources_card_h + 52, new_page=True)
     _draw_evidence_sources_card(pdf, sources, page_check=False)
-    _draw_usage_and_limitations(pdf)
+    from app.data.control_narratives import scope_limitations_for
+
+    _draw_usage_and_limitations(pdf, scope_limitations=scope_limitations_for(framework))
 
     return bytes(pdf.output())

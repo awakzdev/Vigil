@@ -5,6 +5,10 @@ export type BlastRadiusService = {
   last_used: string | null;
   days_ago: number | null;
   active: boolean;
+  /** IAM returned per-action last access in the audit window */
+  action_tracked?: boolean;
+  /** Service last-used without action-level detail from IAM */
+  service_only_signal?: boolean;
   in_policy: boolean;
 };
 

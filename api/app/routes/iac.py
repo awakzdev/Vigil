@@ -5,7 +5,7 @@ from pydantic import BaseModel, Field
 
 from fastapi import APIRouter
 
-from app.services.terraform_iac import preview_terraform_patch
+from app.services.hcl_patch import hcl_patch_preview
 
 router = APIRouter()
 
@@ -25,7 +25,7 @@ class TerraformPreviewIn(BaseModel):
 def terraform_preview_patch(body: TerraformPreviewIn):
     """Match a finding to Terraform resources in pasted file(s). No Git clone yet."""
     files = [{"path": f.path, "content": f.content} for f in body.files]
-    return preview_terraform_patch(
+    return hcl_patch_preview(
         check_id=body.check_id,
         bucket_name=body.bucket_name,
         files=files,

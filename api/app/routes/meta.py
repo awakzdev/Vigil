@@ -34,13 +34,14 @@ class EvidenceVaultStatusOut(BaseModel):
     retention_days: int | None = None
     object_lock_mode: str | None = None
     auditor_access_mode: str | None = None
-    implementation: str = "plan_only"
+    implementation: str = "wired"
 
 
 @router.get("/evidence-vault-status", response_model=EvidenceVaultStatusOut)
 def evidence_vault_status() -> EvidenceVaultStatusOut:
     cfg = vault_config()
     loc = cfg["location"]
+    impl = "wired" if cfg["enabled"] else ("configured" if loc else "disabled")
     return EvidenceVaultStatusOut(
         enabled=bool(cfg["enabled"]),
         configured=loc is not None,
@@ -48,6 +49,7 @@ def evidence_vault_status() -> EvidenceVaultStatusOut:
         retention_days=int(cfg["retention_days"]) if loc else None,
         object_lock_mode=cfg["object_lock_mode"].value if loc else None,
         auditor_access_mode=cfg["auditor_access_mode"].value if loc else None,
+        implementation=impl,
     )
 
 

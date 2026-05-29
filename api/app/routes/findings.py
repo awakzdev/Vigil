@@ -59,6 +59,7 @@ class SnoozeIn(BaseModel):
 
 class ResolveIn(BaseModel):
     note: str | None = None
+    verified: bool = False
 
 
 class ExceptionIn(BaseModel):
@@ -153,10 +154,28 @@ def snooze(finding_id: str, body: SnoozeIn, p=Depends(current_principal), db: Se
 
 @router.post("/{finding_id}/resolve", response_model=FindingOut)
 def resolve(finding_id: str, body: ResolveIn, p=Depends(current_principal), db: Session = Depends(get_db)):
+    if not body.verified:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Confirm verification before resolving (re-scan or manual check)",
+        )
     f = _get_owned(db, p, finding_id)
     f.status = "resolved"
     f.resolved_at = datetime.now(timezone.utc)
     db.add(FindingEvent(id=uuid.uuid4(), finding_id=f.id, action="resolved", actor=p["sub"], note=body.note))
+    db.commit()
+    return _to_out(f)
+
+
+@router.post("/{finding_id}/reopen", response_model=FindingOut)
+def reopen(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    f = _get_owned(db, p, finding_id)
+    if f.status not in ("resolved", "ignored"):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "only resolved or ignored findings can be reopened")
+    f.status = "open"
+    f.resolved_at = None
+    f.snooze_until = None
+    db.add(FindingEvent(id=uuid.uuid4(), finding_id=f.id, action="reopened", actor=p["sub"]))
     db.commit()
     return _to_out(f)
 
@@ -203,7 +222,106 @@ def iac_snippets(finding_id: str, p=Depends(current_principal), db: Session = De
     from app.services.iac_snippets import build_iac_remediation
 
     f = _get_owned(db, p, finding_id)
-    return build_iac_remediation(f)
+    return build_iac_remediation(db, f, uuid.UUID(p["org_id"]))
+
+
+class TerraformPrIn(BaseModel):
+    repo_full_name: str
+    file_path: str = "vigil/remediation.tf"
+    base_branch: str | None = None
+
+
+@router.post("/{finding_id}/iac/terraform-pr")
+def create_terraform_pr_route(
+    finding_id: str,
+    body: TerraformPrIn,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Open a GitHub PR with repo-aware HCL patch + terraform validate."""
+    from app.services.terraform_pr import build_terraform_pr
+
+    f = _get_owned(db, p, finding_id)
+    try:
+        return build_terraform_pr(
+            db,
+            finding=f,
+            org_id=uuid.UUID(p["org_id"]),
+            repo_full_name=body.repo_full_name,
+            file_path=body.file_path,
+            base_branch=body.base_branch,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+
+class TerraformRepoScanIn(BaseModel):
+    repo_full_name: str
+    base_branch: str | None = None
+
+
+@router.post("/{finding_id}/iac/repo-scan")
+def terraform_repo_scan(
+    finding_id: str,
+    body: TerraformRepoScanIn,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Scan connected repo .tf/.hcl for resources matching this finding."""
+    from app.services.terraform_pr import scan_repo_for_finding
+
+    f = _get_owned(db, p, finding_id)
+    try:
+        return scan_repo_for_finding(
+            db,
+            finding=f,
+            org_id=uuid.UUID(p["org_id"]),
+            repo_full_name=body.repo_full_name,
+            base_branch=body.base_branch,
+        )
+    except ValueError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from e
+
+
+@router.get("/{finding_id}/remediation-execution")
+def get_remediation_execution(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    """Latest execution record for a finding (by most recent dispatch)."""
+    from sqlalchemy import select
+
+    from app.models.remediation_execution import RemediationExecution
+
+    f = _get_owned(db, p, finding_id)
+    row = db.scalar(
+        select(RemediationExecution)
+        .where(RemediationExecution.finding_id == f.id)
+        .order_by(RemediationExecution.dispatched_at.desc())
+        .limit(1)
+    )
+    if not row:
+        return {"status": "none"}
+    return {
+        "plan_id": row.plan_id,
+        "status": row.status,
+        "dispatched_at": row.dispatched_at.isoformat() if row.dispatched_at else None,
+        "completed_at": row.completed_at.isoformat() if row.completed_at else None,
+        "result": row.result_json,
+        "error": row.error,
+    }
+
+
+@router.post("/{finding_id}/remediation/dispatch")
+def remediation_dispatch(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    """EventBridge + CLI payload for customer-hosted Lambda remediation."""
+    from app.services.remediation_dispatch import build_remediation_dispatch
+
+    f = _get_owned(db, p, finding_id)
+    approved_by = p.get("sub") or p.get("email") or "unknown"
+    return build_remediation_dispatch(
+        f,
+        approved_by=str(approved_by),
+        db=db,
+        org_id=uuid.UUID(p["org_id"]),
+    )
 
 
 @router.post("/{finding_id}/recheck")

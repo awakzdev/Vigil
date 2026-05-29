@@ -6,11 +6,14 @@ from app.models.resources import (
     S3Bucket, S3AccountPublicAccessBlock, KmsKey,
     Ec2Instance, EbsVolume, EbsEncryptionDefault,
     IamPasswordPolicy, AccessAnalyzer, ConfigRecorder, SecurityHubStatus,
+    AccountGovernance, IamServerCertificate,
 )
 from app.models.control import Control, CheckControl
 from app.models.evidence_snapshot import EvidenceSnapshot
 from app.models.github import IdentityProvider, IdentityUser, Repo, RepoProtection, PullRequest, WorkflowRun, CiPipeline
 from app.models.cloudtrail import CloudTrailEvent
+from app.models.remediation_execution import RemediationExecution
+from app.models.evidence_export import EvidenceExport
 
 __all__ = [
     "Org", "User",
@@ -20,9 +23,12 @@ __all__ = [
     "S3Bucket", "S3AccountPublicAccessBlock", "KmsKey",
     "Ec2Instance", "EbsVolume", "EbsEncryptionDefault",
     "IamPasswordPolicy", "AccessAnalyzer", "ConfigRecorder", "SecurityHubStatus",
+    "AccountGovernance", "IamServerCertificate",
     "Control", "CheckControl",
     "EvidenceSnapshot",
     "IdentityProvider", "IdentityUser", "Repo", "RepoProtection", "PullRequest",
     "WorkflowRun", "CiPipeline",
     "CloudTrailEvent",
+    "RemediationExecution",
+    "EvidenceExport",
 ]

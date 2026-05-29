@@ -14,6 +14,7 @@ from app.core.security import current_principal
 from app.models.org import Org, User
 from app.models import AwsAccount, Finding
 from app.services.check_evidence import all_evidence_classes
+from app.checks.optional_checks import OPTIONAL_LINKED
 from app.services.check_settings import hidden_check_ids, optional_checks_for_ui
 from app.services.cis_benchmark_coverage import cis_benchmark_coverage
 from app.services.digest_tokens import ensure_digest_unsubscribe_token
@@ -158,6 +159,8 @@ def patch_settings(body: SettingsPatch, p=Depends(current_principal), db: Sessio
         checks = dict(current.get("checks", {}))
         for check_id, cfg in body.checks.items():
             checks[check_id] = {"enabled": cfg.enabled}
+            for linked in OPTIONAL_LINKED.get(check_id, []):
+                checks[linked] = {"enabled": cfg.enabled}
         current["checks"] = checks
 
     if body.scanning is not None:

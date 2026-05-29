@@ -1,6 +1,36 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-28 (session 27 deepsearch v2 audit fixes)_
+_Last updated: 2026-05-30 (session 29 — CIS governance + detection UX)_
+
+---
+
+## Session 29 (2026-05-30) — shipped (deepsearch/v4.txt)
+
+- **v4 map:** [`docs/deepsearch-v4-map.md`](docs/deepsearch-v4-map.md) — inventory, gaps, MVP ordering.
+- **Evidence vault docs:** `docs/evidence-vault.md` — wired upload (was incorrectly “scaffold only”).
+- **Export audit trail:** migration `0034` — `report_id`, `vault_s3_uri`, `vault_version_id`, `vault_object_lock_mode`, `vault_retain_until` on `evidence_exports`; populated from `EvidencePackResult` on download.
+- **Remediation dispatch approval:** `build_approved_remediation_plan()` — `approval_token`, `approved_by`, `approved_at` sealed into plan on `POST …/remediation/dispatch` only.
+- **UI:** Evidence pack modal title/CTA → “Generate Audit Package” (Compliance button already renamed).
+- **Policy generator / IAM last-accessed:** service-level vs action-level mismatch fixed (no `service:*` plaster). Map: [`docs/policy-generator-iam-last-accessed.md`](docs/policy-generator-iam-last-accessed.md).
+- **CIS v5 L1 governance checks:** `aws.account.contact_incomplete`, `aws.account.security_contact_missing`, `iam.server_certificate.expired`, `iam.cloudshell_full_access_granted` — collectors in `run_scan`, migration `0035`, CFN `AccountContacts` + `IamServerCertificates`. Spec: [`docs/cis-v5-40-controls.md`](docs/cis-v5-40-controls.md).
+- **CIS matrix status:** **42/42** controls mapped in Compliance (**38** automated, **1** partial, **3** manual). **1 missing** for full automated parity — **1.11** (45-day unused credentials; Vigil uses 90-day threshold). Honest manual: **1.5**, **1.10**, **1.17**.
+- **Detection coverage UX:** removed CIS disclaimer banner; “Hygiene only” → **Operational checks** (not used in compliance scoring).
+
+**Still open from v4:** SSM runbooks; auditor share UI + `shared_with`; expand hclpatch; customer Terraform modules for runner deploy (CFN remains canonical).
+
+---
+
+## Session 28 (2026-05-28) — shipped (deepsearch/v3.txt)
+
+- **Remediation plan v2:** `expires_at`, `event_bus_region` / `event_bus_name`, `resource_region`, `exact_match_rules`, `content_sha256`, optional Ed25519 `signature` (`remediation_plan.py`, `pack_signing.py`).
+- **Dispatch:** `put-events` uses `REMEDIATION_EVENT_BUS_REGION` (not resource region); `.env.example` + `docs/remediation-automation.md` updated.
+- **IaC boundary:** SG checks → `automation_only`; Terraform snippets S3/KMS only; GitHub PR for S3 via `tools/hclpatch` + `terraform validate`.
+- **Lambda / CFN:** S3-packaged artifact (`LambdaArtifactBucket`/`Key`); exact-match revoke; v2 rule filter; DLQ; runner status API.
+- **Evidence vault:** upload final ZIP to Object Lock when `EVIDENCE_VAULT_ENABLED`; presigned auditor mode (no approval UI).
+- **Activity log + Compliance timeline** pages; operational-noise toggle; drawer tabs use Overview narrative cards.
+- **Tests:** remediation plan, timeline filters, runner status, hclpatch (optional).
+
+**Still open from v3:** auditor-approval share flow + vault DB metadata; SG repo-aware PR; full HCL AST for all checks; Lambda execution records per `plan_id`; activity→finding cross-links.
 
 ---
 
@@ -174,7 +204,7 @@ only, and only to say it's out of scope.
 - Settings page (check enable/disable per group, weekly digest toggle + recipient email)
 - Account settings page (password + GitHub)
 - Reference page (`/reference`) — searchable table of all supported search keys, resource types, check IDs, ARN patterns
-- Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Timeline, Integrations, Settings, Account, Sign out
+- Sidebar: Vigil logo, AWS Accounts, Findings, Compliance, Activity log (`/timeline`), Integrations, Settings, Account, Sign out
 
 ### Security
 - Rate limiting: signup 5/min, login 10/min (slowapi); MFA verify locks the account after 5 failures (10 min, escalating to 30 min)
@@ -474,12 +504,7 @@ The differentiator IS:
 - Deep-links to AWS Console for visual verification
 - Raw API responses preserved as JSON
 - ZIP bundle: per-control folder with JSON + CSV inventory + PDF cover
-- Cross-source correlation: SG opened → matched to PR #347 → approver Bob → deployment workflow xyz
-
-That correlation story (AWS event ↔ GitHub PR ↔ approver) is rare in
-the current market. Most compliance platforms expose these systems
-separately rather than presenting them as a correlated engineering
-timeline. The depth and UX of the correlation is where Vigil can lead.
+- Timeline shows CloudTrail infrastructure writes from scans (actor, region, resources) for change visibility alongside GitHub/GitLab evidence in compliance packs.
 
 ### Historical diffing as moat reinforcement
 
@@ -633,8 +658,8 @@ policy analysis, onboarding empty state.
 - **`github.org.outside_collaborators` check** (medium): non-org members with direct repo access; collected via GitHub `/orgs/{owner}/outside_collaborators` API; stored in provider `config_json_encrypted`; finder drawer has full remediation copy; Settings + Findings + FindingDrawer all wired
 - **CloudTrail write-event collector** (`collectors/cloudtrail_events.py`): 50 tracked event names across IAM/SG/S3/EC2/KMS/CloudTrail/Config/GuardDuty; uses `LookupEvents` paginator for last 90 days (max 1000/run); upserts into `cloudtrail_events` table (migration 0021); runs as part of every scan
 - **`cloudtrail_events` table** (migration 0021): `id`, `account_id` FK, `event_id`, `event_name`, `event_source`, `event_time`, `actor`, `source_ip`, `resources` JSONB, `raw` JSONB, `last_seen`; unique on `(account_id, event_id)`; index on `(account_id, event_time)`
-- **`GET /v1/accounts/{id}/timeline`**: CloudTrail events correlated with GitHub PR merges within ±60 minutes; returns `event_id`, `event_name`, `actor`, `source_ip`, `resources`, `correlated_prs[]` (number, repo, merged_at, merged_by, author, approval_count, self_merge, delta_seconds); filters by `?days=30&limit=200`
-- **Timeline page** (`/timeline`): expandable event rows (click to reveal detail); sky-blue badge + highlight for events with correlated PRs; PR detail cards show before/after delta, self-merge badge, approval counts; correlation banner when matches exist; 7d/30d/90d toggle; added to sidebar nav
+- **`GET /v1/accounts/{id}/timeline`**: CloudTrail write events from scan collection; `event_id`, `event_name`, `actor`, `source_ip`, `region`, `resources`; filters by `?days=30&limit=200`
+- **Timeline page** (`/timeline`): expandable event rows; identity + infrastructure detail; 7d/30d/90d toggle (IAM roster lives in evidence pack JSON only, not Timeline UI)
 - **control_mappings**: `outside_collaborators` → CC6.2; `no_codeowners` + `no_env_protection` → CC6.6 + CC8.1; `iam.perm.granted_vs_used` → CC6.6 + ISO A.9.2.5
 - 53 total checks (was 50)
 
@@ -705,7 +730,7 @@ policy analysis, onboarding empty state.
 3. Production deploy (deferred)
 4. Stripe (deferred)
 5. TOTP MFA (deferred to Phase 1.5)
-6. Phase 3 is now **complete** — all GitHub/GitLab checks, identity evidence, change management evidence, timeline correlation, and CI/CD pipeline collection are shipped
+6. Phase 3 is now **complete** — all GitHub/GitLab checks, identity evidence, change management evidence, CloudTrail timeline, and CI/CD pipeline collection are shipped
 
 **Session 14 additions (2026-05-27):**
 - **Finding drawer / What If polish**: deduplicated verdict vs warning vs info boxes (S3 HTTPS, EBS default encryption, AWS Config, default SG); green verdict + zinc info pattern (VPC flow logs cost, service-enable costs); SG metadata shows `sg-` id + Default badge with separate VPC and Region fields
@@ -865,11 +890,11 @@ digest one-click unsubscribe, `/reference` route, sample pack
 **Shipped session 28 (`feat/evidence-signing-iam-history`):**
 - Ed25519 `pack_signature.json` when `EVIDENCE_PACK_SIGNING_KEY` set; `GET /v1/meta/evidence-pack-signing-key`
 - `cis_v5_level1_matrix.json` — 40 L1 controls with automated/partial/extended/manual status in coverage API
-- `GET /v1/accounts/:id/iam-history?as_of=` — snapshot-based IAM roster; Timeline panel
+- `GET /v1/accounts/:id/iam-history?as_of=` — snapshot-based IAM roster (API + evidence pack; no Timeline UI panel)
 - What If tab: policy diff (`GeneratePolicySection`) for `iam.role.full_admin_policy` and other role checks
 
 **Product backlog:**
-- Map more CIS v5 controls into `control_mappings.json` (matrix lists extended checks not yet in Compliance pass/fail)
+- CIS **1.11** 45-day unused-credentials check (or document 90d as accepted partial) — **1 missing** vs full L1 automation
 - Sigstore / per-org signing keys
 - Deeper IAM history UI (per-user drill-down, export slice in ZIP)
 - S3/CloudFront dependency hints in What If
@@ -927,7 +952,7 @@ management (CC7.1) in one shot. Most startups use GitHub.
 - [x] CODEOWNERS coverage (`github.repo.no_codeowners` check + sync)
 - [x] Protected environments and required reviewers (`github.repo.no_env_protection` check + sync)
 - [x] Outside collaborators (`github.org.outside_collaborators` check + sync)
-- [x] AWS CloudTrail event ↔ GitHub PR correlation timeline (`GET /v1/accounts/{id}/timeline` + `/timeline` UI page)
+- [x] AWS CloudTrail infrastructure timeline (`GET /v1/accounts/{id}/timeline` + `/timeline` UI page)
 - [x] Team membership (`_collect_team_memberships()` in github_sync; stored in `roles_json["teams"]`)
 - [x] GitHub Actions deployments/workflow runs (migrations 0023/0024, WorkflowRun + CiPipeline models, _build_cicd_snapshots in evidence_pack)
 - [x] GitHub-derived controls/checks and evidence-pack wiring (checks exist, evidence-pack wired for identity snapshots + CloudTrail events + workflow_run/ci_pipeline)
@@ -963,10 +988,9 @@ pull_requests(id, repo_id, number, author, merged_at, merged_by,
 **Start with OAuth App, migrate to GitHub App later** (App gives webhooks +
 fine-grained per-repo permissions, but takes longer to ship).
 
-**Killer demo:** Phase 1 + Phase 3 = "Security group SG-abc opened to
-0.0.0.0/0 at 14:32 (CloudTrail). Matched to PR #347 merged 14:28 by alice.
-Approved by bob via required-review branch protection. Deployment workflow
-xyz ran at 14:30." Few compliance platforms present these systems as a correlated engineering timeline with this level of technical depth.
+**Killer demo:** Phase 1 + Phase 3 = evidence pack with CloudTrail write
+events, GitHub branch protection + PR approvals, and IAM snapshots on the
+same control date range.
 
 ### Phase 3b — GitLab integration (2–3 weeks, after GitHub ships)
 

@@ -6,6 +6,7 @@ export interface TimelineEvent {
   event_time: string;
   actor: string | null;
   source_ip: string | null;
+  region?: string | null;
   resources: { type: string | null; name: string | null }[];
 }
 
@@ -19,7 +20,11 @@ export interface ParsedActor {
   user: string | null;
   origin: string;
   fullArn: string | null;
+  /** Shown when the session is a compute principal, not a human SSO user. */
+  hint?: string;
 }
+
+const EC2_INSTANCE_SESSION = /^i-[0-9a-f]{8,17}$/i;
 
 const HIGH_IMPACT_EVENTS = new Set([
   "AttachRolePolicy",
@@ -129,14 +134,24 @@ export function parseActor(actor: string | null): ParsedActor {
     const slash = tail.indexOf("/");
     const role = slash >= 0 ? tail.slice(0, slash) : tail;
     const session = slash >= 0 ? tail.slice(slash + 1) : "";
-    // Prefer the session identity (SSO email / username) over the permission set role name.
-    const label = session || role || actor;
+    const sessionIsEmail = session.includes("@");
+    const isInstance = EC2_INSTANCE_SESSION.test(session);
+    const label = sessionIsEmail
+      ? session
+      : isInstance
+        ? role || session
+        : session || role || actor;
     return {
       label,
       role: role || null,
       user: session || null,
-      origin: "Assumed role session",
+      origin: isInstance ? "EC2 / EKS instance role" : "Assumed role session",
       fullArn: actor,
+      hint: isInstance
+        ? "This call used a compute instance role, not your SSO sign-in. The session name is the instance ID."
+        : sessionIsEmail
+          ? undefined
+          : "If you use IAM Identity Center, human actors usually show an email in the session name.",
     };
   }
   if (actor.includes(":user/")) {
@@ -158,6 +173,7 @@ export function parseActor(actor: string | null): ParsedActor {
 }
 
 export function extractRegion(evt: TimelineEvent): string | null {
+  if (evt.region) return evt.region;
   for (const r of evt.resources) {
     const name = r.name || "";
     const m = name.match(/^arn:aws:[^:]+:([a-z0-9-]+):/);

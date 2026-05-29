@@ -34,11 +34,6 @@ function scanProgressDetail({
   if (finishing) {
     return `${stepPrefix}${formatScanDuration(elapsedMs)} elapsed · finishing checks`;
   }
-  if (remainingMs != null && remainingMs > 0) {
-    const elapsedPart =
-      phase === "starting" ? "Queued" : `${formatScanDuration(elapsedMs)} elapsed`;
-    return `${stepPrefix}${elapsedPart} · ~${formatScanDuration(remainingMs)} left`;
-  }
   if (phase === "starting") {
     return `${stepPrefix}Queued · waiting for worker`;
   }

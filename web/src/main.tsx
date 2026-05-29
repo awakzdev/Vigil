@@ -18,7 +18,7 @@ import GitLabIntegration from "./pages/GitLabIntegration";
 import GitLabIntegrationEdit from "./pages/GitLabIntegrationEdit";
 import Integrations from "./pages/Integrations";
 import Security from "./pages/Security";
-import Timeline from "./pages/Timeline";
+import History from "./pages/History";
 import Reference from "./pages/Reference";
 import Layout from "./Layout";
 
@@ -43,12 +43,16 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
             <Route path="/settings" element={<Settings />} />
             <Route path="/detection" element={<DetectionCoverage />} />
             <Route path="/controls" element={<Controls />} />
+            <Route path="/history" element={<History />} />
+            <Route path="/compliance-history" element={<Navigate to="/history" replace />} />
+            <Route path="/compliance-timeline" element={<Navigate to="/history" replace />} />
+            <Route path="/timeline" element={<Navigate to="/history" replace />} />
+            <Route path="/history/infrastructure" element={<Navigate to="/history" replace />} />
             <Route path="/integrations" element={<Integrations />} />
             <Route path="/integrations/github" element={<GitHubIntegration />} />
             <Route path="/integrations/github/edit" element={<GitHubIntegrationEdit />} />
             <Route path="/integrations/gitlab" element={<GitLabIntegration />} />
             <Route path="/integrations/gitlab/edit" element={<GitLabIntegrationEdit />} />
-            <Route path="/timeline" element={<Timeline />} />
           </Route>
         </Routes>
       </BrowserRouter>

@@ -2,6 +2,7 @@
  * Per-check documentation: what the scanner evaluates and why the finding exists.
  * Detailed overrides below; all other checks with remediationSummaries fall back automatically.
  */
+import { complianceCopyForCheck, scanDescriptionForCheck } from "./checkComplianceCopy";
 import { remediationSummaries } from "./remediationSummaries";
 
 export type CheckDocumentation = {
@@ -11,6 +12,11 @@ export type CheckDocumentation = {
     context?: string;
     exposure?: string;
     fix?: string;
+  };
+  /** Drawer Compliance tab — check-specific auditor copy (not whole-control catalog text). */
+  compliance?: {
+    evidenceGuidance?: string;
+    auditNarrative?: string;
   };
 };
 
@@ -44,6 +50,17 @@ const checkDocumentationOverrides: Record<string, CheckDocumentation> = {
         "Confirm each external account is approved; remove stale principals or add ExternalId / condition keys to narrow assumption.",
     },
   },
+  "iam.root.no_mfa": {
+    whatWeCheck:
+      "We read the root user's MFA status from IAM. If no virtual or hardware MFA device is assigned, we open this finding.",
+    whyShown:
+      "Root credentials bypass normal IAM boundaries. SOC 2 and CIS require MFA on the root account because a single compromised password grants full account control.",
+    overview: {
+      context: "The AWS account root user is the ultimate break-glass identity.",
+      exposure: "Without MFA, a leaked root password alone is sufficient for full account takeover.",
+      fix: "Sign in as root → Security credentials → assign a hardware MFA device (virtual MFA is discouraged for root).",
+    },
+  },
   "iam.user.no_mfa": {
     whatWeCheck:
       "For IAM users with console access enabled, we verify MFA is assigned on the user (virtual or hardware device). No MFA on console-capable users → finding.",
@@ -66,28 +83,40 @@ const checkDocumentationOverrides: Record<string, CheckDocumentation> = {
   },
   "github.repo.no_codeowners": {
     whatWeCheck:
-      "After GitHub sync, we look for a CODEOWNERS file in `/`, `.github/`, or `docs/`. If none exists, we flag the repository.",
+      "After Git sync, we look for a CODEOWNERS file in `/`, `.github/`, or `docs/` on GitHub. If none exists, we flag the repository.",
     whyShown:
-      "Optional hygiene only — off by default. SOC 2 change-management evidence uses branch protection and required PR reviews, not CODEOWNERS. Enable only if your policy requires code-owner review rules.",
+      "Optional security check — off by default. SOC 2 change-management evidence uses branch protection and required PR reviews, not CODEOWNERS alone.",
+  },
+  "gitlab.repo.no_codeowners": {
+    whatWeCheck:
+      "After Git sync, we look for CODEOWNERS at the repo root, `.gitlab/CODEOWNERS`, or `docs/CODEOWNERS` on GitLab. If none exists, we flag the project.",
+    whyShown:
+      "Optional security check — off by default, same toggle as other Git CODEOWNERS checks. SOC 2 change-management evidence uses branch protection and required MR approvals, not CODEOWNERS alone.",
   },
 };
 
 function fromSummary(checkId: string): CheckDocumentation | null {
   const s = remediationSummaries[checkId];
   if (!s) return null;
+  const compliance = complianceCopyForCheck(checkId);
   return {
-    whatWeCheck: `Vigil opens a finding when: ${s.impact}`,
-    whyShown: `Risk if ignored: ${s.risk}`,
+    whatWeCheck: scanDescriptionForCheck(checkId, s),
+    whyShown: s.risk,
     overview: {
       context: s.impact,
       exposure: s.risk,
       fix: s.fix,
     },
+    ...(compliance ? { compliance } : {}),
   };
 }
 
 export function documentationForCheck(checkId: string): CheckDocumentation | null {
-  return checkDocumentationOverrides[checkId] ?? fromSummary(checkId);
+  const base = checkDocumentationOverrides[checkId] ?? fromSummary(checkId);
+  if (!base) return null;
+  if (base.compliance) return base;
+  const compliance = complianceCopyForCheck(checkId);
+  return compliance ? { ...base, compliance } : base;
 }
 
 export function allDocumentedCheckIds(): string[] {

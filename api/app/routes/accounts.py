@@ -15,6 +15,10 @@ from app.core.aws import assume_role, ensure_vigil_role_trust, verify_account
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.iam_usage import (
+    augment_used_actions_with_granted_for_service_only,
+    service_has_tracked_actions_in_window,
+    services_with_action_evidence,
+    services_with_service_only_evidence,
     unused_services_from_usages,
     used_actions_from_usages,
     used_services_from_usages,
@@ -25,7 +29,7 @@ from app.services.evidence_coverage import compute_evidence_coverage, parse_as_o
 from app.services.s3_https_policy import build_https_policy_suggestion
 from app.services.compliance_timeline import build_compliance_timeline
 from app.services.evidence_diff import build_evidence_diff
-from app.models import AssumeRoleAudit, AwsAccount, IamPermUsage, IamRole, ScanRun
+from app.models import AssumeRoleAudit, AwsAccount, EvidenceExport, IamPermUsage, IamRole, ScanRun
 from app.models.cloudtrail import CloudTrailEvent
 from app.models.github import IdentityProvider, PullRequest, Repo
 from app.models.iam import IamAccessKey, IamUser
@@ -128,15 +132,21 @@ def evidence_coverage(
     account_id: str,
     period: int = Query(default=90, ge=7, le=365),
     as_of: str | None = Query(default=None, description="End of audit period (YYYY-MM-DD)"),
+    framework: str | None = Query(default=None, description="Include scope_limitations for this framework"),
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
+    from app.data.control_narratives import scope_limitations_for
+
     acc = db.get(AwsAccount, uuid.UUID(account_id))
     if not acc or str(acc.org_id) != p["org_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
     end = parse_as_of(as_of) or datetime.now(timezone.utc)
     since = end - timedelta(days=period)
-    return compute_evidence_coverage(db, acc.id, since, end, period)
+    result = compute_evidence_coverage(db, acc.id, since, end, period)
+    if framework:
+        result["scope_limitations"] = scope_limitations_for(framework)
+    return result
 
 
 @router.get("/{account_id}/access-roster")
@@ -339,6 +349,41 @@ def _actions_for_service(used_actions: list[str], service: str) -> list[str]:
     return sorted(a for a in used_actions if a.lower().startswith(prefix))
 
 
+def _allow_actions_from_policy_doc(doc: dict) -> list[str]:
+    """All Allow Action values from a policy document (including wildcards)."""
+    stmts = doc.get("Statement", [])
+    if isinstance(stmts, dict):
+        stmts = [stmts]
+    out: list[str] = []
+    for stmt in stmts:
+        if stmt.get("Effect", "Allow") != "Allow":
+            continue
+        actions = stmt.get("Action", [])
+        if isinstance(actions, str):
+            actions = [actions]
+        out.extend(actions)
+    return out
+
+
+def _granted_allow_actions_for_role(role: IamRole) -> list[str]:
+    granted: list[str] = []
+    for doc in (role.inline_policies or {}).values():
+        granted.extend(_allow_actions_from_policy_doc(doc))
+    for pol in role.attached_policies or []:
+        stmts = pol.get("statements") or []
+        granted.extend(
+            action
+            for stmt in stmts
+            if stmt.get("Effect", "Allow") == "Allow"
+            for action in (
+                [stmt["Action"]]
+                if isinstance(stmt.get("Action"), str)
+                else (stmt.get("Action") or [])
+            )
+        )
+    return granted
+
+
 def _dedupe_actions(actions: list[str]) -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
@@ -422,11 +467,52 @@ def _clean_policy_doc(
     return doc, removed, modified
 
 
+def _policy_generation_meta(
+    db: Session,
+    account_id: uuid.UUID,
+    *,
+    threshold_days: int,
+    advanced: bool,
+    has_action_data: bool,
+) -> dict:
+    active_analyzers = db.scalars(
+        select(AccessAnalyzer).where(
+            AccessAnalyzer.account_id == account_id,
+            AccessAnalyzer.status == "ACTIVE",
+        )
+    ).all()
+    aa_on = len(active_analyzers) > 0
+    actions = has_action_data
+    resources = False
+    if advanced and aa_on:
+        resources = False
+    return {
+        "coverage": {"actions": actions, "resources": resources},
+        "source": "iam_last_accessed",
+        "source_label": f"IAM last accessed ({threshold_days} days)",
+        "access_analyzer_enabled": aa_on,
+        "advanced_available": aa_on,
+        "advanced_requested": advanced,
+        "advanced_note": (
+            None
+            if not advanced
+            else (
+                "Resource-level ARNs need IAM Access Analyzer policy generation. "
+                "Automated Advanced mode is not wired yet — this preview still scopes Actions only. "
+                "Use AWS Console → Access Analyzer → Policy generation for ARN-level output."
+                if aa_on
+                else "Enable IAM Access Analyzer in your active regions, then re-scan."
+            )
+        ),
+    }
+
+
 @router.get("/{account_id}/roles/generated-policy")
 def generate_role_policy(
     account_id: str,
     role_arn: str,
     threshold_days: int = 90,
+    advanced: bool = Query(default=False),
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
@@ -450,19 +536,37 @@ def generate_role_policy(
     cutoff = datetime.now(timezone.utc) - timedelta(days=threshold_days)
     unused_set = unused_services_from_usages(usages, cutoff)
     used_set = used_services_from_usages(usages, cutoff)
-    used_actions = used_actions_from_usages(usages, cutoff)
-    granularity = "action" if used_actions else "service"
+    tracked_actions = used_actions_from_usages(usages, cutoff)
+    granted = _granted_allow_actions_for_role(role)
+    used_actions, policy_warnings = augment_used_actions_with_granted_for_service_only(
+        tracked_actions, usages, cutoff, granted
+    )
+    granularity = "action" if tracked_actions else "service"
+    service_only = sorted(services_with_service_only_evidence(usages, cutoff))
+    action_evidence = sorted(services_with_action_evidence(usages, cutoff))
 
     inline = role.inline_policies or {}
+    meta = _policy_generation_meta(
+        db, acc.id, threshold_days=threshold_days, advanced=advanced, has_action_data=bool(tracked_actions)
+    )
+
+    base_out = {
+        "used_services": sorted(used_set),
+        "used_services_action_tracked": action_evidence,
+        "used_services_service_only": service_only,
+        "policy_warnings": policy_warnings,
+    }
+
     if not inline:
         return {
             "role_arn": role_arn,
             "has_inline_policies": False,
             "unused_services": sorted(unused_set),
-            "used_services": sorted(used_set),
             "used_actions": used_actions,
             "granularity": granularity,
             "note": "Role has no inline policies. Permissions come from attached managed policies — review with list-attached-role-policies.",
+            **base_out,
+            **meta,
         }
 
     cleaned_policies: dict = {}
@@ -478,7 +582,6 @@ def generate_role_policy(
         "role_arn": role_arn,
         "has_inline_policies": True,
         "unused_services": sorted(unused_set),
-        "used_services": sorted(used_set),
         "used_actions": used_actions,
         "granularity": granularity,
         "threshold_days": threshold_days,
@@ -486,6 +589,8 @@ def generate_role_policy(
         "statements_modified": total_modified,
         "original_policies": inline,
         "cleaned_policies": cleaned_policies,
+        **base_out,
+        **meta,
     }
 
 
@@ -571,6 +676,16 @@ def blast_radius(
                     "last_used": u.last_authenticated.isoformat() if u.last_authenticated else None,
                     "days_ago": int((now - u.last_authenticated).total_seconds() / 86400) if u.last_authenticated else None,
                     "active": u.last_authenticated is not None and u.last_authenticated >= threshold,
+                    "action_tracked": (
+                        u.last_authenticated is not None
+                        and u.last_authenticated >= threshold
+                        and service_has_tracked_actions_in_window(u, threshold)
+                    ),
+                    "service_only_signal": (
+                        u.last_authenticated is not None
+                        and u.last_authenticated >= threshold
+                        and not service_has_tracked_actions_in_window(u, threshold)
+                    ),
                     "in_policy": any(
                         u.service in str(doc)
                         for doc in (role.inline_policies or {}).values()
@@ -1564,36 +1679,59 @@ def get_timeline(
     account_id: str,
     days: int = Query(default=30, ge=1, le=90),
     limit: int = Query(default=100, ge=1, le=500),
+    on_date: str | None = Query(
+        default=None,
+        description="UTC calendar day (YYYY-MM-DD) — returns events on that day only",
+    ),
+    include_operational_noise: bool = Query(
+        default=False,
+        description="Include SSM/Lambda churn and other low-signal operational events",
+    ),
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    """CloudTrail infrastructure write events collected at scan time."""
+    """CloudTrail write events from scans (Activity log). Filtered to compliance sources by default."""
+    from app.services.timeline_filters import is_compliance_timeline_event
     acc = db.get(AwsAccount, uuid.UUID(account_id))
     if not acc or str(acc.org_id) != p["org_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
 
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    day_start: datetime | None = None
+    day_end: datetime | None = None
+    if on_date:
+        try:
+            day_start = datetime.fromisoformat(on_date).replace(tzinfo=timezone.utc)
+            day_end = day_start + timedelta(days=1)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "on_date must be YYYY-MM-DD") from exc
+        cutoff = day_start
 
-    ct_events = db.scalars(
-        select(CloudTrailEvent)
-        .where(CloudTrailEvent.account_id == acc.id, CloudTrailEvent.event_time >= cutoff)
-        .order_by(CloudTrailEvent.event_time.desc())
-        .limit(limit)
-    ).all()
+    stmt = select(CloudTrailEvent).where(
+        CloudTrailEvent.account_id == acc.id,
+        CloudTrailEvent.event_time >= cutoff,
+    )
+    if day_end is not None:
+        stmt = stmt.where(CloudTrailEvent.event_time < day_end)
+    ct_events = db.scalars(stmt.order_by(CloudTrailEvent.event_time.desc()).limit(limit)).all()
 
-    result = [
-        {
-            "type": "cloudtrail",
-            "event_id": evt.event_id,
-            "event_name": evt.event_name,
-            "event_source": evt.event_source,
-            "event_time": evt.event_time.isoformat(),
-            "actor": evt.actor,
-            "source_ip": evt.source_ip,
-            "resources": evt.resources or [],
-        }
-        for evt in ct_events
-    ]
+    result = []
+    for evt in ct_events:
+        if not include_operational_noise and not is_compliance_timeline_event(evt.event_source):
+            continue
+        result.append(
+            {
+                "type": "cloudtrail",
+                "event_id": evt.event_id,
+                "event_name": evt.event_name,
+                "event_source": evt.event_source,
+                "event_time": evt.event_time.isoformat(),
+                "actor": evt.actor,
+                "source_ip": evt.source_ip,
+                "resources": evt.resources or [],
+                "region": (evt.raw or {}).get("awsRegion"),
+            }
+        )
 
     trails = db.scalars(
         select(CloudTrailTrail).where(CloudTrailTrail.account_id == acc.id)
@@ -1606,6 +1744,10 @@ def get_timeline(
 
     logging_active = any(t.is_logging for t in trails) or events_in_account > 0
 
+    from app.services.timeline_finding_links import link_findings_to_timeline_events
+
+    result = link_findings_to_timeline_events(db, acc.id, result)
+
     return {
         "events": result,
         "total": len(result),
@@ -1614,8 +1756,56 @@ def get_timeline(
             "trail_count": len(trails),
             "events_in_account": events_in_account,
             "last_scan_at": acc.last_scan_at.isoformat() if acc.last_scan_at else None,
+            "filtered_compliance_only": not include_operational_noise,
         },
     }
+
+
+@router.get("/{account_id}/remediation-runner/status")
+def remediation_runner_status(
+    account_id: str,
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Read-only check: EventBridge rule + Lambda deployed in REMEDIATION_EVENT_BUS_REGION."""
+    from app.services.remediation_runner_status import check_remediation_runner
+
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    return check_remediation_runner(acc)
+
+
+@router.get("/{account_id}/evidence-exports")
+def list_evidence_exports(
+    account_id: str,
+    limit: int = Query(default=15, ge=1, le=50),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Recent evidence pack downloads for this account (metadata only — re-generate to download)."""
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+
+    rows = db.scalars(
+        select(EvidenceExport)
+        .where(EvidenceExport.account_id == acc.id)
+        .order_by(EvidenceExport.created_at.desc())
+        .limit(limit)
+    ).all()
+    return [
+        {
+            "id": str(r.id),
+            "framework": r.framework,
+            "period_days": r.period_days,
+            "as_of": r.as_of.isoformat() if r.as_of else None,
+            "zip_sha256": r.zip_sha256,
+            "file_size_bytes": r.file_size_bytes,
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
 
 
 @router.get("/{account_id}/compliance-timeline")
@@ -1627,7 +1817,7 @@ def get_compliance_timeline(
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    """Control pass/fail history and finding lifecycle events for a framework."""
+    """Compliance history: scan-level posture summaries with expandable control diffs."""
     acc = db.get(AwsAccount, uuid.UUID(account_id))
     if not acc or str(acc.org_id) != p["org_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
@@ -1635,7 +1825,9 @@ def get_compliance_timeline(
     if framework not in {"soc2", "cis_aws_l1", "iso27001"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid framework")
 
-    return build_compliance_timeline(db, acc.id, framework, days, limit)
+    from app.services.compliance_scan_timeline import build_compliance_scan_timeline
+
+    return build_compliance_scan_timeline(db, acc.id, framework, days, limit)
 
 
 @router.get("/{account_id}/evidence-diff")

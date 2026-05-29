@@ -10,7 +10,9 @@ from sqlalchemy import select
 from app.checks.persist import persist_findings
 from app.checks.registry import ALL_CHECKS
 from app.checks import role_unused_services
+from app.collectors.account_governance import collect_account_governance
 from app.collectors.iam import collect_iam
+from app.collectors.iam_server_certificates import collect_iam_server_certificates
 from app.collectors.last_accessed import collect_perm_usage
 from app.collectors.account import collect_s3, collect_s3_account_public_access_block, collect_kms
 from app.collectors.cloudtrail import collect_cloudtrail
@@ -75,7 +77,9 @@ from app.worker.celery_app import celery_app
 # maps check_id prefix → collector function(db, acc)
 # More-specific prefixes must come before less-specific ones
 _COLLECTOR_FOR_CHECK = {
+    "iam.server_certificate.": lambda db, acc: collect_iam_server_certificates(db, acc),
     "iam.": lambda db, acc: collect_iam(db, acc),
+    "aws.account.": lambda db, acc: collect_account_governance(db, acc),
     "s3.account.": lambda db, acc: collect_s3_account_public_access_block(db, acc),
     "s3.": lambda db, acc: collect_s3(db, acc),
     "kms.": lambda db, acc: collect_kms(db, acc),
@@ -736,7 +740,7 @@ def run_scan(account_id: str) -> dict:
 
         stats: dict = {}
 
-        _TOTAL_STEPS = 26  # collectors + checks + snapshots
+        _TOTAL_STEPS = 28  # collectors + checks + snapshots
         _step_counter = 0
 
         def _step(name: str, fn):
@@ -749,6 +753,10 @@ def run_scan(account_id: str) -> dict:
             return result
 
         stats.update(_step("collect_iam", lambda: collect_iam(db, acc)))
+        stats.update(_step("collect_account_governance", lambda: collect_account_governance(db, acc)))
+        stats["iam_server_certificates"] = _step(
+            "collect_iam_server_certificates", lambda: collect_iam_server_certificates(db, acc)
+        )
         stats["s3_account_public_access_block"] = _step(
             "collect_s3_public_access_block",
             lambda: collect_s3_account_public_access_block(db, acc),

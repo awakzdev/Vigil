@@ -8,9 +8,21 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.security import current_principal
-from app.models import AwsAccount
+from app.models import AwsAccount, EvidenceExport
 from app.services.evidence_coverage import parse_as_of
 from app.services.evidence_pack import build_evidence_pack
+
+
+def _parse_vault_retain_until(raw: str | None) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
 
 router = APIRouter()
 
@@ -34,7 +46,7 @@ def download_evidence_pack(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
 
     try:
-        zip_bytes = build_evidence_pack(
+        pack = build_evidence_pack(
             db=db,
             org_id=uuid.UUID(p["org_id"]),
             account_id=acc.id,
@@ -45,9 +57,30 @@ def download_evidence_pack(
     except Exception as exc:
         raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(exc)) from exc
 
+    zip_bytes = pack.zip_bytes
+    vault = pack.vault_upload if pack.vault_upload and pack.vault_upload.get("status") == "uploaded" else None
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     filename = f"vigil-evidence-{framework}-{ts}.zip"
     zip_sha256 = hashlib.sha256(zip_bytes).hexdigest()
+    as_of_dt = parse_as_of(as_of)
+    db.add(
+        EvidenceExport(
+            org_id=uuid.UUID(p["org_id"]),
+            account_id=acc.id,
+            framework=framework,
+            period_days=period,
+            as_of=as_of_dt.date() if as_of_dt else None,
+            zip_sha256=zip_sha256,
+            file_size_bytes=len(zip_bytes),
+            report_id=pack.report_id,
+            vault_s3_uri=vault.get("s3_uri") if vault else None,
+            vault_version_id=vault.get("version_id") if vault else None,
+            vault_object_lock_mode=vault.get("object_lock_mode") if vault else None,
+            vault_retain_until=_parse_vault_retain_until(vault.get("retention_until") if vault else None),
+            created_by=uuid.UUID(p["sub"]) if p.get("sub") else None,
+        )
+    )
+    db.commit()
     return Response(
         content=zip_bytes,
         media_type="application/zip",
@@ -341,10 +374,9 @@ def download_sample_evidence_pack(framework: str = Query(default="soc2")):
             json.dumps(
                 {
                     "status": "planned",
-                    "implementation": "not_wired",
                     "sample": True,
                     "s3_uri": "s3://your-audit-vault-bucket/vigil-evidence/orgs/…/packs/SAMPLE000001.zip",
-                    "note": "Enable EVIDENCE_VAULT_* env vars on the server to emit real plans.",
+                    "note": "Enable EVIDENCE_VAULT_ENABLED + EVIDENCE_VAULT_S3_URI on the server for real WORM uploads.",
                 },
                 indent=2,
             ),

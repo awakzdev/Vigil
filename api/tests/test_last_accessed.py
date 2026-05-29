@@ -39,11 +39,14 @@ def test_tracked_actions_from_svc_empty_when_no_used_actions():
     assert _tracked_actions_from_svc(svc) is None
 
 
-def test_tracked_actions_from_svc_legacy_key_ignored():
+def test_tracked_actions_from_svc_legacy_action_last_accessed():
     svc = {
-        "ServiceNamespace": "ec2",
+        "ServiceNamespace": "dynamodb",
         "ActionLastAccessed": [
-            {"ActionName": "DescribeInstances", "LastAuthenticated": "2026-05-01T00:00:00+00:00"},
+            {"ActionName": "DescribeTable", "LastAuthenticated": "2026-05-01T00:00:00+00:00"},
         ],
     }
-    assert _tracked_actions_from_svc(svc) is None
+    actions = _tracked_actions_from_svc(svc)
+    assert actions == [
+        {"action": "dynamodb:DescribeTable", "last_authenticated": "2026-05-01T00:00:00+00:00"},
+    ]

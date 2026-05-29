@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from urllib.parse import quote
+
 import httpx
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -97,7 +99,14 @@ def _upsert_identity_user(db: Session, provider_id: uuid.UUID, member: dict[str,
     row.snapshot_taken_at = now
 
 
-def _upsert_repo(db: Session, provider_id: uuid.UUID, project: dict[str, Any], now: datetime) -> Repo:
+def _upsert_repo(
+    db: Session,
+    provider_id: uuid.UUID,
+    project: dict[str, Any],
+    now: datetime,
+    *,
+    has_codeowners: bool | None = None,
+) -> Repo:
     external_id = str(project["id"])
     row = db.scalar(select(Repo).where(Repo.provider_id == provider_id, Repo.external_id == external_id))
     if not row:
@@ -105,8 +114,25 @@ def _upsert_repo(db: Session, provider_id: uuid.UUID, project: dict[str, Any], n
         db.add(row)
     row.name = project.get("path_with_namespace") or project.get("name", "")
     row.default_branch = project.get("default_branch")
+    if has_codeowners is not None:
+        row.has_codeowners = has_codeowners
     row.snapshot_taken_at = now
     return row
+
+
+def _check_codeowners(client: httpx.Client, api_base: str, project_id: int, ref: str | None) -> bool:
+    """Return True if CODEOWNERS exists in a standard GitLab location."""
+    if not ref:
+        return False
+    for path in ("CODEOWNERS", ".gitlab/CODEOWNERS", "docs/CODEOWNERS"):
+        encoded = quote(path, safe="")
+        resp = client.get(
+            f"{api_base}/projects/{project_id}/repository/files/{encoded}",
+            params={"ref": ref},
+        )
+        if resp.status_code == 200:
+            return True
+    return False
 
 
 def _upsert_protection(
@@ -253,12 +279,14 @@ def sync_gitlab_provider(
                 projects = [p for p in projects if p.get("path_with_namespace") in selected_repos]
 
             for project in projects:
-                repo = _upsert_repo(db, provider.id, project, now)
-                db.flush()
-                stats.repos += 1
-
                 project_id = project["id"]
                 default_branch = project.get("default_branch")
+                has_codeowners = _check_codeowners(client, api, project_id, default_branch)
+                repo = _upsert_repo(
+                    db, provider.id, project, now, has_codeowners=has_codeowners
+                )
+                db.flush()
+                stats.repos += 1
 
                 approvals_resp = client.get(f"{api}/projects/{project_id}/approvals")
                 required_reviews = 0

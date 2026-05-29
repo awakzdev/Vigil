@@ -75,15 +75,10 @@ export function useScanProgress(
     const ratio = step / workerProgress.total;
     const progress = Math.min(98, Math.max(2, ratio * 100));
     const finishing = ratio >= 0.92;
-    let remainingMs: number | null = null;
-    if (step > 0 && !finishing) {
-      const msPerStep = elapsedMs / step;
-      remainingMs = Math.max(0, msPerStep * (workerProgress.total - step));
-    }
     return {
       progress,
       elapsedMs,
-      remainingMs,
+      remainingMs: null,
       expectedMs,
       indeterminate: false,
       finishing,
@@ -94,12 +89,11 @@ export function useScanProgress(
 
   const finishing = elapsedMs >= expectedMs;
   const progress = finishing ? 95 : Math.min(95, (elapsedMs / expectedMs) * 100);
-  const remainingMs = finishing ? null : expectedMs - elapsedMs;
 
   return {
     progress,
     elapsedMs,
-    remainingMs,
+    remainingMs: null,
     expectedMs,
     indeterminate: false,
     finishing,

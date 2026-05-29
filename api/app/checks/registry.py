@@ -12,7 +12,12 @@ from app.checks import (
     gitlab_repo_no_protection,
     gitlab_repo_self_merge,
     gitlab_repo_insufficient_reviews,
+    gitlab_repo_no_codeowners,
     access_analyzer_not_enabled,
+    aws_account_contact_incomplete,
+    aws_account_security_contact_missing,
+    iam_server_certificate_expired,
+    iam_cloudshell_access,
     access_key_multiple_active,
     access_key_no_rotation,
     cloudtrail_no_kms,
@@ -127,6 +132,10 @@ ALL_CHECKS = [
     guardduty_open_findings,
     # Access Analyzer
     access_analyzer_not_enabled,
+    aws_account_contact_incomplete,
+    aws_account_security_contact_missing,
+    iam_server_certificate_expired,
+    iam_cloudshell_access,
     # AWS Config
     config_not_enabled,
     aws_config_rules_non_compliant,
@@ -161,6 +170,7 @@ ALL_CHECKS = [
     gitlab_repo_no_protection,
     gitlab_repo_self_merge,
     gitlab_repo_insufficient_reviews,
+    gitlab_repo_no_codeowners,
     # AWS gap checks (session 18)
     s3_no_default_encryption,
     s3_no_mfa_delete,

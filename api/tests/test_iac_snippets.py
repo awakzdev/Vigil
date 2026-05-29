@@ -1,8 +1,17 @@
+from unittest.mock import MagicMock
+
 from app.services.iac_snippets import build_iac_remediation
 from app.services.terraform_iac import preview_terraform_patch
 from app.models import Finding
 import uuid
 from datetime import datetime, timezone
+
+
+def _db_no_github():
+    db = MagicMock()
+    db.scalar.return_value = None
+    db.scalars.return_value.all.return_value = []
+    return db
 
 
 def _finding(**kwargs) -> Finding:
@@ -26,7 +35,8 @@ def _finding(**kwargs) -> Finding:
 
 
 def test_s3_public_access_snippet():
-    out = build_iac_remediation(_finding())
+    f = _finding()
+    out = build_iac_remediation(_db_no_github(), f, f.org_id)
     assert out["iac_status"] == "iac_snippets"
     assert "aws_s3_bucket_public_access_block" in out["terraform"]
     assert "app-logs-prod" in out["cli"][0]

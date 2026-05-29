@@ -7,6 +7,8 @@ export type ServiceAccessItem = {
   last_used: string | null;
   days_ago: number | null;
   active: boolean;
+  action_tracked?: boolean;
+  service_only_signal?: boolean;
   in_policy?: boolean;
 };
 
@@ -28,6 +30,14 @@ function ExplorerRow({ item }: { item: ServiceAccessItem }) {
     <div className="flex items-center justify-between gap-3 border-b border-zinc-100/80 px-4 py-2 last:border-0">
       <div className="flex min-w-0 items-center gap-2">
         <span className="truncate font-mono text-[12px] text-zinc-800">{item.name}</span>
+        {item.service_only_signal && (
+          <span
+            className="shrink-0 rounded bg-sky-100/90 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-900"
+            title="IAM reported service use without per-action detail"
+          >
+            Service only
+          </span>
+        )}
         {sensitive && (
           <span className="shrink-0 rounded bg-amber-100/90 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-amber-800">
             Sensitive

@@ -8,6 +8,7 @@ from app.services.check_evidence import (
 
 def test_optional_check_is_hygiene():
     assert evidence_class_for_check("github.repo.no_codeowners") == CLASS_HYGIENE
+    assert evidence_class_for_check("gitlab.repo.no_codeowners") == CLASS_HYGIENE
     assert evidence_class_for_check("iam.policy.unattached") == CLASS_HYGIENE
 
 

@@ -55,48 +55,84 @@ function DrawerSection({
   children,
   action,
   className = "",
+  collapsible = false,
+  defaultExpanded = true,
+  expanded: expandedProp,
+  onExpandedChange,
 }: {
   title: string;
   children: ReactNode;
   action?: ReactNode;
   className?: string;
+  collapsible?: boolean;
+  defaultExpanded?: boolean;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
 }) {
+  const [expandedInternal, setExpandedInternal] = useState(defaultExpanded);
+  const expanded = expandedProp ?? expandedInternal;
+  const setExpanded = onExpandedChange ?? setExpandedInternal;
+  const showBody = !collapsible || expanded;
+
   return (
     <div className={`${drawerPanel} ${className}`}>
       <div className={`${drawerSectionHead} flex items-center justify-between gap-2`}>
         <h3 className={drawerSectionTitle}>{title}</h3>
-        {action}
+        <div className="flex shrink-0 items-center gap-2">
+          {action}
+          {collapsible && (
+            <button
+              type="button"
+              onClick={() => setExpanded(!expanded)}
+              className="text-[11px] font-medium text-zinc-500 transition-colors hover:text-zinc-800"
+              aria-expanded={expanded}
+            >
+              {expanded ? "Hide" : "Show"}
+            </button>
+          )}
+        </div>
       </div>
-      {children}
+      {showBody && children}
     </div>
   );
 }
 
-function evidenceFieldIsMono(key: string) {
-  return /arn|_id$|(^|_)id$|key_id|region/i.test(key);
-}
+type RemediationMode = "console" | "cli" | "terraform" | "automation";
+
+const SG_AUTOMATION_ONLY_CHECKS = new Set([
+  "ec2.security_group.unrestricted_ssh",
+  "ec2.security_group.unrestricted_rdp",
+]);
 
 function RemediationModeToggle({
   value,
   onChange,
+  hideTerraform,
 }: {
-  value: "console" | "cli";
-  onChange: (mode: "console" | "cli") => void;
+  value: RemediationMode;
+  onChange: (mode: RemediationMode) => void;
+  hideTerraform?: boolean;
 }) {
+  const modes: { id: RemediationMode; label: string }[] = [
+    { id: "console", label: "Console" },
+    { id: "cli", label: "CLI" },
+    ...(hideTerraform ? [] : [{ id: "terraform" as const, label: "Terraform" }]),
+    { id: "automation", label: "EventBridge" },
+  ];
   return (
-    <div className="inline-flex gap-0.5 rounded-lg bg-zinc-100/80 p-0.5">
-      {(["console", "cli"] as const).map((mode) => (
+    <div className="inline-flex max-w-full flex-wrap gap-0.5 rounded-lg bg-zinc-100/80 p-0.5">
+      {modes.map((mode) => (
         <button
-          key={mode}
+          key={mode.id}
           type="button"
-          onClick={() => onChange(mode)}
-          className={`rounded-md px-3 py-1 text-[11px] font-medium transition-all duration-150 ${
-            value === mode
+          onClick={() => onChange(mode.id)}
+          className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-all duration-150 ${
+            value === mode.id
               ? "bg-white text-zinc-900 shadow-sm ring-1 ring-zinc-900/5"
               : "text-zinc-500 hover:text-zinc-700"
           }`}
         >
-          {mode === "cli" ? "CLI" : "Console"}
+          {mode.label}
         </button>
       ))}
     </div>
@@ -262,56 +298,109 @@ function remediationImpactBadge(severity: string): { label: string; variant: "hi
   return { label: "Lower impact", variant: "muted" };
 }
 
+function frameworkCompact(framework: string): string {
+  if (framework === "soc2") return "SOC2";
+  if (framework === "cis_aws_l1") return "CIS AWS";
+  if (framework === "iso27001") return "ISO 27001";
+  return frameworkLabel(framework);
+}
+
+function OverviewSummaryRow({
+  label,
+  children,
+  valueClassName = "text-zinc-800",
+}: {
+  label: string;
+  children: ReactNode;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="grid grid-cols-[7.5rem_1fr] gap-x-4 gap-y-0.5 px-4 py-2.5 sm:grid-cols-[8.5rem_1fr]">
+      <dt className="text-[11px] font-medium text-zinc-500">{label}</dt>
+      <dd className={`text-[13px] leading-snug ${valueClassName}`}>{children}</dd>
+    </div>
+  );
+}
+
 function OverviewTabContent({
   impact,
   risk,
   fix,
-  affected,
   finding,
   hasException,
   documentation,
+  accountId,
 }: {
   impact: string;
   risk: string;
   fix: string;
-  affected?: string | null;
   finding: Finding;
   hasException: boolean;
   documentation?: ReturnType<typeof documentationForCheck>;
+  accountId?: string | null;
 }) {
-  const context = documentation?.overview?.context ?? impact;
-  const exposure = documentation?.overview?.exposure ?? risk;
-  const nextStep = documentation?.overview?.fix ?? fix;
+  const riskLine = documentation?.overview?.context ?? impact;
+  const businessImpact = documentation?.overview?.exposure ?? risk;
+  const recommendedAction = documentation?.overview?.fix ?? fix;
+  const severityLabel = finding.severity.charAt(0).toUpperCase() + finding.severity.slice(1);
+  const severityClass =
+    finding.severity === "critical" || finding.severity === "high"
+      ? "font-semibold text-red-800"
+      : finding.severity === "medium"
+        ? "font-semibold text-amber-800"
+        : "font-semibold text-zinc-800";
+
+  const { data: controlBundle, isLoading: controlsLoading } = useQuery({
+    queryKey: ["controls-by-check", finding.check_id],
+    queryFn: () =>
+      api<CheckControlBundle>(`/v1/controls/by-check/${encodeURIComponent(finding.check_id)}`),
+  });
+
+  const mappings = controlBundle?.controls ?? [];
 
   return (
-    <div className="space-y-2.5">
-      <DrawerFlowLabel>Security narrative</DrawerFlowLabel>
-      <div className="space-y-2">
-        <SemanticNarrativeBlock tag="Context" tone="caution" title="Why this matters">
-          {context}
-        </SemanticNarrativeBlock>
-        <SemanticNarrativeBlock tag="Exposure" tone="neutral" title="Risk exposure">
-          {exposure}
-        </SemanticNarrativeBlock>
-        <SemanticNarrativeBlock tag="Next step" tone="action" title="Recommended action">
-          {nextStep}
-        </SemanticNarrativeBlock>
-        {affected && (
-          <SemanticNarrativeBlock tag="Scope" tone="neutral" title="Affected resources">
-            {affected}
-          </SemanticNarrativeBlock>
-        )}
+    <div className="space-y-3">
+      <div className={`${drawerPanel} overflow-hidden shadow-sm shadow-zinc-900/[0.03]`}>
+        <div className="border-b border-zinc-100 bg-white px-4 py-3">
+          <h3 className="text-sm font-semibold text-zinc-900">Security summary</h3>
+        </div>
+        <dl className="divide-y divide-zinc-100/90 bg-white">
+          <OverviewSummaryRow label="Severity" valueClassName={severityClass}>
+            {severityLabel}
+          </OverviewSummaryRow>
+          <OverviewSummaryRow label="Risk">{riskLine}</OverviewSummaryRow>
+          <OverviewSummaryRow label="Business impact">{businessImpact}</OverviewSummaryRow>
+          <OverviewSummaryRow label="Compliance mappings">
+            {controlsLoading ? (
+              <span className="text-zinc-500">Loading…</span>
+            ) : mappings.length === 0 ? (
+              <span className="text-zinc-500">Not mapped</span>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {mappings.map((c) => (
+                  <Link
+                    key={`${c.framework}:${c.control_id}`}
+                    to={compliancePageHref(c, accountId)}
+                    className="inline-flex items-center rounded-md bg-zinc-100 px-2 py-0.5 text-[12px] font-medium text-zinc-800 ring-1 ring-zinc-200/80 transition hover:bg-indigo-50 hover:text-indigo-900 hover:ring-indigo-200/80"
+                  >
+                    {frameworkCompact(c.framework)} {c.control_id}
+                  </Link>
+                ))}
+              </div>
+            )}
+          </OverviewSummaryRow>
+          <OverviewSummaryRow label="Recommended action" valueClassName="font-medium text-zinc-900">
+            {recommendedAction}
+          </OverviewSummaryRow>
+        </dl>
       </div>
 
       {hasException && (
-        <>
-          <DrawerFlowLabel>Exception</DrawerFlowLabel>
-          <ExceptionFlowPanel
-            reason={finding.exception_reason}
-            approvedBy={finding.exception_approved_by}
-            expiresAt={finding.exception_expires_at}
-          />
-        </>
+        <ExceptionFlowPanel
+          reason={finding.exception_reason}
+          approvedBy={finding.exception_approved_by}
+          expiresAt={finding.exception_expires_at}
+        />
       )}
     </div>
   );
@@ -1279,13 +1368,22 @@ aws iam get-policy-version --policy-arn <arn> --version-id <v>`,
     risk: "Any principal that can assume this role has unrestricted account control.",
   },
   "github.repo.no_codeowners": {
-    why: "Optional hygiene: no CODEOWNERS file in standard repo paths. SOC 2 change management typically relies on branch protection and required reviews, not CODEOWNERS.",
+    why: "Optional security check: no CODEOWNERS file in standard Git repo paths. SOC 2 change management typically relies on branch protection and required reviews, not CODEOWNERS.",
     console: [
       "Add CODEOWNERS under `/`, `.github/`, or `docs/` if your policy requires code-owner reviews",
-      "Or disable this check under Settings → optional checks",
+      "Or disable under Detection coverage → Optional security checks (git.repo.no_codeowners)",
     ],
     cli: `# Create .github/CODEOWNERS with team ownership lines`,
-    risk: "Without CODEOWNERS, GitHub code-owner review rules cannot be enforced for this repository.",
+    risk: "Without CODEOWNERS, code-owner review rules cannot be enforced for this repository.",
+  },
+  "gitlab.repo.no_codeowners": {
+    why: "Optional security check: no CODEOWNERS file in standard Git project paths. SOC 2 change management typically relies on branch protection and required merge request approvals, not CODEOWNERS.",
+    console: [
+      "Add CODEOWNERS at repo root, `.gitlab/CODEOWNERS`, or `docs/CODEOWNERS` if your policy requires code-owner approvals",
+      "Or disable under Detection coverage → Optional security checks (git.repo.no_codeowners)",
+    ],
+    cli: `# Create CODEOWNERS or .gitlab/CODEOWNERS with team ownership lines`,
+    risk: "Without CODEOWNERS, code-owner approval rules cannot be enforced for this project.",
   },
   "aws.securityhub.not_enabled": {
     why: "Security Hub centralizes AWS security findings and posture checks across regions. Without it, security signals stay fragmented across services and are harder to evidence consistently.",
@@ -1566,21 +1664,6 @@ aws iam list-role-policies --role-name <role-name>`,
   };
 }
 
-function ServicePills({ services }: { services: string[] }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {services.map((s) => (
-        <span
-          key={s}
-          className="inline-flex items-center rounded border border-amber-200 bg-amber-50 px-2 py-0.5 font-mono text-xs font-medium text-amber-700"
-        >
-          {s}
-        </span>
-      ))}
-    </div>
-  );
-}
-
 const SERVICE_PILL_COLLAPSED_LIMIT = 24;
 
 function ServiceListExpandToggle({
@@ -1602,27 +1685,6 @@ function ServiceListExpandToggle({
     >
       {expanded ? "Show less" : `Show all ${total} services (${hiddenCount} more)`}
     </button>
-  );
-}
-
-function CollapsibleServicePills({ services }: { services: string[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const collapsible = services.length > SERVICE_PILL_COLLAPSED_LIMIT;
-  const visible = collapsible && !expanded ? services.slice(0, SERVICE_PILL_COLLAPSED_LIMIT) : services;
-  const hiddenCount = services.length - SERVICE_PILL_COLLAPSED_LIMIT;
-
-  return (
-    <div>
-      {collapsible && (
-        <ServiceListExpandToggle
-          expanded={expanded}
-          total={services.length}
-          hiddenCount={hiddenCount}
-          onToggle={() => setExpanded((v) => !v)}
-        />
-      )}
-      <ServicePills services={visible} />
-    </div>
   );
 }
 
@@ -1683,118 +1745,6 @@ function generatePolicyIntro(cloudTrailLogging: boolean) {
   return `${action} ${resource}`;
 }
 
-function ObjectListTable({ items }: { items: Record<string, unknown>[] }) {
-  if (!items.length) return null;
-  const cols = Object.keys(items[0]);
-  function renderCell(column: string, value: unknown) {
-    if (value == null) return "—";
-    const text = String(value);
-    if (column === "dangerous_actions" || column === "actions") {
-      const actions = text.split(",").map((part) => part.trim()).filter(Boolean);
-      if (actions.length > 0) {
-        return (
-          <div className="max-w-[26rem] space-y-1">
-            {actions.map((action) => (
-              <div key={action} className="font-mono text-xs leading-snug text-zinc-700 break-all">
-                {action}
-              </div>
-            ))}
-          </div>
-        );
-      }
-    }
-    return <span className="whitespace-pre-wrap break-words">{text}</span>;
-  }
-  return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="bg-zinc-50 border-b border-zinc-200">
-            {cols.map((c) => (
-              <th key={c} className="px-3 py-2 text-left font-semibold text-zinc-500 whitespace-nowrap">
-                {c.replace(/_/g, " ")}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-zinc-100">
-          {items.map((row, i) => (
-            <tr key={i} className="bg-white">
-              {cols.map((c) => (
-                <td key={c} className="max-w-[300px] px-3 py-2 font-mono leading-relaxed text-zinc-800 align-middle">
-                  {renderCell(c, row[c])}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function PolicyEvidenceList({ items }: { items: Record<string, unknown>[] }) {
-  function serviceLabel(raw: string) {
-    const normalized = raw.toLowerCase();
-    if (normalized === "iam") return "IAM";
-    if (normalized === "ec2") return "EC2";
-    if (normalized === "shield") return "Shield";
-    if (normalized === "elasticloadbalancing") return "ELB";
-    if (normalized === "wafv2") return "WAFv2";
-    if (normalized === "waf-regional") return "WAF Regional";
-    return raw.length <= 3 ? raw.toUpperCase() : raw.charAt(0).toUpperCase() + raw.slice(1);
-  }
-
-  return (
-    <div className="space-y-3">
-      {items.map((row, i) => {
-        const policyName = String(row.policy ?? row.policy_name ?? "Unnamed policy");
-        const policyType = String(row.type ?? row.policy_type ?? "policy");
-        const raw = String(row.dangerous_actions ?? row.actions ?? "");
-        const actions = raw.split(",").map((a) => a.trim()).filter(Boolean);
-        const serviceCounts = new Map<string, number>();
-        actions.forEach((action) => {
-          const service = action.split(":")[0] || "other";
-          serviceCounts.set(service, (serviceCounts.get(service) ?? 0) + 1);
-        });
-        return (
-          <details key={`${policyName}-${i}`} className="group overflow-hidden rounded-lg border border-zinc-200 bg-white open:bg-zinc-50/40">
-            <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3.5">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-semibold leading-5 text-zinc-900">{policyName}</div>
-                <div className="mt-1 flex flex-wrap items-center gap-2 text-xs leading-5 text-zinc-500">
-                  <span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 uppercase tracking-wide">{policyType.replace("_", " ")}</span>
-                  <span>{actions.length} dangerous action{actions.length === 1 ? "" : "s"}</span>
-                </div>
-              </div>
-              <svg className="h-4 w-4 flex-shrink-0 text-zinc-400 transition group-open:rotate-180" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
-              </svg>
-            </summary>
-            <div className="border-t border-zinc-200 px-4 py-4">
-              <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                Grouped dangerous actions
-              </div>
-              <div className="mb-3.5 flex flex-wrap gap-1.5">
-                {Array.from(serviceCounts.entries()).map(([service, count]) => (
-                  <span key={service} className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-0.5 text-xs font-medium text-amber-700">
-                    {serviceLabel(service)} · {count} action{count === 1 ? "" : "s"}
-                  </span>
-                ))}
-              </div>
-              <div className="max-h-40 space-y-1.5 overflow-auto rounded-md border border-zinc-200 bg-zinc-50/70 p-2.5">
-                {actions.map((action) => (
-                  <div key={action} className="font-mono text-xs leading-5 text-zinc-500 break-all">{action}</div>
-                ))}
-              </div>
-            </div>
-          </details>
-        );
-      })}
-    </div>
-  );
-}
-
 function KeyActivityCard({ keyData }: { keyData: { key_id: string; last_used: string | null; days_ago: number | null; last_used_service: string | null; last_used_region: string | null; active: boolean } }) {
   const service = keyData.last_used_service ?? "unknown service";
   const region = keyData.last_used_region ?? "unknown region";
@@ -1818,38 +1768,6 @@ function KeyActivityCard({ keyData }: { keyData: { key_id: string; last_used: st
     </div>
   );
 }
-
-function evidenceFieldLabel(key: string) {
-  return key.replace(/_/g, " ");
-}
-
-const EVIDENCE_LABELS: Record<string, string> = {
-  disabled_regions: "Disabled regions",
-  enabled_regions: "Enabled regions",
-  region_count: "Regions",
-  inline_policies_with_wildcard: "Inline policies",
-  attached_policies_with_wildcard: "Attached policies",
-  sources: "Sources",
-  account_id: "Account ID",
-  bucket_name: "Bucket",
-  trail_name: "Trail",
-  home_region: "Home region",
-  key_id: "Key ID",
-  user_name: "User",
-  group_id: "Security group",
-  group_name: "Group name",
-  vpc_id: "VPC",
-  db_instance_id: "DB instance",
-  volume_id: "Volume",
-  role_arn: "Role ARN",
-  trust_policy: "Trust policy",
-  external_account_ids: "External account IDs",
-  unused_write_actions: "Unused write actions",
-  block_public_acls: "Block public ACLs",
-  ignore_public_acls: "Ignore public ACLs",
-  block_public_policy: "Block public policy",
-  restrict_public_buckets: "Restrict public buckets",
-};
 
 const AWS_REGION_LABELS: Record<string, string> = {
   "af-south-1": "Cape Town",
@@ -1884,64 +1802,6 @@ const AWS_REGION_LABELS: Record<string, string> = {
   "us-west-2": "Oregon",
 };
 
-function evidenceLabel(key: string, evidence: Record<string, unknown>) {
-  if (key === "disabled_regions" && Array.isArray(evidence.disabled_regions)) {
-    return `Disabled regions (${evidence.disabled_regions.length})`;
-  }
-  const base = EVIDENCE_LABELS[key] ?? evidenceFieldLabel(key);
-  return base.charAt(0).toUpperCase() + base.slice(1);
-}
-
-function isIsoDateString(value: string) {
-  return /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value);
-}
-
-function formatEvidenceDate(value: string) {
-  if (!isIsoDateString(value)) return value;
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  const datePart = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" }).format(d);
-  const timePart = new Intl.DateTimeFormat("en-US", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "UTC" }).format(d);
-  return `${datePart} at ${timePart} UTC`;
-}
-
-function evidenceValueIsRich(key: string, value: unknown) {
-  return Array.isArray(value) && value.length > 0;
-}
-
-function CollapsibleActionGrid({ actions }: { actions: string[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const previewLimit = 8;
-  const sorted = [...actions].sort((a, b) => a.localeCompare(b));
-  const hidden = sorted.length - previewLimit;
-  const visible = expanded || hidden <= 0 ? sorted : sorted.slice(0, previewLimit);
-
-  return (
-    <div className="space-y-2">
-      <div className="grid grid-cols-2 gap-2">
-        {visible.map((action) => (
-          <div
-            key={action}
-            title={action}
-            className="min-w-0 rounded-lg border border-zinc-200 bg-zinc-50/80 px-2.5 py-2"
-          >
-            <span className="block truncate font-mono text-[11px] font-medium text-zinc-800">{action}</span>
-          </div>
-        ))}
-      </div>
-      {hidden > 0 && (
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          className="text-xs font-medium text-indigo-600 hover:text-indigo-700"
-        >
-          {expanded ? "Show fewer actions" : `Show all ${sorted.length} actions`}
-        </button>
-      )}
-    </div>
-  );
-}
-
 function RegionPills({ regions }: { regions: string[] }) {
   const [expanded, setExpanded] = useState(false);
   const previewLimit = 8;
@@ -1975,132 +1835,6 @@ function RegionPills({ regions }: { regions: string[] }) {
           {expanded ? "Show fewer regions" : `Show all ${sorted.length} regions`}
         </button>
       )}
-    </div>
-  );
-}
-
-function StringPills({ items, tone = "neutral" }: { items: string[]; tone?: "neutral" | "warn" }) {
-  const cls =
-    tone === "warn"
-      ? "border-amber-200 bg-amber-50 text-amber-900"
-      : "border-zinc-200 bg-zinc-50 text-zinc-700";
-  return (
-    <div className="flex flex-wrap gap-2">
-      {items.map((item) => (
-        <span key={item} className={`inline-flex max-w-full items-center rounded-lg border px-2.5 py-1.5 text-xs font-medium leading-snug ${cls}`}>
-          <span className="break-words">{item}</span>
-        </span>
-      ))}
-    </div>
-  );
-}
-
-function EvidenceValue({ fieldKey, value }: { fieldKey: string; value: unknown }) {
-  if (value === null || value === undefined) {
-    const isDateField = fieldKey.includes("last") || fieldKey.includes("date") || fieldKey.includes("used") || fieldKey.includes("inactive");
-    return <span className="text-[13px] leading-relaxed text-zinc-400">{isDateField ? "Never" : "None"}</span>;
-  }
-
-  if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-[13px] leading-relaxed text-zinc-400">None</span>;
-    if (fieldKey.includes("region")) return <RegionPills regions={value as string[]} />;
-    if (fieldKey === "unused_write_actions") return <CollapsibleActionGrid actions={value as string[]} />;
-    if (typeof value[0] === "string") {
-      const tone = fieldKey.includes("wildcard") || fieldKey === "sources" ? "warn" : "neutral";
-      return <StringPills items={value as string[]} tone={tone} />;
-    }
-  }
-
-  if (typeof value === "boolean") {
-    return (
-      <span className={`text-[13px] font-medium leading-relaxed ${value ? "text-emerald-700" : "text-red-600"}`}>
-        {value ? "Yes" : "No"}
-      </span>
-    );
-  }
-
-  if (typeof value === "object") {
-    return (
-      <pre className="max-h-56 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50/90 p-2.5 font-mono text-[11px] leading-relaxed text-zinc-800">
-        {JSON.stringify(value, null, 2)}
-      </pre>
-    );
-  }
-
-  const text = formatEvidenceDate(String(value));
-  return <span className="break-all">{text}</span>;
-}
-
-function evidenceSectionTitle(key: string) {
-  const label = evidenceFieldLabel(key);
-  return label.charAt(0).toUpperCase() + label.slice(1);
-}
-
-function EvidenceSection({
-  evidence,
-  checkId,
-  cloudTrailLogging,
-}: {
-  evidence: Record<string, unknown>;
-  checkId: string;
-  cloudTrailLogging: boolean;
-}) {
-  const skip = new Set(["removable_statements", "unused_services", "role_arn"]);
-  if (checkId === "iam.role.unused_services_90d") {
-    skip.add("threshold_days");
-    skip.add("total_granted_services");
-  }
-  const entries = Object.entries(evidence).filter(([k]) => !skip.has(k));
-  const scalars = entries
-    .filter(([, v]) => !Array.isArray(v) || typeof v[0] !== "object" || v[0] === null)
-    .filter(([k]) => !(k === "region_count" && Array.isArray(evidence.disabled_regions)));
-  const objectLists = entries.filter(([, v]) => Array.isArray(v) && typeof v[0] === "object" && v[0] !== null) as [string, Record<string, unknown>[]][];
-  const unusedServices = evidence.unused_services as string[] | undefined;
-  const showUnusedServices =
-    checkId !== "iam.role.unused_services_90d" && unusedServices && unusedServices.length > 0;
-
-  return (
-    <div className={drawerBodyGap}>
-      {showUnusedServices && (
-        <DrawerSection title="Unused services">
-          <p className="border-b border-zinc-100 px-4 py-2 text-[11px] text-zinc-500">
-            {unusedServices!.length} of {(evidence.total_granted_services as number) ?? "?"} granted
-          </p>
-          <div className={drawerSectionBody}>
-            <CollapsibleServicePills services={unusedServices!} />
-          </div>
-        </DrawerSection>
-      )}
-      {scalars.length > 0 && (
-        <DrawerSection title="Resource details">
-          <ResourceGroup className="border-t-0">
-            {scalars.map(([k, v]) => {
-              const label = evidenceLabel(k, evidence);
-              const rich = evidenceValueIsRich(k, v);
-              if (rich) {
-                return (
-                  <div key={k} className="py-2 first:pt-0 last:pb-0">
-                    <p className={`${drawerFieldLabelBlock} mb-2`}>{label}</p>
-                    <EvidenceValue fieldKey={k} value={v} />
-                  </div>
-                );
-              }
-              return (
-                <ResourceFieldRow key={k} label={label} mono={evidenceFieldIsMono(k)}>
-                  <EvidenceValue fieldKey={k} value={v} />
-                </ResourceFieldRow>
-              );
-            })}
-          </ResourceGroup>
-        </DrawerSection>
-      )}
-      {objectLists.map(([k, items]) => (
-        <DrawerSection key={k} title={evidenceSectionTitle(k)}>
-          <div className="px-3 py-2.5">
-            {k === "policies" ? <PolicyEvidenceList items={items} /> : <ObjectListTable items={items} />}
-          </div>
-        </DrawerSection>
-      ))}
     </div>
   );
 }
@@ -3339,6 +3073,44 @@ function compliancePageHref(ctrl: MappedControl, accountId?: string | null) {
   return `/controls?${params}`;
 }
 
+function ExternalReferenceLink({
+  href,
+  children,
+  className = "text-[12px] font-medium text-zinc-600 hover:text-zinc-900",
+  title,
+}: {
+  href: string;
+  children: React.ReactNode;
+  className?: string;
+  title?: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={title}
+      className={`inline-flex items-center gap-1 ${className}`}
+    >
+      {children}
+      <svg
+        className="h-3 w-3 shrink-0 opacity-70"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          d="M13.5 6H5.25A2.25 2.25 0 003 8.25v10.5A2.25 2.25 0 005.25 21h10.5A2.25 2.25 0 0018 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"
+        />
+      </svg>
+    </a>
+  );
+}
+
 function ComplianceTabContent({
   checkId,
   accountId,
@@ -3370,9 +3142,12 @@ function ComplianceTabContent({
     );
   }
 
+  const checkDoc = documentationForCheck(checkId);
+  const evidenceGuidance = checkDoc?.compliance?.evidenceGuidance ?? null;
+  const auditNarrative = checkDoc?.compliance?.auditNarrative ?? null;
+
   return (
     <div className="space-y-2.5">
-      <DrawerFlowLabel>Compliance &amp; benchmarks</DrawerFlowLabel>
       <div className={`${drawerPanel} px-4 py-3`}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-800">
@@ -3382,10 +3157,10 @@ function ComplianceTabContent({
         </div>
         <h3 className="mt-2 text-[13px] font-semibold text-zinc-900">{primary.title}</h3>
         <p className="mt-2 text-[12px] leading-relaxed text-zinc-600">{primary.description}</p>
-        {primary.guidance && (
+        {evidenceGuidance && (
           <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
             <span className="font-medium text-zinc-600">Evidence guidance: </span>
-            {primary.guidance}
+            {evidenceGuidance}
           </p>
         )}
         <div className="mt-3 flex flex-col gap-2 border-t border-zinc-100 pt-3">
@@ -3395,19 +3170,14 @@ function ComplianceTabContent({
           >
             View on Compliance page →
           </Link>
-          <a
-            href={primary.reference_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[12px] font-medium text-zinc-600 hover:text-zinc-900"
-          >
+          <ExternalReferenceLink href={primary.reference_url} title={primary.reference_label}>
             {primary.reference_label}
-          </a>
+          </ExternalReferenceLink>
         </div>
       </div>
-      {primary.narrative && (
+      {auditNarrative && (
         <SemanticNarrativeBlock tag="Audit" tone="neutral" title="Audit narrative (Vigil)">
-          {primary.narrative}
+          {auditNarrative}
         </SemanticNarrativeBlock>
       )}
       {alternates.length > 0 && (
@@ -3415,14 +3185,18 @@ function ComplianceTabContent({
           <p className="text-[11px] font-medium text-zinc-500">Also mapped to</p>
           <ul className="mt-2 space-y-1.5">
             {alternates.map((c) => (
-              <li key={`${c.framework}:${c.control_id}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
-                <Link to={compliancePageHref(c, accountId)} className="font-medium text-indigo-600 hover:text-indigo-800">
+              <li
+                key={`${c.framework}:${c.control_id}`}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]"
+              >
+                <Link
+                  to={compliancePageHref(c, accountId)}
+                  className="font-medium text-indigo-600 hover:text-indigo-800"
+                >
                   {frameworkLabel(c.framework)} {c.control_id}
                 </Link>
-                <a
+                <ExternalReferenceLink
                   href={c.reference_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
                   className="text-zinc-500 hover:text-zinc-800"
                   title={
                     c.framework === "iso27001"
@@ -3431,7 +3205,7 @@ function ComplianceTabContent({
                   }
                 >
                   Official doc
-                </a>
+                </ExternalReferenceLink>
               </li>
             ))}
           </ul>
@@ -3440,7 +3214,56 @@ function ComplianceTabContent({
     </div>
   );
 }
-type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; used_actions?: string[]; granularity?: "action" | "service"; statements_removed?: number; statements_modified?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
+type GeneratedPolicy = {
+  has_inline_policies: boolean;
+  unused_services: string[];
+  used_services: string[];
+  used_actions?: string[];
+  granularity?: "action" | "service";
+  statements_removed?: number;
+  statements_modified?: number;
+  original_policies?: Record<string, unknown>;
+  cleaned_policies?: Record<string, unknown>;
+  note?: string;
+  coverage?: { actions: boolean; resources: boolean };
+  source_label?: string;
+  access_analyzer_enabled?: boolean;
+  advanced_available?: boolean;
+  advanced_note?: string | null;
+  policy_warnings?: string[];
+  used_services_service_only?: string[];
+};
+
+function PolicyCoverageMeta({ data }: { data: GeneratedPolicy }) {
+  const cov = data.coverage ?? { actions: (data.used_actions?.length ?? 0) > 0, resources: false };
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2.5 text-[11px] leading-relaxed text-zinc-700">
+      <p className="font-semibold text-zinc-800">Coverage</p>
+      <p className="mt-1">
+        <span className={cov.actions ? "text-emerald-800" : "text-amber-800"}>
+          {cov.actions ? "✓" : "✗"} Actions
+        </span>
+        <span className="mx-2 text-zinc-300">·</span>
+        <span className={cov.resources ? "text-emerald-800" : "text-zinc-500"}>
+          {cov.resources ? "✓" : "✗"} Resources
+        </span>
+      </p>
+      <p className="mt-0.5 text-zinc-500">Source: {data.source_label ?? "IAM last accessed"}</p>
+      {data.advanced_note && (
+        <p className="mt-2 rounded-md border border-indigo-100 bg-indigo-50/80 px-2 py-1.5 text-indigo-950">
+          {data.advanced_note}
+        </p>
+      )}
+      {(data.policy_warnings?.length ?? 0) > 0 && (
+        <ul className="mt-2 space-y-1 rounded-md border border-amber-200/80 bg-amber-50/80 px-2 py-1.5 text-amber-950">
+          {data.policy_warnings!.map((w) => (
+            <li key={w}>{w}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 type GeneratedS3HttpsPolicy = {
   bucket_name: string;
@@ -3748,10 +3571,15 @@ function GeneratePolicySection({
   cloudTrailLogging: boolean;
 }) {
   const [enabled, setEnabled] = useState(false);
+  const [advanced, setAdvanced] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(true);
   const [view, setView] = useState<"diff" | "cleaned" | "original">("diff");
   const { data, isLoading, error } = useQuery<GeneratedPolicy>({
-    queryKey: ["generated-policy", accountId, finding.resource_arn, finding.last_seen],
-    queryFn: () => api(`/v1/accounts/${accountId}/roles/generated-policy?role_arn=${encodeURIComponent(finding.resource_arn)}`),
+    queryKey: ["generated-policy", accountId, finding.resource_arn, finding.last_seen, advanced],
+    queryFn: () =>
+      api(
+        `/v1/accounts/${accountId}/roles/generated-policy?role_arn=${encodeURIComponent(finding.resource_arn)}&advanced=${advanced}`,
+      ),
     enabled,
     staleTime: 0,
   });
@@ -3759,10 +3587,16 @@ function GeneratePolicySection({
   return (
     <DrawerSection
       title="Suggested policy"
+      collapsible={enabled}
+      expanded={policyOpen}
+      onExpandedChange={setPolicyOpen}
       action={
         !enabled ? (
           <button
-            onClick={() => setEnabled(true)}
+            onClick={() => {
+              setEnabled(true);
+              setPolicyOpen(true);
+            }}
             className="rounded-md border border-zinc-300 bg-white px-2.5 py-0.5 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
           >
             Generate
@@ -3779,8 +3613,18 @@ function GeneratePolicySection({
       {enabled && data && !data.has_inline_policies && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[13px] leading-snug text-amber-900">{data.note ?? "No inline policies found. Permissions come from attached managed policies."}</div>
       )}
+      {enabled && data && <PolicyCoverageMeta data={data} />}
+      {enabled && data?.advanced_available && !advanced && (
+        <button
+          type="button"
+          className="mt-2 text-[11px] font-semibold text-indigo-600 hover:text-indigo-800"
+          onClick={() => setAdvanced(true)}
+        >
+          Generate advanced (Access Analyzer) →
+        </button>
+      )}
       {enabled && data && data.has_inline_policies && data.original_policies && data.cleaned_policies && (
-        <div className="space-y-2.5">
+        <div className="mt-2.5 space-y-2.5">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] text-zinc-600">
               {policyChangeSummary(data)}
@@ -3831,6 +3675,7 @@ function GenerateS3HttpsPolicySection({
   finding: Finding;
 }) {
   const [enabled, setEnabled] = useState(false);
+  const [policyOpen, setPolicyOpen] = useState(true);
   const [view, setView] = useState<"diff" | "merged" | "original">("diff");
   const { data, isLoading, error } = useQuery<GeneratedS3HttpsPolicy>({
     queryKey: ["generated-s3-https-policy", accountId, finding.resource_arn, finding.last_seen],
@@ -3852,10 +3697,16 @@ function GenerateS3HttpsPolicySection({
   return (
     <DrawerSection
       title="Suggested policy"
+      collapsible={enabled}
+      expanded={policyOpen}
+      onExpandedChange={setPolicyOpen}
       action={
         !enabled ? (
           <button
-            onClick={() => setEnabled(true)}
+            onClick={() => {
+              setEnabled(true);
+              setPolicyOpen(true);
+            }}
             className="rounded-md border border-zinc-300 bg-white px-2.5 py-0.5 text-[11px] font-medium text-zinc-700 transition-colors hover:bg-zinc-50"
           >
             Generate
@@ -4132,13 +3983,14 @@ export function FindingDrawer({
   onSelectRelated?: (f: Finding) => void;
   accountId: string | null;
   onClose: () => void;
-  onAction: (id: string, action: "recheck" | "resolve") => void;
+  onAction: (id: string, action: "recheck" | "reopen") => void;
   resolved?: boolean;
   verifying?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("overview");
-  const [remTab, setRemTab] = useState<"console" | "cli">("console");
+  const [remTab, setRemTab] = useState<RemediationMode>("console");
   const [countdown, setCountdown] = useState(5);
+  const prevFindingId = useRef<string | null>(null);
   const prevCheckId = useRef<string | null>(null);
 
   const { data: accountMeta } = useQuery({
@@ -4152,19 +4004,28 @@ export function FindingDrawer({
 
   useEffect(() => {
     if (!finding) {
+      prevFindingId.current = null;
       prevCheckId.current = null;
       return;
     }
-    if (prevCheckId.current !== null && prevCheckId.current !== finding.check_id) {
+    const openedFresh = prevFindingId.current === null;
+    const differentCheck =
+      prevCheckId.current !== null && prevCheckId.current !== finding.check_id;
+    if (openedFresh || differentCheck) {
       setTab("overview");
       setRemTab("console");
     }
+    prevFindingId.current = finding.id;
     prevCheckId.current = finding.check_id;
   }, [finding?.id, finding?.check_id]);
 
+  useEffect(() => {
+    if (finding && SG_AUTOMATION_ONLY_CHECKS.has(finding.check_id) && remTab === "terraform") {
+      setRemTab("automation");
+    }
+  }, [finding?.check_id, finding?.id, remTab]);
+
   const multiResource = (relatedFindings?.length ?? 0) > 1;
-  const hasEvidence = !!finding && Object.keys(finding.evidence).length > 0;
-  const showResources = multiResource || hasEvidence;
   const showBlastRadius = !!finding && BLAST_RADIUS_CHECKS.has(finding.check_id) && !!accountId;
 
   useEffect(() => {
@@ -4173,11 +4034,11 @@ export function FindingDrawer({
       "overview",
       "compliance",
       "remediation",
-      ...(showResources ? (["resources"] as Tab[]) : []),
+      "resources",
       ...(showBlastRadius ? (["whatif"] as Tab[]) : []),
     ]);
     if (!available.has(tab)) setTab("overview");
-  }, [finding?.id, showResources, showBlastRadius]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [finding?.id, showBlastRadius]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!resolved) { setCountdown(5); return; }
@@ -4195,11 +4056,6 @@ export function FindingDrawer({
     fallbackRemediationFor(finding.check_id);
   const ops = remediationSummaryFor(finding.check_id);
   const checkDoc = documentationForCheck(finding.check_id);
-  const affectedLabel = multiResource
-    ? relatedFindings
-      ? `${relatedFindings.length} resources`
-      : null
-    : resourceDisplayName(finding);
   const isIdentityCheck = finding.check_id.startsWith("github.") || finding.check_id.startsWith("gitlab.");
   const headerBadge = sevHeaderBadge[finding.severity] ?? sevHeaderBadge.low;
   const wash = sevWash[finding.severity] ?? sevWash.low;
@@ -4231,7 +4087,7 @@ export function FindingDrawer({
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
-    ...(showResources ? [{ id: "resources" as Tab, label: "Resources" }] : []),
+    { id: "resources", label: "Resources" },
     { id: "compliance", label: "Compliance" },
     { id: "remediation", label: "Remediation" },
     ...(showBlastRadius ? [{ id: "whatif" as Tab, label: "What If" }] : []),
@@ -4246,15 +4102,22 @@ export function FindingDrawer({
       <button onClick={onClose} className="absolute right-4 top-4 rounded-md p-1 text-zinc-400 transition hover:bg-white/70 hover:text-zinc-600"><svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
       <div className="flex items-center gap-2 pr-10"><span className="text-[11px] font-medium text-zinc-600">{category}</span><span className="text-zinc-300">·</span><span className={`inline-flex items-center rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide ${headerBadge}`}>{finding.severity}</span></div>
       <h2 className="mt-1.5 pr-8 text-base font-semibold leading-snug text-zinc-900">{checkLabels[finding.check_id] ?? finding.title}</h2>
-      {!multiResource && (
-        <div className="mt-2.5 rounded-lg border border-black/[0.07] bg-white/70 px-3 py-2">
-          <div className={`${drawerFieldLabelBlock} mb-0.5`}>Resource</div>
-          <div className="group relative">
-            <p className="truncate font-mono text-xs text-zinc-700">{resourceDisplayName(finding)}</p>
-            <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden max-w-xs rounded-lg border border-zinc-200 bg-white px-3 py-2 shadow-lg group-hover:block"><p className="break-all font-mono text-xs text-zinc-700 leading-relaxed">{finding.resource_arn}</p></div>
+      <div className="mt-2.5 rounded-lg border border-black/[0.07] bg-white/70 px-3 py-2">
+        <div className="mb-0.5 flex items-baseline justify-between gap-2">
+          <div className={drawerFieldLabelBlock}>Resource</div>
+          {multiResource && relatedFindings && (
+            <span className="shrink-0 text-[10px] tabular-nums text-zinc-500">
+              {(relatedFindings.findIndex((f) => f.id === finding.id) + 1) || 1} of {relatedFindings.length}
+            </span>
+          )}
+        </div>
+        <div className="group relative">
+          <p className="truncate font-mono text-xs text-zinc-700">{resourceDisplayName(finding)}</p>
+          <div className="pointer-events-none absolute bottom-full left-0 z-50 mb-2 hidden max-w-xs rounded-lg border border-zinc-200 bg-white px-3 py-2 shadow-lg group-hover:block">
+            <p className="break-all font-mono text-xs leading-relaxed text-zinc-700">{finding.resource_arn}</p>
           </div>
         </div>
-      )}
+      </div>
       {/* Segmented tab control — w-fit keeps track background from stretching full width */}
       <div className="mt-3">
         <div className="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-lg bg-zinc-900/[0.06] p-0.5">
@@ -4283,14 +4146,14 @@ export function FindingDrawer({
           impact={ops.impact}
           risk={ops.risk}
           fix={ops.fix}
-          affected={affectedLabel}
           finding={finding}
           hasException={hasException}
           documentation={checkDoc}
+          accountId={accountId}
         />
       )}
-      {tab === "resources" && showResources && (
-        <div className={drawerBodyGap}>
+      {tab === "resources" && (
+        <div className="space-y-2.5">
           {multiResource && relatedFindings && onSelectRelated && (
             <AffectedResourcesPanel
               findings={relatedFindings}
@@ -4300,13 +4163,6 @@ export function FindingDrawer({
             />
           )}
           <SelectedResourceInspector finding={finding} attachedToList={!!multiResource} />
-          {hasEvidence && finding.check_id !== "iam.role.unused_services_90d" && (
-            <EvidenceSection
-              evidence={finding.evidence}
-              checkId={finding.check_id}
-              cloudTrailLogging={cloudTrailLogging}
-            />
-          )}
         </div>
       )}
       {tab === "compliance" && (
@@ -4314,7 +4170,6 @@ export function FindingDrawer({
       )}
       {tab === "remediation" && (
         <div className="space-y-2.5">
-          <DrawerFlowLabel>Remediation</DrawerFlowLabel>
           {showPolicyGen && (
             <GeneratePolicySection
               accountId={accountId!}
@@ -4325,30 +4180,18 @@ export function FindingDrawer({
           {finding.check_id === "s3.bucket.no_https_policy" && accountId && (
             <GenerateS3HttpsPolicySection accountId={accountId} finding={finding} />
           )}
-          <IaCRemediationSection
-            findingId={finding.id}
-            checkId={finding.check_id}
-            bucketName={
-              typeof finding.evidence?.bucket_name === "string"
-                ? finding.evidence.bucket_name
-                : undefined
-            }
-          />
           <div className={`${drawerPanel} overflow-hidden shadow-sm shadow-zinc-900/[0.03]`}>
-            <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50/90 to-white px-4 py-3 pr-5">
-              <div>
-                <h3 className="text-[13px] font-semibold text-zinc-900">Remediation steps</h3>
-                <p className="mt-0.5 text-[11px] text-zinc-500">Follow in order — then verify the finding cleared</p>
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                <FlowBadge variant={remediationImpactBadge(finding.severity).variant}>
-                  {remediationImpactBadge(finding.severity).label}
-                </FlowBadge>
-                <FlowBadge variant="muted">{isIdentityCheck ? "Manual review" : "Console / CLI"}</FlowBadge>
-              </div>
+            <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 bg-zinc-50/80 px-4 py-2.5">
               {!isIdentityCheck && (
-                <RemediationModeToggle value={remTab} onChange={setRemTab} />
+                <RemediationModeToggle
+                  value={remTab}
+                  onChange={setRemTab}
+                  hideTerraform={SG_AUTOMATION_ONLY_CHECKS.has(finding.check_id)}
+                />
               )}
+              <FlowBadge variant={remediationImpactBadge(finding.severity).variant}>
+                {remediationImpactBadge(finding.severity).label}
+              </FlowBadge>
             </div>
             <div className="px-4 py-3.5 pr-5">
               {(isIdentityCheck || remTab === "console") && (
@@ -4362,11 +4205,25 @@ export function FindingDrawer({
                 </ol>
               )}
               {!isIdentityCheck && remTab === "cli" && <RemediationCliBlock finding={finding} />}
+              {!isIdentityCheck && remTab === "terraform" && (
+                <IaCRemediationSection
+                  embedMode="terraform"
+                  findingId={finding.id}
+                  checkId={finding.check_id}
+                />
+              )}
+              {!isIdentityCheck && remTab === "automation" && (
+                <IaCRemediationSection
+                  embedMode="automation"
+                  findingId={finding.id}
+                  checkId={finding.check_id}
+                  accountId={accountId}
+                />
+              )}
             </div>
           </div>
           <FlowCallout tone="positive" title="Validate after remediation">
-            Use Verify to re-scan this resource. Confirm the finding moves to resolved or no longer appears in your
-            next scan before you close it out.
+            Click Verify to re-run this check. If the issue is fixed, Vigil moves the finding to Resolved automatically.
           </FlowCallout>
         </div>
       )}
@@ -4379,8 +4236,30 @@ export function FindingDrawer({
       )}
     </div>
     <div className="flex gap-2 border-t border-zinc-200/50 bg-white/90 px-6 py-3 shadow-[0_-1px_0_rgba(0,0,0,0.03),0_-6px_16px_-6px_rgba(0,0,0,0.04)] backdrop-blur-sm">
-      <button onClick={() => { onAction(finding.id, "resolve"); onClose(); }} className={drawerFooterPrimary}>Resolve</button>
-      <button disabled={verifying} onClick={() => onAction(finding.id, "recheck")} className={drawerFooterSecondary}>{verifying && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{verifying ? "Verifying…" : "Verify"}</button>
+      {finding.status === "resolved" || finding.status === "ignored" ? (
+        <button
+          type="button"
+          onClick={() => onAction(finding.id, "reopen")}
+          className={drawerFooterPrimary}
+        >
+          Reopen finding
+        </button>
+      ) : (
+        <button
+          type="button"
+          disabled={verifying}
+          onClick={() => onAction(finding.id, "recheck")}
+          className={drawerFooterPrimary}
+        >
+          {verifying && (
+            <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+          {verifying ? "Verifying…" : "Verify"}
+        </button>
+      )}
       <ExceptionButton findingId={finding.id} onDone={onClose} />
     </div>
     {resolved && (

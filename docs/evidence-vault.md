@@ -7,7 +7,7 @@ WORM is **not** a feature inside the Postgres database or the downloadable ZIP a
 ```
 Scan → findings DB → build ZIP (+ checksum + optional signature)
                           ↓
-              [evidence vault — optional, not wired yet]
+              [evidence vault — optional, EVIDENCE_VAULT_ENABLED]
                           ↓
          S3 object (Object Lock) + auditor read reference
 ```
@@ -34,15 +34,23 @@ Scan → findings DB → build ZIP (+ checksum + optional signature)
 | Presigned URL after customer clicks “Share with auditor” | Depends on object | Good **process**; pair with locked object + expiry on the URL, not on the object |
 | Permanent public link | No | Do not use |
 
-**Recommended auditor flow (when implemented):**
+**Recommended auditor flow (product UI still open):**
 
-1. Customer exports pack → Vigil writes **immutable** object to vault S3.
-2. Customer **approves** an auditor (email/domain) in Settings → Vigil mints a **time-limited** read token or presigned URL pointing at that **fixed** `s3_key` / `report_id`.
+1. Customer exports pack → Vigil writes **immutable** object to vault S3 (`upload_pack_to_vault` from `build_evidence_pack`).
+2. Customer **approves** an auditor (email/domain) in Settings → Vigil mints a **time-limited** read token or presigned URL pointing at that **fixed** `s3_key` / `report_id` *(not built in UI yet; presign helper exists)*.
 3. Auditor opens link → read-only GET; object behind it does not change.
 
 The “constant link” is constant **per export** (per `report_id`), not one URL that always shows “latest”.
 
-## Configuration (scaffold only)
+## S3 bucket policy (vigil-worm-storage)
+
+Object Lock must be enabled **when the bucket is created** (cannot add later). Then attach a bucket policy so only your Vigil API principal can write immutable packs.
+
+Example: [`infra/s3/evidence-vault-bucket-policy.json`](../infra/s3/evidence-vault-bucket-policy.json)
+
+Replace `Principal.AWS` with your deploy role (not `root` in production). Required actions for the API: `s3:PutObject`, `s3:PutObjectRetention`, `s3:GetObject`, `s3:ListBucket`.
+
+## Configuration
 
 See `api/app/services/evidence_vault.py` and `.env.example`:
 
@@ -57,4 +65,13 @@ Org-level override (future): `org.settings["evidence_vault"]["customer_s3_uri"]`
 
 ## Implementation status
 
-**Scaffold only** — parsing, key layout, and upload plans. No boto3 upload, no routes, no worker hook. Wire after bucket + IAM + legal review.
+**Wired (opt-in)** — set `EVIDENCE_VAULT_ENABLED=true` and `EVIDENCE_VAULT_S3_URI`. On each evidence pack export:
+
+- `plan_vault_upload()` builds object key from `report_id`
+- `upload_pack_to_vault()` performs `PutObject` with Object Lock retention when configured
+- ZIP includes `vault_upload_plan.json` and `vault_upload_result.json`
+- `evidence_exports` rows store `report_id` and vault metadata when upload succeeds
+
+**Not wired yet:** auditor approval UI, share records (`shared_with`), read-only viewer page. `EVIDENCE_VAULT_AUDITOR_ACCESS_MODE=presigned` can mint URLs from code paths that call `generate_presigned_get()` — no end-to-end “approve auditor → link” product flow.
+
+Enable only after bucket Object Lock, IAM, and retention policy review.

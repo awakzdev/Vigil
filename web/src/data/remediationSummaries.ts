@@ -86,6 +86,26 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     risk: "Root bypasses all IAM and SCP controls.",
     fix: "Move tasks to IAM admin; reserve root for account tasks.",
   },
+  "aws.account.contact_incomplete": {
+    impact: "Primary AWS account contact details are incomplete.",
+    risk: "Billing and operational notifications may not reach the right owner.",
+    fix: "Complete address, city, country, and phone in Account → Contact information.",
+  },
+  "aws.account.security_contact_missing": {
+    impact: "No SECURITY alternate contact is registered.",
+    risk: "AWS security notifications may not reach your security team.",
+    fix: "Add SECURITY alternate contact with email and phone in Account settings.",
+  },
+  "iam.server_certificate.expired": {
+    impact: "An IAM server certificate is past its expiration date.",
+    risk: "TLS endpoints using the cert may fail or use stale credentials.",
+    fix: "Delete the expired certificate in IAM → Server certificates.",
+  },
+  "iam.cloudshell_full_access_granted": {
+    impact: "AWSCloudShellFullAccess is attached to an IAM principal.",
+    risk: "Broad shell access increases blast radius if the principal is compromised.",
+    fix: "Detach AWSCloudShellFullAccess except break-glass roles.",
+  },
   "s3.bucket.public_access_not_blocked": {
     impact: "S3 Block Public Access not fully enabled.",
     risk: "Misconfigured ACL or policy can expose objects.",
@@ -162,7 +182,12 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     fix: "Replace with least-privilege policies.",
   },
   "github.repo.no_codeowners": {
-    impact: "No CODEOWNERS file (optional check).",
+    impact: "No CODEOWNERS file (optional Git check).",
+    risk: "No code-owner review rules possible.",
+    fix: "Add CODEOWNERS or disable the check.",
+  },
+  "gitlab.repo.no_codeowners": {
+    impact: "No CODEOWNERS file (optional Git check).",
     risk: "No code-owner review rules possible.",
     fix: "Add CODEOWNERS or disable the check.",
   },

@@ -147,6 +147,14 @@ function ServiceUsageRow({ service, emphasis }: { service: BlastRadiusService; e
       <div className="flex min-w-0 items-center gap-2">
         <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${dot}`} />
         <span className={`truncate font-mono text-[12px] ${nameClass}`}>{service.name}</span>
+        {service.service_only_signal && (
+          <span
+            className="shrink-0 rounded bg-sky-100/90 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-sky-900"
+            title="IAM reported service use without per-action detail"
+          >
+            Service only
+          </span>
+        )}
       </div>
       <span className="shrink-0 pl-2 text-[11px] tabular-nums text-zinc-500">
         {formatServiceLastUsed(service.days_ago)}

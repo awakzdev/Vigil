@@ -305,8 +305,27 @@ SHORT_ANSWERS: dict[str, str] = {
 }
 
 
+# Audit-wide scope limits — included in exported evidence pack (README, PDF, manifest).
+PLATFORM_SCOPE_LIMITATIONS: dict[str, list[str]] = {
+    "soc2": [
+        "Physical security for data centers is provided by the cloud or hosting provider (e.g. AWS) "
+        "and is not directly monitored by Vigil. Obtain physical and environmental control evidence "
+        "from your provider, colo vendor, or SOC 2 report.",
+        "Personnel and HR processes (hiring, background checks, termination) are outside Vigil scope "
+        "unless reflected in connected identity integrations.",
+    ],
+    "cis_aws_l1": [
+        "CIS physical and environmental controls for AWS data centers are satisfied via AWS shared "
+        "responsibility; Vigil does not assess provider datacenter security.",
+    ],
+    "iso27001": [
+        "Physical security controls (ISO A.11) for cloud-hosted workloads rely on provider attestation; "
+        "Vigil does not monitor datacenter physical access.",
+    ],
+}
+
+# Control-specific scope limits — only shown on the relevant control detail page.
 KNOWN_GAPS: dict[str, list[str]] = {
-    "CC6.1": ["Physical access to data centers is out of scope — attest separately for colo/on-prem."],
     "CC6.2": ["HR/offboarding attestations for non-AWS identities are outside Vigil scope."],
     "CC6.3": ["Formal user deprovisioning approval workflow is not automated — attest separately."],
     "CC7.2": ["GuardDuty finding triage and incident response runbooks require manual attestation."],
@@ -365,6 +384,11 @@ def evidence_refs_from_checks(check_ids: list[str]) -> list[str]:
     if len(refs) > 8:
         return refs[:7] + [f"+ {len(check_ids) - 7} additional mapped checks"]
     return refs
+
+
+def scope_limitations_for(framework: str) -> list[str]:
+    """Platform-wide audit scope boundaries for evidence pack export artifacts."""
+    return list(PLATFORM_SCOPE_LIMITATIONS.get(framework, []))
 
 
 def narrative_for(framework: str, control_id: str) -> str | None:

@@ -1,15 +1,35 @@
 """Deterministic IaC / CLI snippets per finding (Phase 1 — no repo PR)."""
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from app.models import Finding
+from app.models.github import IdentityProvider, Repo
 
 IAC_NOT_AVAILABLE = "iac_not_available"
 IAC_SNIPPETS = "iac_snippets"
+IAC_AUTOMATION_ONLY = "automation_only"
+
+SG_CHECKS = frozenset(
+    {
+        "ec2.security_group.unrestricted_ssh",
+        "ec2.security_group.unrestricted_rdp",
+    }
+)
+
+AUTOMATION_CHECKS = frozenset(
+    {
+        *SG_CHECKS,
+        "s3.bucket.public_access_not_blocked",
+    }
+)
 
 
-def build_iac_remediation(finding: Finding) -> dict[str, Any]:
+def build_iac_remediation(db: Session, finding: Finding, org_id: uuid.UUID) -> dict[str, Any]:
     """Return terraform, cloudformation, and cli snippets for a finding."""
     cid = finding.check_id
     ev = finding.evidence or {}
@@ -19,23 +39,76 @@ def build_iac_remediation(finding: Finding) -> dict[str, Any]:
     body["finding_id"] = str(finding.id)
     body["resource_arn"] = finding.resource_arn
     body["phase"] = "snippets"
+    github = _github_context(db, org_id)
+    has_tf = bool(body.get("terraform"))
     body["pr_automation"] = {
-        "available": body.get("iac_status") == IAC_SNIPPETS and cid in _TERRAFORM_RULE_CHECKS,
+        "available": False,
+        "github_connected": github["github_connected"],
+        "gitlab_connected": github["gitlab_connected"],
+        "providers": github["providers"],
+        "repos": github["repos"],
         "note": (
-            "Repo PRs require matching this resource in your Terraform (parser preview below). "
-            "Human review required before merge."
+            "Version-control PR automation is paused until repo-aware HCL patching ships. "
+            "Use declarative Terraform (S3/KMS) or EventBridge for security groups."
         ),
     }
+    from app.services.terraform_pr import PR_PATCH_CHECKS
+
+    pr_ok = github["github_connected"] and cid in PR_PATCH_CHECKS
+    body["apply_paths"] = {
+        "terraform_pr": pr_ok,
+        "terraform_generic": has_tf,
+        "customer_automation": cid in AUTOMATION_CHECKS,
+    }
+    if pr_ok:
+        body["pr_automation"]["available"] = True
+        body["pr_automation"]["note"] = (
+            "Opens a PR with hclpatch + terraform validate when you pick a connected repo."
+        )
     return body
 
 
-_TERRAFORM_RULE_CHECKS = frozenset(
+def _github_context(db: Session, org_id: uuid.UUID) -> dict[str, Any]:
+    """Git + GitLab connection state for IaC UI (PR flow is GitHub-only when enabled)."""
+    gh = db.scalar(
+        select(IdentityProvider).where(
+            IdentityProvider.org_id == org_id,
+            IdentityProvider.type == "github",
+            IdentityProvider.status == "connected",
+        )
+    )
+    gl = db.scalar(
+        select(IdentityProvider).where(
+            IdentityProvider.org_id == org_id,
+            IdentityProvider.type == "gitlab",
+            IdentityProvider.status == "connected",
+        )
+    )
+    providers: list[str] = []
+    if gh:
+        providers.append("github")
+    if gl:
+        providers.append("gitlab")
+    repos: list[dict[str, str]] = []
+    if gh:
+        for r in db.scalars(select(Repo).where(Repo.provider_id == gh.id).order_by(Repo.name)).all():
+            repos.append({"full_name": r.name, "default_branch": r.default_branch or "main"})
+    return {
+        "connected": bool(gh),
+        "github_connected": gh is not None,
+        "gitlab_connected": gl is not None,
+        "providers": providers,
+        "repos": repos,
+    }
+
+
+# Declarative-safe checks only — SG ingress is imperative (Console/CLI/EventBridge).
+_TERRAFORM_SNIPPET_CHECKS = frozenset(
     {
         "s3.bucket.public_access_not_blocked",
         "s3.bucket.no_https_policy",
         "kms.key.no_rotation",
         "kms.key.policy_wildcard_principal",
-        "ec2.security_group.unrestricted_ssh",
     }
 )
 
@@ -43,7 +116,7 @@ _TERRAFORM_RULE_CHECKS = frozenset(
 def _generic(finding: Finding, ev: dict) -> dict[str, Any]:
     return {
         "iac_status": IAC_NOT_AVAILABLE,
-        "reason": "No deterministic IaC template for this check yet — use Console/CLI steps in the drawer.",
+        "reason": "No IaC template for this check yet — use Console/CLI instead.",
         "terraform": None,
         "cloudformation": None,
         "cli": [],
@@ -138,22 +211,29 @@ def _kms_wildcard(finding: Finding, ev: dict) -> dict[str, Any]:
     }
 
 
-def _sg_ssh(finding: Finding, ev: dict) -> dict[str, Any]:
-    sg_id = ev.get("group_id") or ev.get("security_group_id") or _name_from_arn(finding.resource_arn)
-    logical = _logical_name(sg_id)
-    tf = f'''# In resource "aws_security_group" "{logical}" — remove or narrow:
-#   cidr_blocks = ["0.0.0.0/0"] on port 22
-# Prefer SSM Session Manager instead of open SSH.'''
+def _sg_imperative_only(finding: Finding, ev: dict, *, port_label: str) -> dict[str, Any]:
     return {
-        "iac_status": IAC_SNIPPETS,
-        "terraform": tf,
+        "iac_status": IAC_AUTOMATION_ONLY,
+        "terraform": None,
         "cloudformation": None,
-        "cli": [
-            f"# Revoke open SSH: aws ec2 revoke-security-group-ingress --group-id {sg_id} "
-            "--protocol tcp --port 22 --cidr 0.0.0.0/0",
+        "cli": [],
+        "reason": (
+            f"Revoking live security group ingress is imperative, not declarative Terraform. "
+            f"Use Console or CLI above, or EventBridge automation for port {port_label}."
+        ),
+        "hints": [
+            "Terraform PRs will require a matching rule in your connected repo (not generic snippets).",
+            "Use SSM Session Manager instead of open access from the internet where possible.",
         ],
-        "hints": ["Parser can locate `aws_security_group` / `aws_vpc_security_group_ingress_rule` blocks with 0.0.0.0/0:22."],
     }
+
+
+def _sg_rdp(finding: Finding, ev: dict) -> dict[str, Any]:
+    return _sg_imperative_only(finding, ev, port_label="3389")
+
+
+def _sg_ssh(finding: Finding, ev: dict) -> dict[str, Any]:
+    return _sg_imperative_only(finding, ev, port_label="22")
 
 
 _BUILDERS = {
@@ -162,6 +242,7 @@ _BUILDERS = {
     "kms.key.no_rotation": _kms_rotation,
     "kms.key.policy_wildcard_principal": _kms_wildcard,
     "ec2.security_group.unrestricted_ssh": _sg_ssh,
+    "ec2.security_group.unrestricted_rdp": _sg_rdp,
 }
 
 

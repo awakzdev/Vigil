@@ -658,21 +658,20 @@ export default function Findings() {
     }
   }, [q.isFetching, isRefreshing]);
 
-  useEffect(() => {
-    if (!selected || !q.data || drawerResolved) return;
-    const still = q.data.items.find((f) => f.id === selected.id);
-    if (!still) { setDrawerResolved(true); setVerifying(false); }
-  }, [q.data, selected, drawerResolved]);
-
   const act = useMutation({
-    mutationFn: ({ id, action }: { id: string; action: "recheck" | "resolve" }) =>
+    mutationFn: ({ id, action }: { id: string; action: "recheck" | "reopen" }) =>
       api(`/v1/findings/${id}/${action}`, { method: "POST", body: JSON.stringify({}) }),
-    onSuccess: (_data, { action }) => {
+    onSuccess: (data, { action }) => {
       if (action === "recheck") {
         setTimeout(() => qc.invalidateQueries({ queryKey: ["findings"] }), 6000);
-        setTimeout(() => setVerifying(false), 40000);
+        setTimeout(() => setVerifying(false), 120000);
       } else {
         qc.invalidateQueries({ queryKey: ["findings"] });
+        if (selected) setSelected(data as Finding);
+        if (action === "reopen") {
+          setDrawerResolved(false);
+          setStatus("open");
+        }
       }
     },
     onError: (_err, { action }) => {
@@ -689,6 +688,17 @@ export default function Findings() {
   const checkFrameworksApi = frameworkMapQ.data?.checks;
 
   const openFindingsForMetrics = openMetricsQ.data?.items ?? (status === "open" ? findings : []);
+
+  useEffect(() => {
+    if (!verifying || !selected || drawerResolved) return;
+    const openItems = openMetricsQ.data?.items ?? (status === "open" ? findings : []);
+    if (!openItems.some((f) => f.id === selected.id)) {
+      setDrawerResolved(true);
+      setVerifying(false);
+      setStatus("resolved");
+      qc.invalidateQueries({ queryKey: ["findings"] });
+    }
+  }, [verifying, selected, drawerResolved, openMetricsQ.data, status, findings, qc]);
 
   const metricBenchmarkScoped = useMemo(
     () => openFindingsForMetrics.filter((f) => matchesBenchmarkFilter(f, benchmarkFilter, checkFrameworksApi)),

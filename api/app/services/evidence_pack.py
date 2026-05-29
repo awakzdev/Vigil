@@ -8,6 +8,7 @@ import json
 import structlog
 import uuid
 import zipfile
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -39,7 +40,13 @@ from app.services.finding_history import (
 )
 from app.services.control_audit_block import build_control_audit_block
 from app.services.pack_provenance import build_pack_provenance
-from app.services.evidence_vault import plan_auditor_access, plan_vault_upload, vault_enabled
+from app.services.evidence_vault import (
+    org_vault_override,
+    plan_auditor_access,
+    plan_vault_upload,
+    upload_pack_to_vault,
+    vault_enabled,
+)
 from app.services.pdf_report import build_pdf
 
 log = structlog.get_logger()
@@ -47,6 +54,13 @@ log = structlog.get_logger()
 # Max snapshots embedded per control folder (full count in snapshots_total).
 _SNAPSHOT_EMBED_LIMIT = 50
 _CLOUDTRAIL_EVENT_LIMIT = 1000
+
+
+@dataclass(frozen=True)
+class EvidencePackResult:
+    zip_bytes: bytes
+    report_id: str
+    vault_upload: dict[str, Any] | None = None
 
 
 def _control_status(
@@ -73,7 +87,7 @@ def build_evidence_pack(
     framework: str,
     period_days: int = 90,
     as_of: datetime | None = None,
-) -> bytes:
+) -> EvidencePackResult:
     acc = db.get(AwsAccount, account_id)
     if not acc or str(acc.org_id) != str(org_id):
         raise ValueError("account not found")
@@ -348,46 +362,43 @@ def build_evidence_pack(
             framework=framework,
             content_sha256=checksum_sha,
             generated_at=generated_at,
-            customer_s3_uri=None,
+            customer_s3_uri=org_vault_override(org.settings if org else None),
             aws_account_id=acc.account_id,
         )
 
     zip_bytes = buf.getvalue()
     vault_upload_result: dict[str, Any] | None = None
-    if vault_plan and vault_enabled():
-        from app.services.evidence_vault import upload_pack_to_vault
 
-        try:
-            vault_upload_result = upload_pack_to_vault(vault_plan, zip_bytes)
-        except Exception:  # noqa: BLE001
-            log.exception("vault.upload_failed", report_id=report_id)
-            vault_upload_result = {"status": "error", "s3_uri": vault_plan.s3_uri}
-        if vault_plan:
-            vault_doc = vault_plan.to_manifest()
-            vault_doc["vault_enabled"] = True
-            if vault_upload_result:
-                vault_doc["upload"] = vault_upload_result
-            auditor = plan_auditor_access(vault_plan)
-            if auditor:
-                vault_doc["auditor_access_plan"] = auditor.to_manifest()
-            out = io.BytesIO(zip_bytes)
-            with zipfile.ZipFile(out, "a", zipfile.ZIP_DEFLATED) as zf_append:
-                zf_append.writestr("vault_upload_plan.json", json.dumps(vault_doc, indent=2, default=str))
-                if vault_upload_result:
-                    zf_append.writestr(
-                        "vault_upload_result.json",
-                        json.dumps(vault_upload_result, indent=2, default=str),
-                    )
-            zip_bytes = out.getvalue()
-    elif vault_plan:
+    if vault_plan:
         vault_doc = vault_plan.to_manifest()
-        vault_doc["vault_enabled"] = False
+        vault_doc["vault_enabled"] = vault_enabled()
+        auditor = plan_auditor_access(vault_plan) if vault_enabled() else None
+        if auditor:
+            vault_doc["auditor_access_plan"] = auditor.to_manifest()
         out = io.BytesIO(zip_bytes)
         with zipfile.ZipFile(out, "a", zipfile.ZIP_DEFLATED) as zf_append:
             zf_append.writestr("vault_upload_plan.json", json.dumps(vault_doc, indent=2, default=str))
         zip_bytes = out.getvalue()
 
-    return zip_bytes
+        if vault_enabled():
+            try:
+                vault_upload_result = upload_pack_to_vault(vault_plan, zip_bytes)
+            except Exception:  # noqa: BLE001
+                log.exception("vault.upload_failed", report_id=report_id)
+                vault_upload_result = {"status": "error", "s3_uri": vault_plan.s3_uri}
+            out = io.BytesIO(zip_bytes)
+            with zipfile.ZipFile(out, "a", zipfile.ZIP_DEFLATED) as zf_append:
+                zf_append.writestr(
+                    "vault_upload_result.json",
+                    json.dumps(vault_upload_result, indent=2, default=str),
+                )
+            zip_bytes = out.getvalue()
+
+    return EvidencePackResult(
+        zip_bytes=zip_bytes,
+        report_id=report_id,
+        vault_upload=vault_upload_result,
+    )
 
 
 def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
@@ -1023,11 +1034,14 @@ def _build_source_manifest(
     snapshot_counts = {k: len(v) for k, v in snap_by_type.items()}
     successful_scans = [r for r in scan_runs if r.status == "ok"]
 
+    from app.data.control_narratives import scope_limitations_for
+
     return {
         "pack_version": (pack_provenance or {}).get("pack_version", "2.3"),
         "generated_at": generated_at.isoformat(),
         "report_id": report_id,
         "framework": framework,
+        "scope_limitations": scope_limitations_for(framework),
         "pack_provenance": pack_provenance,
         "evidence_class_labels": {
             "benchmark": evidence_class_label("benchmark"),
@@ -1154,6 +1168,17 @@ def _build_readme(
         "Auditors may request specific date-range exports to confirm a",
         "control was in effect on a sampled date.",
     ]
+    from app.data.control_narratives import scope_limitations_for
+
+    scope_lines = scope_limitations_for(framework)
+    if scope_lines:
+        lines.extend(["", "ASSUMPTIONS & SCOPE BOUNDARIES", "-" * 30])
+        for item in scope_lines:
+            lines.append(f"  • {item}")
+        lines.append("")
+        lines.append(
+            "See also source_manifest.json (scope_limitations) and report.pdf for the same boundaries."
+        )
     return "\n".join(lines)
 
 

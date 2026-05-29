@@ -9,6 +9,7 @@ from botocore.exceptions import ClientError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.collectors.sg_ingress import build_public_exposure, has_public_port
 from app.core.aws import assume_role
 from app.models import AwsAccount
 from app.models.resources import SecurityGroup, Vpc
@@ -28,21 +29,6 @@ def _get_regions(sess) -> list[str]:
             Filters=[{"Name": "opt-in-status", "Values": ["opt-in-not-required", "opted-in"]}]
         )["Regions"]
     ]
-
-
-def _is_unrestricted(ip_ranges: list[dict], port: int) -> bool:
-    for perm in ip_ranges:
-        from_port = perm.get("FromPort", 0)
-        to_port = perm.get("ToPort", 65535)
-        if not (from_port <= port <= to_port):
-            continue
-        for cidr in perm.get("IpRanges", []):
-            if cidr.get("CidrIp") in ("0.0.0.0/0",):
-                return True
-        for cidr6 in perm.get("Ipv6Ranges", []):
-            if cidr6.get("CidrIpv6") in ("::/0",):
-                return True
-    return False
 
 
 def collect_vpc(db: Session, account: AwsAccount) -> dict:
@@ -92,8 +78,9 @@ def collect_vpc(db: Session, account: AwsAccount) -> dict:
                     group_name = sg.get("GroupName", "")
                     ingress = sg.get("IpPermissions", [])
                     egress = sg.get("IpPermissionsEgress", [])
-                    unrestricted_ssh = _is_unrestricted(ingress, 22)
-                    unrestricted_rdp = _is_unrestricted(ingress, 3389)
+                    exposure = build_public_exposure(ingress)
+                    unrestricted_ssh = has_public_port(ingress, 22)
+                    unrestricted_rdp = has_public_port(ingress, 3389)
                     is_default = group_name == "default"
                     has_any_inbound_rules = len(ingress) > 0
                     has_any_outbound_rules = len(egress) > 0
@@ -109,6 +96,7 @@ def collect_vpc(db: Session, account: AwsAccount) -> dict:
                         is_default=is_default,
                         unrestricted_ssh=unrestricted_ssh,
                         unrestricted_rdp=unrestricted_rdp,
+                        public_exposure=exposure,
                         has_any_inbound_rules=has_any_inbound_rules,
                         has_any_outbound_rules=has_any_outbound_rules,
                         last_seen=_now(),
@@ -119,6 +107,7 @@ def collect_vpc(db: Session, account: AwsAccount) -> dict:
                             "is_default": is_default,
                             "unrestricted_ssh": unrestricted_ssh,
                             "unrestricted_rdp": unrestricted_rdp,
+                            "public_exposure": exposure,
                             "has_any_inbound_rules": has_any_inbound_rules,
                             "has_any_outbound_rules": has_any_outbound_rules,
                             "last_seen": _now(),

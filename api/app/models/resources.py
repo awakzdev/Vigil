@@ -117,6 +117,7 @@ class SecurityGroup(Base):
     is_default: Mapped[bool] = mapped_column(Boolean, default=False)
     unrestricted_ssh: Mapped[bool] = mapped_column(Boolean, default=False)
     unrestricted_rdp: Mapped[bool] = mapped_column(Boolean, default=False)
+    public_exposure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     has_any_inbound_rules: Mapped[bool] = mapped_column(Boolean, default=False)
     has_any_outbound_rules: Mapped[bool] = mapped_column(Boolean, default=False)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -165,6 +166,34 @@ class EbsEncryptionDefault(Base):
     account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
     region: Mapped[str] = mapped_column(String(40))
     enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AccountGovernance(Base):
+    """AWS account contact / alternate contact state (CIS 1.1, 1.2)."""
+
+    __tablename__ = "account_governance"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("aws_accounts.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    primary_contact_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    security_contact_complete: Mapped[bool] = mapped_column(Boolean, default=False)
+    collection_error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    contact_snapshot: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IamServerCertificate(Base):
+    __tablename__ = "iam_server_certificates"
+    __table_args__ = (UniqueConstraint("account_id", "arn"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    account_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("aws_accounts.id", ondelete="CASCADE"), index=True)
+    name: Mapped[str] = mapped_column(String(256))
+    arn: Mapped[str] = mapped_column(String(512))
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

@@ -19,6 +19,7 @@ from app.core.config import get_settings
 ALGORITHM = "ed25519"
 SIGNED_ARTIFACT = "checksum_manifest.json"
 KEY_ID = "vigil-evidence-v1"
+REMEDIATION_KEY_ID = "vigil-remediation-v1"
 
 
 @lru_cache(maxsize=1)
@@ -66,6 +67,35 @@ def build_pack_signature(checksum_manifest_body: str) -> dict | None:
             "Ed25519 verify signature with public_key_base64."
         ),
     }
+
+
+def sign_payload(payload_bytes: bytes, *, key_id: str = REMEDIATION_KEY_ID) -> dict | None:
+    """Sign arbitrary canonical plan bytes (remediation plans, etc.)."""
+    key = _private_key()
+    if not key:
+        return None
+    sig = key.sign(payload_bytes)
+    return {
+        "algorithm": ALGORITHM,
+        "key_id": key_id,
+        "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
+        "signature_base64": base64.b64encode(sig).decode("ascii"),
+        "public_key_base64": public_key_base64(),
+    }
+
+
+def verify_payload(payload_bytes: bytes, signature_doc: dict) -> bool:
+    pub_b64 = signature_doc.get("public_key_base64")
+    sig_b64 = signature_doc.get("signature_base64")
+    if not pub_b64 or not sig_b64:
+        return False
+    if hashlib.sha256(payload_bytes).hexdigest() != signature_doc.get("payload_sha256"):
+        return False
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
+    pub = Ed25519PublicKey.from_public_bytes(base64.b64decode(pub_b64))
+    pub.verify(base64.b64decode(sig_b64), payload_bytes)
+    return True
 
 
 def verify_pack_signature(checksum_manifest_body: str, signature_doc: dict) -> bool:
