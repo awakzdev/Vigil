@@ -23,40 +23,52 @@ def _finding(*, check_id: str, status: str = "open"):
     return f
 
 
+def _pack_row(f, state: str):
+    return (f, state)
+
+
 def test_control_status_passes_when_only_excepted_findings():
     from app.services.evidence_pack import _control_status
 
-    findings = [_finding(check_id="iam.user.no_mfa", status="excepted")]
-    status, hits = _control_status(findings, ["iam.user.no_mfa"])
+    f = _finding(check_id="iam.user.no_mfa", status="excepted")
+    status, hits = _control_status([_pack_row(f, "excepted")], ["iam.user.no_mfa"])
     assert status == "pass"
     assert len(hits) == 1
 
 
-def test_control_status_fails_when_open_findings_exist():
+def test_control_status_fails_when_open_benchmark_findings_exist():
     from app.services.evidence_pack import _control_status
 
-    findings = [_finding(check_id="iam.user.no_mfa", status="open")]
-    status, _ = _control_status(findings, ["iam.user.no_mfa"])
+    f = _finding(check_id="iam.user.no_mfa", status="open")
+    status, _ = _control_status([_pack_row(f, "open")], ["iam.user.no_mfa"])
     assert status == "fail"
+
+
+def test_control_status_passes_for_supporting_only_open():
+    from app.services.evidence_pack import _control_status
+
+    f = _finding(check_id="guardduty.detector.not_enabled", status="open")
+    status, hits = _control_status([_pack_row(f, "open")], ["guardduty.detector.not_enabled"])
+    assert status == "pass"
+    assert len(hits) == 1
 
 
 def test_control_status_across_multiple_controls_uses_orm_list():
     """Regression: build_evidence_pack must not shadow the ORM open_findings list with dicts."""
     from app.services.evidence_pack import _control_status, _finding_dict
 
-    orm_findings = [
-        _finding(check_id="iam.user.no_mfa", status="open"),
-        _finding(check_id="s3.bucket.no_default_encryption", status="open"),
+    pack = [
+        _pack_row(_finding(check_id="iam.user.no_mfa", status="open"), "open"),
+        _pack_row(_finding(check_id="s3.bucket.no_default_encryption", status="open"), "open"),
     ]
     for check_ids in (["iam.user.no_mfa"], ["s3.bucket.no_default_encryption"]):
-        status, hits = _control_status(orm_findings, check_ids)
+        status, hits = _control_status(pack, check_ids)
         assert status == "fail"
-        # Same pattern as build_evidence_pack — must not reassign orm_findings here
-        finding_dicts = [_finding_dict(f) for f in hits if f.status == "open"]
+        finding_dicts = [_finding_dict(f, state=st) for f, st in hits if st == "open"]
         assert finding_dicts[0]["check_id"] in check_ids
 
-    status, hits = _control_status(orm_findings, ["s3.bucket.no_default_encryption"])
-    assert hits[0].check_id == "s3.bucket.no_default_encryption"
+    status, hits = _control_status(pack, ["s3.bucket.no_default_encryption"])
+    assert hits[0][0].check_id == "s3.bucket.no_default_encryption"
 
 
 def test_index_csv_includes_exception_count():

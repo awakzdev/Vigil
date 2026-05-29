@@ -1,6 +1,21 @@
 # Vigil — Handoff
 
-_Last updated: 2026-05-28 (session 26 release-readiness + drawer docs)_
+_Last updated: 2026-05-28 (session 27 deepsearch v2 audit fixes)_
+
+---
+
+## Session 27 (2026-05-28) — shipped (deepsearch/v2.txt)
+
+- **Historical evidence packs:** `finding_history.py` — control status at `as_of` from `FindingEvent` + `first_seen` / `resolved_at`; only benchmark-class open findings fail controls.
+- **Access roster:** `access_roster.json` built from latest `iam_user` / `identity_center_user` snapshots on or before pack end (live-table fallback if none).
+- **Coverage honesty:** `days_with_data` = union of successful scan days + snapshot days; `coverage_gaps` list in manifest.
+- **Supporting checks:** extended-tier + `iam.policy.wildcard_resource` cannot fail SOC2/ISO control pass/fail (still exported in pack).
+- **Slack SSRF:** `test-slack` allowlists `hooks.slack.com` / `hooks.slack-gov.com` only.
+- **CI:** frontend `npm run build`, gitleaks, block tracked `.env*`.
+- **CloudTrail collector:** all-region discovery + home-region `get_trail_status`; removed `DEV_MODE` AssumeRole bypass.
+- **README:** CFN path, check count, release-readiness table updated.
+
+**Still open from v2 (not in scope this session):** S3 Object Lock vault upload, HttpOnly cookies / refresh rotation, KMS key policy check, Identity Center permission sets collector, pack metadata (app semver / git SHA in ZIP).
 
 ---
 

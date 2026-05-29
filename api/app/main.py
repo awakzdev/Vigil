@@ -14,7 +14,7 @@ from app.core.ratelimit import limiter
 from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.client_ip import client_ip_from_request
-from app.routes import accounts, findings, auth, auth_oauth, github_integration, gitlab_integration, settings as settings_router
+from app.routes import accounts, findings, auth, auth_oauth, github_integration, gitlab_integration, iac, settings as settings_router
 from app.routes import controls, exports, meta, public
 
 log = structlog.get_logger()
@@ -40,9 +40,14 @@ app = FastAPI(title="Vigil API", version="0.1.0", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+_cors_origins = [settings.FRONTEND_URL]
+if settings.APP_ENV == "dev" and settings.FRONTEND_URL not in ("http://localhost:5173",):
+    _cors_origins.append("http://localhost:5173")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"] if settings.APP_ENV == "dev" else [settings.FRONTEND_URL],
+    allow_origins=_cors_origins,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -139,6 +144,7 @@ app.include_router(auth.router, prefix="/v1/auth", tags=["auth"])
 app.include_router(auth_oauth.router, prefix="/v1/auth", tags=["auth"])
 app.include_router(accounts.router, prefix="/v1/accounts", tags=["accounts"])
 app.include_router(findings.router, prefix="/v1/findings", tags=["findings"])
+app.include_router(iac.router, prefix="/v1/iac", tags=["iac"])
 app.include_router(settings_router.router, prefix="/v1/settings", tags=["settings"])
 app.include_router(controls.router, prefix="/v1/controls", tags=["controls"])
 app.include_router(exports.router, prefix="/v1/exports", tags=["exports"])

@@ -10,7 +10,7 @@ def test_control_status_passes_with_no_open_findings():
     from app.services.compliance_timeline import _control_status_at
 
     now = datetime.now(timezone.utc)
-    status = _control_status_at([], [], now, True)
+    status = _control_status_at([], [], now, True, {})
     assert status == "no_data"
 
     f = MagicMock()
@@ -18,7 +18,7 @@ def test_control_status_passes_with_no_open_findings():
     f.status = "open"
     f.first_seen = now
     f.resolved_at = None
-    status = _control_status_at(["iam.user.no_mfa"], [f], now, True)
+    status = _control_status_at(["iam.user.no_mfa"], [f], now, True, {})
     assert status == "fail"
 
 
@@ -31,7 +31,7 @@ def test_excepted_findings_do_not_fail_control():
     f.status = "excepted"
     f.first_seen = now
     f.resolved_at = None
-    status = _control_status_at(["iam.user.no_mfa"], [f], now, True)
+    status = _control_status_at(["iam.user.no_mfa"], [f], now, True, {})
     assert status == "pass"
 
 

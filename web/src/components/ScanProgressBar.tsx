@@ -7,6 +7,8 @@ type ScanProgressBarProps = {
   remainingMs: number | null;
   finishing: boolean;
   indeterminate: boolean;
+  progressStep?: number | null;
+  progressTotal?: number | null;
   className?: string;
 };
 
@@ -15,19 +17,32 @@ function scanProgressDetail({
   elapsedMs,
   remainingMs,
   finishing,
-}: Pick<ScanProgressBarProps, "phase" | "elapsedMs" | "remainingMs" | "finishing">) {
+  progressStep,
+  progressTotal,
+}: Pick<
+  ScanProgressBarProps,
+  "phase" | "elapsedMs" | "remainingMs" | "finishing" | "progressStep" | "progressTotal"
+>) {
+  const stepPrefix =
+    progressStep != null && progressTotal != null && progressTotal > 0
+      ? `Step ${progressStep} of ${progressTotal} · `
+      : "";
+
+  if (finishing && progressStep == null) {
+    return `${stepPrefix}${formatScanDuration(elapsedMs)} elapsed · finishing up (past estimate)`;
+  }
   if (finishing) {
-    return `${formatScanDuration(elapsedMs)} elapsed · finishing up (past estimate)`;
+    return `${stepPrefix}${formatScanDuration(elapsedMs)} elapsed · finishing checks`;
   }
   if (remainingMs != null && remainingMs > 0) {
     const elapsedPart =
       phase === "starting" ? "Queued" : `${formatScanDuration(elapsedMs)} elapsed`;
-    return `${elapsedPart} · ~${formatScanDuration(remainingMs)} left`;
+    return `${stepPrefix}${elapsedPart} · ~${formatScanDuration(remainingMs)} left`;
   }
   if (phase === "starting") {
-    return "Queued · waiting for worker";
+    return `${stepPrefix}Queued · waiting for worker`;
   }
-  return `${formatScanDuration(elapsedMs)} elapsed`;
+  return `${stepPrefix}${formatScanDuration(elapsedMs)} elapsed`;
 }
 
 export default function ScanProgressBar({
@@ -37,10 +52,19 @@ export default function ScanProgressBar({
   remainingMs,
   finishing,
   indeterminate,
+  progressStep,
+  progressTotal,
   className,
 }: ScanProgressBarProps) {
   const label = phase === "starting" ? "Starting scan" : "Scanning account";
-  const detail = scanProgressDetail({ phase, elapsedMs, remainingMs, finishing });
+  const detail = scanProgressDetail({
+    phase,
+    elapsedMs,
+    remainingMs,
+    finishing,
+    progressStep,
+    progressTotal,
+  });
 
   return (
     <div className={`overflow-hidden rounded-xl border border-indigo-100 bg-indigo-50/80 ${className ?? "mb-4"}`}>

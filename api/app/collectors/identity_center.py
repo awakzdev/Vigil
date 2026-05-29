@@ -82,3 +82,69 @@ def collect_identity_center(db: Session, account: AwsAccount) -> int:
     db.commit()
     log.info("collect_identity_center.done", account_id=str(account.id), users=count)
     return count
+
+
+def list_permission_set_snapshots(account: AwsAccount) -> list[dict]:
+    """Read-only permission set metadata for evidence snapshots (no DB table in MVP)."""
+    sess = assume_role(
+        account.role_arn,
+        account.external_id,
+        session_name="vigil-identity-center-ps",
+        aws_account=account,
+        purpose="collect_identity_center_permission_sets",
+    )
+    out: list[dict] = []
+    try:
+        sso_admin = sess.client("sso-admin", region_name="us-east-1")
+        instances = sso_admin.list_instances().get("Instances", [])
+    except ClientError as exc:
+        log.info(
+            "collect_identity_center.permission_sets_skipped",
+            account_id=str(account.id),
+            error=exc.response.get("Error", {}).get("Code"),
+        )
+        return out
+
+    for inst in instances:
+        instance_arn = inst.get("InstanceArn")
+        if not instance_arn:
+            continue
+        region = inst.get("Region", "us-east-1")
+        admin = sess.client("sso-admin", region_name=region)
+        token: str | None = None
+        while True:
+            kwargs: dict = {"InstanceArn": instance_arn, "MaxResults": 100}
+            if token:
+                kwargs["NextToken"] = token
+            try:
+                page = admin.list_permission_sets(**kwargs)
+            except ClientError:
+                break
+            for ps_arn in page.get("PermissionSets", []):
+                try:
+                    desc = admin.describe_permission_set(
+                        InstanceArn=instance_arn,
+                        PermissionSetArn=ps_arn,
+                    ).get("PermissionSet", {})
+                except ClientError:
+                    continue
+                out.append(
+                    {
+                        "permission_set_arn": ps_arn,
+                        "instance_arn": instance_arn,
+                        "region": region,
+                        "name": desc.get("Name"),
+                        "description": desc.get("Description"),
+                        "session_duration": desc.get("SessionDuration"),
+                        "relay_state": desc.get("RelayState"),
+                    }
+                )
+            token = page.get("NextToken")
+            if not token:
+                break
+    log.info(
+        "collect_identity_center.permission_sets",
+        account_id=str(account.id),
+        count=len(out),
+    )
+    return out

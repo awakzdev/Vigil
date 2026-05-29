@@ -17,7 +17,7 @@ from app.collectors.cloudtrail import collect_cloudtrail
 from app.collectors.cloudtrail_events import collect_cloudtrail_events
 from app.collectors.guardduty import collect_guardduty
 from app.collectors.guardduty_findings import collect_guardduty_findings
-from app.collectors.identity_center import collect_identity_center
+from app.collectors.identity_center import collect_identity_center, list_permission_set_snapshots
 from app.collectors.config_compliance import collect_config_compliance
 from app.collectors.vpc import collect_vpc
 from app.collectors.rds import collect_rds
@@ -515,6 +515,25 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
             },
         ))
 
+    try:
+        for ps in list_permission_set_snapshots(acc):
+            arn = ps.get("permission_set_arn")
+            if not arn:
+                continue
+            snaps.append(
+                EvidenceSnapshot(
+                    id=uuid.uuid4(),
+                    scan_run_id=run.id,
+                    account_id=acc.id,
+                    org_id=acc.org_id,
+                    entity_type="identity_center_permission_set",
+                    entity_id=arn,
+                    payload_json=ps,
+                )
+            )
+    except Exception:  # noqa: BLE001
+        log.warning("snapshot.identity_center_permission_sets_failed", account_id=str(acc.id))
+
     for rule in db.scalars(select(ConfigRuleCompliance).where(ConfigRuleCompliance.account_id == acc.id)).all():
         snaps.append(EvidenceSnapshot(
             id=uuid.uuid4(),
@@ -661,6 +680,11 @@ def _write_evidence_snapshots(db, acc: AwsAccount, run: ScanRun) -> int:
             },
         ))
 
+    from app.services.snapshot_provenance import attach_provenance
+
+    for snap in snaps:
+        snap.payload_json = attach_provenance(snap.payload_json, snap.entity_type, run.id)
+
     db.add_all(snaps)
     return len(snaps)
 
@@ -704,6 +728,12 @@ def run_scan(account_id: str) -> dict:
         raise
 
     try:
+        from app.core.aws import ensure_vigil_role_trust
+        from app.core.config import get_settings as _scan_settings
+
+        if _scan_settings().APP_ENV == "dev" and acc.role_arn and acc.external_id:
+            ensure_vigil_role_trust(acc.role_arn, acc.external_id)
+
         stats: dict = {}
 
         _TOTAL_STEPS = 26  # collectors + checks + snapshots

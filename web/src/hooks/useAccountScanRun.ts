@@ -11,6 +11,8 @@ export type ScanRun = {
   error_type?: string | null;
   findings_opened?: number;
   findings_resolved?: number;
+  progress_step?: number | null;
+  progress_total?: number | null;
 };
 
 export function useAccountScanRun(accountId: string | null | undefined) {
@@ -18,13 +20,11 @@ export function useAccountScanRun(accountId: string | null | undefined) {
     queryKey: ["scan-run-latest", accountId],
     queryFn: () => (accountId ? api<ScanRun | null>(`/v1/accounts/${accountId}/scan-runs/latest`) : null),
     enabled: !!accountId,
-    refetchInterval: (query) => (query.state.data?.status === "running" ? 5000 : false),
+    refetchInterval: (query) => (query.state.data?.status === "running" ? 3000 : false),
   });
 
   const scanStatus = scanRun.data?.status ?? null;
-  const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
-  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > 5 * 60 * 1000 : false;
-  const isRunning = scanStatus === "running" && !scanStuck;
+  const isRunning = scanStatus === "running";
 
-  return { scanRun, scanStatus, isRunning, scanStuck };
+  return { scanRun, scanStatus, isRunning };
 }

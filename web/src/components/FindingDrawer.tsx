@@ -1,6 +1,10 @@
 import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { IaCRemediationSection } from "./IaCRemediationSection";
+import { drawerPanel } from "./drawerStyles";
+import { frameworkLabel } from "../data/frameworks";
 import { BLAST_RADIUS_CHECKS } from "../data/blastRadiusChecks";
 import { checkLabels } from "../data/checkLabels";
 import { documentationForCheck } from "../data/checkDocumentation";
@@ -34,7 +38,6 @@ import {
 const DRAWER_MAX_W = "max-w-[640px]";
 
 /** Shared drawer inspection UI — aligned with Resources tab rhythm */
-const drawerPanel = "overflow-hidden rounded-xl border border-zinc-200 bg-white shadow-sm shadow-zinc-900/[0.03]";
 const drawerSectionHead = "border-b border-zinc-100 px-4 py-3";
 const drawerSectionBody = "px-4 py-3.5";
 const drawerSectionTitle = "text-sm font-semibold text-zinc-900";
@@ -284,16 +287,6 @@ function OverviewTabContent({
     <div className="space-y-2.5">
       <DrawerFlowLabel>Security narrative</DrawerFlowLabel>
       <div className="space-y-2">
-        {documentation && (
-          <>
-            <SemanticNarrativeBlock tag="Scanner" tone="neutral" title="What Vigil checks">
-              {documentation.whatWeCheck}
-            </SemanticNarrativeBlock>
-            <SemanticNarrativeBlock tag="Why flagged" tone="caution" title="Why you see this finding">
-              {documentation.whyShown}
-            </SemanticNarrativeBlock>
-          </>
-        )}
         <SemanticNarrativeBlock tag="Context" tone="caution" title="Why this matters">
           {context}
         </SemanticNarrativeBlock>
@@ -3317,7 +3310,136 @@ function BlastRadiusSection({
   );
 }
 
-type Tab = "overview" | "resources" | "remediation" | "whatif";
+type Tab = "overview" | "resources" | "compliance" | "remediation" | "whatif";
+
+type MappedControl = {
+  framework: string;
+  control_id: string;
+  title: string;
+  description: string;
+  guidance: string | null;
+  narrative: string | null;
+  reference_url: string;
+  reference_label: string;
+  reference_note?: string | null;
+};
+
+type CheckControlBundle = {
+  check_id: string;
+  primary: MappedControl | null;
+  controls: MappedControl[];
+};
+
+function compliancePageHref(ctrl: MappedControl, accountId?: string | null) {
+  const params = new URLSearchParams({
+    framework: ctrl.framework,
+    control: ctrl.control_id,
+  });
+  if (accountId) params.set("account_id", accountId);
+  return `/controls?${params}`;
+}
+
+function ComplianceTabContent({
+  checkId,
+  accountId,
+}: {
+  checkId: string;
+  accountId?: string | null;
+}) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["controls-by-check", checkId],
+    queryFn: () => api<CheckControlBundle>(`/v1/controls/by-check/${encodeURIComponent(checkId)}`),
+  });
+
+  const primary = data?.primary;
+  const alternates = (data?.controls ?? []).filter(
+    (c) => !primary || c.framework !== primary.framework || c.control_id !== primary.control_id,
+  );
+
+  if (isLoading) {
+    return (
+      <div className={`${drawerPanel} px-4 py-3 text-[13px] text-zinc-500`}>Loading compliance mapping…</div>
+    );
+  }
+
+  if (isError || !primary) {
+    return (
+      <FlowCallout tone="neutral" title="Framework mapping">
+        This check is not yet mapped to SOC 2 / CIS / ISO control rows in Vigil.
+      </FlowCallout>
+    );
+  }
+
+  return (
+    <div className="space-y-2.5">
+      <DrawerFlowLabel>Compliance &amp; benchmarks</DrawerFlowLabel>
+      <div className={`${drawerPanel} px-4 py-3`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded-md border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-800">
+            {frameworkLabel(primary.framework)}
+          </span>
+          <span className="font-mono text-[12px] font-semibold text-zinc-800">{primary.control_id}</span>
+        </div>
+        <h3 className="mt-2 text-[13px] font-semibold text-zinc-900">{primary.title}</h3>
+        <p className="mt-2 text-[12px] leading-relaxed text-zinc-600">{primary.description}</p>
+        {primary.guidance && (
+          <p className="mt-2 text-[11px] leading-relaxed text-zinc-500">
+            <span className="font-medium text-zinc-600">Evidence guidance: </span>
+            {primary.guidance}
+          </p>
+        )}
+        <div className="mt-3 flex flex-col gap-2 border-t border-zinc-100 pt-3">
+          <Link
+            to={compliancePageHref(primary, accountId)}
+            className="text-[12px] font-medium text-indigo-600 hover:text-indigo-800"
+          >
+            View on Compliance page →
+          </Link>
+          <a
+            href={primary.reference_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[12px] font-medium text-zinc-600 hover:text-zinc-900"
+          >
+            {primary.reference_label}
+          </a>
+        </div>
+      </div>
+      {primary.narrative && (
+        <SemanticNarrativeBlock tag="Audit" tone="neutral" title="Audit narrative (Vigil)">
+          {primary.narrative}
+        </SemanticNarrativeBlock>
+      )}
+      {alternates.length > 0 && (
+        <div className={`${drawerPanel} px-4 py-3`}>
+          <p className="text-[11px] font-medium text-zinc-500">Also mapped to</p>
+          <ul className="mt-2 space-y-1.5">
+            {alternates.map((c) => (
+              <li key={`${c.framework}:${c.control_id}`} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px]">
+                <Link to={compliancePageHref(c, accountId)} className="font-medium text-indigo-600 hover:text-indigo-800">
+                  {frameworkLabel(c.framework)} {c.control_id}
+                </Link>
+                <a
+                  href={c.reference_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-zinc-500 hover:text-zinc-800"
+                  title={
+                    c.framework === "iso27001"
+                      ? `${c.control_id} maps to ISO/IEC 27002:2022 on iso.org; full text may require purchase`
+                      : c.reference_label
+                  }
+                >
+                  Official doc
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
 type GeneratedPolicy = { has_inline_policies: boolean; unused_services: string[]; used_services: string[]; used_actions?: string[]; granularity?: "action" | "service"; statements_removed?: number; statements_modified?: number; original_policies?: Record<string, unknown>; cleaned_policies?: Record<string, unknown>; note?: string };
 
 type GeneratedS3HttpsPolicy = {
@@ -4049,6 +4171,7 @@ export function FindingDrawer({
     if (!finding) return;
     const available = new Set<Tab>([
       "overview",
+      "compliance",
       "remediation",
       ...(showResources ? (["resources"] as Tab[]) : []),
       ...(showBlastRadius ? (["whatif"] as Tab[]) : []),
@@ -4109,6 +4232,7 @@ export function FindingDrawer({
   const tabs: { id: Tab; label: string }[] = [
     { id: "overview", label: "Overview" },
     ...(showResources ? [{ id: "resources" as Tab, label: "Resources" }] : []),
+    { id: "compliance", label: "Compliance" },
     { id: "remediation", label: "Remediation" },
     ...(showBlastRadius ? [{ id: "whatif" as Tab, label: "What If" }] : []),
   ];
@@ -4185,20 +4309,12 @@ export function FindingDrawer({
           )}
         </div>
       )}
+      {tab === "compliance" && (
+        <ComplianceTabContent checkId={finding.check_id} accountId={accountId} />
+      )}
       {tab === "remediation" && (
         <div className="space-y-2.5">
-          <DrawerFlowLabel>Remediation plan</DrawerFlowLabel>
-          {checkDoc && (
-            <SemanticNarrativeBlock tag="Scanner" tone="neutral" title="What Vigil checks">
-              {checkDoc.whatWeCheck}
-            </SemanticNarrativeBlock>
-          )}
-          <SemanticNarrativeBlock tag="Rationale" tone="caution" title="Why this matters">
-            {rem.why}
-          </SemanticNarrativeBlock>
-          <SemanticNarrativeBlock tag="Action" tone="positive" title="Recommended action">
-            {ops.fix}
-          </SemanticNarrativeBlock>
+          <DrawerFlowLabel>Remediation</DrawerFlowLabel>
           {showPolicyGen && (
             <GeneratePolicySection
               accountId={accountId!}
@@ -4209,6 +4325,15 @@ export function FindingDrawer({
           {finding.check_id === "s3.bucket.no_https_policy" && accountId && (
             <GenerateS3HttpsPolicySection accountId={accountId} finding={finding} />
           )}
+          <IaCRemediationSection
+            findingId={finding.id}
+            checkId={finding.check_id}
+            bucketName={
+              typeof finding.evidence?.bucket_name === "string"
+                ? finding.evidence.bucket_name
+                : undefined
+            }
+          />
           <div className={`${drawerPanel} overflow-hidden shadow-sm shadow-zinc-900/[0.03]`}>
             <div className="flex flex-wrap items-start justify-between gap-3 border-b border-zinc-100 bg-gradient-to-r from-zinc-50/90 to-white px-4 py-3 pr-5">
               <div>

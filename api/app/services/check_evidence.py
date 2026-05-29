@@ -17,10 +17,17 @@ CLASS_LABELS: dict[str, str] = {
     CLASS_HYGIENE: "Hygiene only",
 }
 
+# Mapped to frameworks but too indirect to fail SOC 2 / ISO controls by default.
+_SUPPORTING_ONLY_CHECKS = frozenset({
+    "iam.policy.wildcard_resource",
+})
+
 
 def evidence_class_for_check(check_id: str) -> str:
     if check_id in OPTIONAL_CHECK_IDS:
         return CLASS_HYGIENE
+    if check_id in _SUPPORTING_ONLY_CHECKS:
+        return CLASS_SUPPORTING
     if tier_for_check(check_id) == TIER_EXTENDED:
         return CLASS_SUPPORTING
     if check_id in check_framework_map():

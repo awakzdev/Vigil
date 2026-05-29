@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 from datetime import datetime, timezone
 
@@ -46,10 +47,15 @@ def download_evidence_pack(
 
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     filename = f"vigil-evidence-{framework}-{ts}.zip"
+    zip_sha256 = hashlib.sha256(zip_bytes).hexdigest()
     return Response(
         content=zip_bytes,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-SHA256": zip_sha256,
+            "X-Vigil-Pack-SHA256": zip_sha256,
+        },
     )
 
 

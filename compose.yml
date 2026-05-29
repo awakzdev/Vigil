@@ -34,13 +34,8 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
       REDIS_URL: redis://redis:6379/0
-      # Pass-through only — boto3 ignores unset vars; empty strings break credential chain.
-      # Set these in .env for static IAM keys, or leave unset to fall through to ~/.aws SSO.
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
+      # Region only here — SSO/static keys come from env_file + ~/.aws mount (never pass empty AWS_*).
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-      AWS_PROFILE: ${AWS_PROFILE}
     depends_on:
       db:
         condition: service_healthy
@@ -61,11 +56,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hygiene}:${POSTGRES_PASSWORD:-hygiene}@db:5432/${POSTGRES_DB:-hygiene}
       REDIS_URL: redis://redis:6379/0
-      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
-      AWS_SESSION_TOKEN: ${AWS_SESSION_TOKEN}
       AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
-      AWS_PROFILE: ${AWS_PROFILE}
     depends_on:
       db:
         condition: service_healthy

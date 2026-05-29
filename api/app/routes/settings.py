@@ -279,6 +279,21 @@ class SlackTestBody(BaseModel):
     url: str | None = None
 
 
+_ALLOWED_SLACK_HOSTS = frozenset({"hooks.slack.com", "hooks.slack-gov.com"})
+
+
+def _validate_slack_webhook(url: str) -> str:
+    from urllib.parse import urlparse
+
+    parsed = urlparse(url.strip())
+    if parsed.scheme != "https" or parsed.hostname not in _ALLOWED_SLACK_HOSTS:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Webhook must be https://hooks.slack.com/... or https://hooks.slack-gov.com/...",
+        )
+    return url.strip()
+
+
 @router.post("/test-slack", status_code=200)
 def test_slack(body: SlackTestBody = SlackTestBody(), p=Depends(current_principal), db: Session = Depends(get_db)):
     """POST a test message to the configured Slack webhook URL."""
@@ -288,6 +303,7 @@ def test_slack(body: SlackTestBody = SlackTestBody(), p=Depends(current_principa
     webhook_url = body.url or (org.settings or {}).get("notifications", {}).get("slack_webhook_url")
     if not webhook_url:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "No Slack webhook URL configured")
+    webhook_url = _validate_slack_webhook(webhook_url)
 
     try:
         resp = httpx.post(

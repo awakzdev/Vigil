@@ -38,6 +38,7 @@ from app.checks import (
     iam_user_no_mfa,
     iam_user_direct_policy,
     kms_no_rotation,
+    kms_key_policy_wildcard,
     rds_no_encryption,
     rds_no_automated_backup,
     rds_publicly_accessible,
@@ -116,6 +117,7 @@ ALL_CHECKS = [
     s3_no_logging,
     # KMS
     kms_no_rotation,
+    kms_key_policy_wildcard,
     # CloudTrail
     cloudtrail_not_enabled,
     cloudtrail_no_log_validation,

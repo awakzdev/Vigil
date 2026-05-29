@@ -5,6 +5,7 @@ import csv
 import hashlib
 import io
 import json
+import structlog
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
@@ -30,7 +31,18 @@ from app.models.github import CiPipeline, IdentityProvider, IdentityUser, PullRe
 from app.models.iam import IamUser
 from app.models.resources import IdentityCenterUser
 from app.services.evidence_coverage import compute_evidence_coverage
+from app.services.finding_history import (
+    STATE_EXCEPTED,
+    STATE_OPEN,
+    finding_open_for_control,
+    findings_for_pack_at,
+)
+from app.services.control_audit_block import build_control_audit_block
+from app.services.pack_provenance import build_pack_provenance
+from app.services.evidence_vault import plan_auditor_access, plan_vault_upload, vault_enabled
 from app.services.pdf_report import build_pdf
+
+log = structlog.get_logger()
 
 # Max snapshots embedded per control folder (full count in snapshots_total).
 _SNAPSHOT_EMBED_LIMIT = 50
@@ -38,18 +50,18 @@ _CLOUDTRAIL_EVENT_LIMIT = 1000
 
 
 def _control_status(
-    open_findings: list[Finding],
+    pack_findings: list[tuple[Finding, str]],
     check_ids: list[str],
-) -> tuple[str, list[Finding]]:
-    """Return (pass|fail|no_data, matching_findings).
+) -> tuple[str, list[tuple[Finding, str]]]:
+    """Return (pass|fail|no_data, matching (finding, state_at_end) rows).
 
-    Findings with status ``excepted`` are included in ``matching_findings`` for
-    evidence export but do not cause a control to fail — only ``open`` findings do.
+    Only benchmark-class checks in ``open`` state fail a control. Supporting and
+  hygiene findings are exported but do not change pass/fail. ``excepted`` never fails.
     """
     if not check_ids:
         return "no_data", []
-    hits = [f for f in open_findings if f.check_id in check_ids]
-    if any(f.status == "open" for f in hits):
+    hits = [(f, st) for f, st in pack_findings if f.check_id in check_ids]
+    if any(finding_open_for_control(f, st) for f, st in hits):
         return "fail", hits
     return "pass", hits
 
@@ -83,16 +95,11 @@ def build_evidence_pack(
         ).all()
         check_map[c.id] = list(links)
 
-    open_findings = db.scalars(
-        select(Finding).where(
-            Finding.account_id == account_id,
-            Finding.status.in_(["open", "excepted"]),
-        )
-    ).all()
     org = db.get(Org, org_id)
     hidden = hidden_check_ids(org.settings if org else {})
-    if hidden:
-        open_findings = [f for f in open_findings if f.check_id not in hidden]
+    pack_findings = findings_for_pack_at(
+        db, account_id, end, hidden_check_ids=set(hidden)
+    )
 
     snapshots = db.scalars(
         select(EvidenceSnapshot).where(
@@ -137,7 +144,7 @@ def build_evidence_pack(
 
     control_results: list[dict[str, Any]] = []
     for ctrl in controls:
-        status, hits = _control_status(open_findings, check_map[ctrl.id])
+        status, hits = _control_status(pack_findings, check_map[ctrl.id])
         relevant_types = _entity_types_for_checks(check_map[ctrl.id])
         snaps = []
         for t in relevant_types:
@@ -152,17 +159,17 @@ def build_evidence_pack(
                     "taken_at": generated_at.isoformat(),
                     "data": {**(f.evidence or {}), "_synthetic": True, "note": "Resource absent — no collected snapshot. Evidence derived from finding."},
                 }
-                for f in hits[:50]
+                for f, _st in hits[:50]
             ]
 
-        exceptions = [_finding_dict(f) for f in hits if f.status == "excepted"]
-        open_count = len([f for f in hits if f.status == "open"])
-        open_finding_dicts = [_finding_dict(f) for f in hits if f.status == "open"]
+        exceptions = [_finding_dict(f, state=st) for f, st in hits if st == STATE_EXCEPTED]
+        open_count = len([1 for f, st in hits if finding_open_for_control(f, st)])
+        open_finding_dicts = [_finding_dict(f, state=st) for f, st in hits if st == STATE_OPEN]
+        supporting_open = len([1 for f, st in hits if st == STATE_OPEN and not finding_open_for_control(f, st)])
         snapshots_total = len(snaps)
         mapped = check_map[ctrl.id]
         cov_tier = control_coverage_tier(mapped)
-        control_results.append(
-            {
+        cr_dict = {
                 "control_id": ctrl.control_id,
                 "title": ctrl.title,
                 "description": ctrl.description,
@@ -174,17 +181,28 @@ def build_evidence_pack(
                 "status": status,
                 "evidence_status": _evidence_status(check_map[ctrl.id], snaps, has_successful_scan),
                 "finding_count": open_count,
+                "supporting_open_count": supporting_open,
                 "exception_count": len(exceptions),
                 "findings": open_finding_dicts,
                 "exceptions": exceptions,
                 "snapshots": snaps[:_SNAPSHOT_EMBED_LIMIT],
                 "snapshots_total": snapshots_total,
                 "snapshots_truncated": snapshots_total > _SNAPSHOT_EMBED_LIMIT,
-                "status_note": _control_status_note(status, open_count, exceptions),
+                "status_note": _control_status_note(
+                    status, open_count, exceptions, supporting_open=supporting_open
+                ),
                 "exception_narratives": _exception_narratives(exceptions),
                 "review_reason": _review_reason(status, open_count, open_finding_dicts, check_map[ctrl.id]),
-            }
+        }
+        cr_dict["audit_block"] = build_control_audit_block(
+            ctrl,
+            cr_dict,
+            check_map[ctrl.id],
+            since=since,
+            end=generated_at,
+            evidence_sources=evidence_sources,
         )
+        control_results.append(cr_dict)
 
     scan_runs = db.scalars(
         select(ScanRun)
@@ -209,6 +227,7 @@ def build_evidence_pack(
 
     buf = io.BytesIO()
     artifacts: list[tuple[str, bytes]] = []
+    vault_plan = None
 
     def _add(path: str, content: str | bytes) -> None:
         data = content.encode("utf-8") if isinstance(content, str) else content
@@ -229,12 +248,14 @@ def build_evidence_pack(
         timeline_csv = _build_timeline_csv(timeline_rows)
         _write("timeline.csv", timeline_csv)
 
+        pack_prov = build_pack_provenance(generated_at=generated_at)
         manifest = _build_source_manifest(
             acc, framework, period_days, generated_at, since,
             providers, snapshots, snap_by_type, scan_runs, mapped_check_ids,
             coverage=coverage,
             report_id=report_id,
             evidence_classes=evidence_classes_map,
+            pack_provenance=pack_prov,
         )
         _write("source_manifest.json", json.dumps(manifest, indent=2, default=str))
         _write("access_roster.json", json.dumps(access_roster, indent=2, default=str))
@@ -280,10 +301,13 @@ def build_evidence_pack(
                 "generated_at": generated_at.isoformat(),
                 "period_start": since.isoformat(),
                 "period_end": generated_at.isoformat(),
+                "audit_block": cr.get("audit_block"),
             }, indent=2))
             _write(folder + "findings.json", json.dumps(cr["findings"], indent=2, default=str))
             _write(folder + "exceptions.json", json.dumps(cr["exceptions"], indent=2, default=str))
             _write(folder + "snapshots.json", json.dumps(cr["snapshots"], indent=2, default=str))
+
+        from app.services.pack_signing import signing_enabled
 
         pdf_bytes = build_pdf(
             acc,
@@ -295,6 +319,9 @@ def build_evidence_pack(
             evidence_sources=evidence_sources,
             report_id=report_id,
             benchmark_coverage=cis_benchmark_coverage() if framework == "cis_aws_l1" else None,
+            coverage=coverage,
+            vault_enabled=vault_enabled(),
+            signature_enabled=signing_enabled(),
         )
         _write("report.pdf", pdf_bytes)
 
@@ -306,8 +333,6 @@ def build_evidence_pack(
         sig_doc = build_pack_signature(checksum_body)
         if sig_doc:
             _write("pack_signature.json", json.dumps(sig_doc, indent=2))
-
-        from app.services.evidence_vault import plan_auditor_access, plan_vault_upload, vault_enabled
 
         checksum_sha = None
         try:
@@ -324,16 +349,45 @@ def build_evidence_pack(
             content_sha256=checksum_sha,
             generated_at=generated_at,
             customer_s3_uri=None,
+            aws_account_id=acc.account_id,
         )
+
+    zip_bytes = buf.getvalue()
+    vault_upload_result: dict[str, Any] | None = None
+    if vault_plan and vault_enabled():
+        from app.services.evidence_vault import upload_pack_to_vault
+
+        try:
+            vault_upload_result = upload_pack_to_vault(vault_plan, zip_bytes)
+        except Exception:  # noqa: BLE001
+            log.exception("vault.upload_failed", report_id=report_id)
+            vault_upload_result = {"status": "error", "s3_uri": vault_plan.s3_uri}
         if vault_plan:
             vault_doc = vault_plan.to_manifest()
-            vault_doc["vault_enabled"] = vault_enabled()
+            vault_doc["vault_enabled"] = True
+            if vault_upload_result:
+                vault_doc["upload"] = vault_upload_result
             auditor = plan_auditor_access(vault_plan)
             if auditor:
                 vault_doc["auditor_access_plan"] = auditor.to_manifest()
-            _write("vault_upload_plan.json", json.dumps(vault_doc, indent=2))
+            out = io.BytesIO(zip_bytes)
+            with zipfile.ZipFile(out, "a", zipfile.ZIP_DEFLATED) as zf_append:
+                zf_append.writestr("vault_upload_plan.json", json.dumps(vault_doc, indent=2, default=str))
+                if vault_upload_result:
+                    zf_append.writestr(
+                        "vault_upload_result.json",
+                        json.dumps(vault_upload_result, indent=2, default=str),
+                    )
+            zip_bytes = out.getvalue()
+    elif vault_plan:
+        vault_doc = vault_plan.to_manifest()
+        vault_doc["vault_enabled"] = False
+        out = io.BytesIO(zip_bytes)
+        with zipfile.ZipFile(out, "a", zipfile.ZIP_DEFLATED) as zf_append:
+            zf_append.writestr("vault_upload_plan.json", json.dumps(vault_doc, indent=2, default=str))
+        zip_bytes = out.getvalue()
 
-    return buf.getvalue()
+    return zip_bytes
 
 
 def _entity_types_for_checks(check_ids: list[str]) -> list[str]:
@@ -497,31 +551,72 @@ def _build_identity_snapshots(
 
 
 def _build_access_roster(db: Session, account_id: uuid.UUID, as_of: datetime) -> dict[str, Any]:
-    """Point-in-time access roster from latest collected IAM + Identity Center users."""
-    iam_users = db.scalars(select(IamUser).where(IamUser.account_id == account_id)).all()
-    ic_users = db.scalars(select(IdentityCenterUser).where(IdentityCenterUser.account_id == account_id)).all()
-    return {
-        "as_of": as_of.isoformat(),
-        "iam_users": [
-            {
+    """Point-in-time access roster from latest evidence snapshots on or before ``as_of``."""
+    snaps = db.scalars(
+        select(EvidenceSnapshot)
+        .where(
+            EvidenceSnapshot.account_id == account_id,
+            EvidenceSnapshot.entity_type.in_(["iam_user", "identity_center_user"]),
+            EvidenceSnapshot.taken_at <= as_of,
+        )
+        .order_by(EvidenceSnapshot.taken_at.desc())
+    ).all()
+
+    latest: dict[tuple[str, str], EvidenceSnapshot] = {}
+    for s in snaps:
+        key = (s.entity_type, s.entity_id)
+        if key not in latest:
+            latest[key] = s
+
+    iam_users: list[dict[str, Any]] = []
+    ic_users: list[dict[str, Any]] = []
+    for (entity_type, _entity_id), snap in latest.items():
+        data = snap.payload_json or {}
+        if entity_type == "iam_user":
+            iam_users.append({
+                "arn": data.get("arn") or snap.entity_id,
+                "username": data.get("username"),
+                "mfa_enabled": data.get("mfa_active"),
+                "has_console_password": data.get("has_console_password"),
+                "last_used_at": data.get("last_used_at"),
+                "snapshot_at": snap.taken_at.isoformat(),
+            })
+        else:
+            ic_users.append({
+                "user_id": data.get("user_id"),
+                "user_name": data.get("user_name"),
+                "display_name": data.get("display_name"),
+                "email": data.get("email"),
+                "active": data.get("active"),
+                "snapshot_at": snap.taken_at.isoformat(),
+            })
+
+    # Fall back to live tables when no snapshots exist (pre-migration accounts).
+    if not iam_users and not ic_users:
+        for u in db.scalars(select(IamUser).where(IamUser.account_id == account_id)).all():
+            iam_users.append({
                 "arn": u.arn,
                 "username": u.name,
                 "mfa_enabled": u.mfa_enabled,
                 "has_console_password": u.has_console_password,
                 "last_used_at": u.password_last_used.isoformat() if u.password_last_used else None,
-            }
-            for u in iam_users
-        ],
-        "identity_center_users": [
-            {
+                "snapshot_at": None,
+            })
+        for u in db.scalars(select(IdentityCenterUser).where(IdentityCenterUser.account_id == account_id)).all():
+            ic_users.append({
                 "user_id": u.user_id,
                 "user_name": u.user_name,
                 "display_name": u.display_name,
                 "email": u.email,
                 "active": u.active,
-            }
-            for u in ic_users
-        ],
+                "snapshot_at": None,
+            })
+
+    return {
+        "as_of": as_of.isoformat(),
+        "source": "evidence_snapshots" if snaps else "live_tables_fallback",
+        "iam_users": iam_users,
+        "identity_center_users": ic_users,
         "summary": {
             "iam_user_count": len(iam_users),
             "identity_center_user_count": len(ic_users),
@@ -646,7 +741,8 @@ def _build_cicd_snapshots(
     return {"workflow_run": workflow_snaps, "ci_pipeline": pipeline_snaps}
 
 
-def _finding_dict(f: Finding) -> dict[str, Any]:
+def _finding_dict(f: Finding, *, state: str | None = None) -> dict[str, Any]:
+    effective = state if state is not None else f.status
     d: dict[str, Any] = {
         "id": str(f.id),
         "check_id": f.check_id,
@@ -654,12 +750,12 @@ def _finding_dict(f: Finding) -> dict[str, Any]:
         "title": f.title,
         "severity": f.severity,
         "risk_score": f.risk_score,
-        "status": f.status,
+        "status": effective,
         "first_seen": f.first_seen.isoformat(),
         "last_seen": f.last_seen.isoformat(),
         "evidence": f.evidence,
     }
-    if f.status == "excepted":
+    if effective == "excepted":
         d["exception"] = {
             "reason": f.exception_reason,
             "approved_by": f.exception_approved_by,
@@ -711,11 +807,22 @@ def _review_reason(
     return f"{open_count} open finding(s) mapped to this control require remediation or documented exception."
 
 
-def _control_status_note(status: str, open_count: int, exceptions: list[dict[str, Any]]) -> str:
+def _control_status_note(
+    status: str,
+    open_count: int,
+    exceptions: list[dict[str, Any]],
+    *,
+    supporting_open: int = 0,
+) -> str:
     if status == "pass" and exceptions:
-        return f"PASS with {len(exceptions)} approved exception(s) — no open findings"
+        return f"PASS with {len(exceptions)} approved exception(s) — no open benchmark findings"
+    if status == "pass" and supporting_open:
+        return (
+            f"PASS — {supporting_open} supporting finding(s) present; "
+            "does not fail benchmark control status"
+        )
     if status == "pass":
-        return "PASS — no open findings mapped to this control"
+        return "PASS — no open benchmark findings mapped to this control"
     if status == "no_data":
         return "NO DATA — no automated checks mapped or no scan data in period"
     if exceptions:
@@ -897,6 +1004,7 @@ def _build_source_manifest(
     coverage: dict[str, Any] | None = None,
     report_id: str | None = None,
     evidence_classes: dict[str, str] | None = None,
+    pack_provenance: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     integrations: list[dict[str, Any]] = [{
         "type": "aws",
@@ -916,10 +1024,11 @@ def _build_source_manifest(
     successful_scans = [r for r in scan_runs if r.status == "ok"]
 
     return {
-        "pack_version": "2.2",
+        "pack_version": (pack_provenance or {}).get("pack_version", "2.3"),
         "generated_at": generated_at.isoformat(),
         "report_id": report_id,
         "framework": framework,
+        "pack_provenance": pack_provenance,
         "evidence_class_labels": {
             "benchmark": evidence_class_label("benchmark"),
             "supporting": evidence_class_label("supporting"),

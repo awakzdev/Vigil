@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.db import get_db
+from app.core.auth_cookies import attach_refresh_cookie
 from app.core.security import current_principal, issue_mfa_challenge_token, issue_refresh_token, issue_token
 from app.models import AwsAccount, Org, User
 from app.routes.github_integration import handle_github_integration_callback, is_github_integration_state
@@ -60,7 +61,9 @@ def _oauth_login_redirect(user: User) -> RedirectResponse:
         return RedirectResponse(f"{_frontend_url()}/login?mfa_token={quote(mfa_token, safe='')}")
     token = issue_token(uid, oid)
     refresh = issue_refresh_token(uid, oid)
-    return RedirectResponse(f"{_frontend_url()}/auth/callback?token={token}&refresh_token={refresh}")
+    resp = RedirectResponse(f"{_frontend_url()}/auth/callback?token={quote(token, safe='')}")
+    attach_refresh_cookie(resp, refresh)
+    return resp
 
 
 def _oauth_link_redirect(user: User, provider: str) -> RedirectResponse:
@@ -69,12 +72,13 @@ def _oauth_link_redirect(user: User, provider: str) -> RedirectResponse:
     access = issue_token(uid, oid)
     refresh = issue_refresh_token(uid, oid)
     next_path = f"/account?{provider}=linked"
-    return RedirectResponse(
+    resp = RedirectResponse(
         f"{_frontend_url()}/auth/callback?"
         f"token={quote(access, safe='')}&"
-        f"refresh_token={quote(refresh, safe='')}&"
         f"next={quote(next_path, safe='')}"
     )
+    attach_refresh_cookie(resp, refresh)
+    return resp
 
 
 def _link_error_redirect(provider: str, error: str) -> RedirectResponse:

@@ -1166,6 +1166,9 @@ def build_pdf(
     evidence_sources: list[str] | None = None,
     report_id: str | None = None,
     benchmark_coverage: dict[str, Any] | None = None,
+    coverage: dict[str, Any] | None = None,
+    vault_enabled: bool = False,
+    signature_enabled: bool = False,
 ) -> bytes:
     rid = report_id or "SAMPLE"
     fw_short = _FRAMEWORK_SHORT.get(framework, framework.upper())
@@ -1204,6 +1207,23 @@ def build_pdf(
                 f"{mapped} of {total} CIS v5 Level 1 controls automated (curated subset)",
             )
         )
+    if coverage:
+        meta_rows.append(
+            (
+                "Evidence coverage",
+                coverage.get("coverage_label") or f"{coverage.get('days_with_data', 0)} of {coverage.get('days_requested', period_days)} days",
+            )
+        )
+        meta_rows.append(
+            ("Successful scans in period", str(coverage.get("successful_scans_in_period", 0))),
+        )
+        if coverage.get("last_failed_scan_at"):
+            meta_rows.append(("Last failed scan", str(coverage["last_failed_scan_at"])[:10]))
+        gaps = coverage.get("coverage_gaps") or []
+        if gaps:
+            meta_rows.append(("Coverage gaps (sample)", ", ".join(gaps[:5])))
+    meta_rows.append(("Pack signature", "enabled" if signature_enabled else "disabled"))
+    meta_rows.append(("Immutable vault archive", "written" if vault_enabled else "not configured"))
     _draw_meta_card(pdf, meta_rows, compact=True)
 
     passed = sum(1 for r in control_results if r["status"] == "pass")

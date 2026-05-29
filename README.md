@@ -152,7 +152,7 @@ vigil-evidence-soc2-2026-05-26.zip
 ## Key features
 
 **"What If?" / Control Impact tab**
-Before remediating, see what depends on a resource: service usage, last-accessed data, blast radius, policy diff (before/after). Confidence score based on 90-day activity window. Available for all 53 checks.
+Before remediating, see what depends on a resource: service usage, last-accessed data, blast radius, policy diff (before/after). Confidence score based on 90-day activity window. Available for all automated checks in the registry (~80+).
 
 **Exception workflow**
 Flag a finding as a formal documented exception: reason, approver, expiry date. Exceptions appear in evidence packs — auditors see them alongside open findings. Separate from snooze (which is operational deferral, not formal approval).
@@ -167,7 +167,7 @@ Every evidence item is timestamped with collection time and source API. Evidence
 
 ## AWS permissions
 
-Deployed via [`infra/cfn/hygiene-readonly-role.yaml`](infra/cfn/hygiene-readonly-role.yaml).
+Deployed via [`infra/cfn/vigil-readonly-role.yaml`](infra/cfn/vigil-readonly-role.yaml).
 
 **Read-only. No write permissions. Ever.**
 
@@ -199,12 +199,12 @@ api/
     models/       SQLAlchemy 2.0 tables
     routes/       auth, auth_oauth, accounts, findings, controls, exports, settings, integrations
     collectors/   boto3 → DB upserts (iam, s3, kms, ec2, rds, vpc, cloudtrail, cloudtrail_events, ...)
-    checks/       pure functions → FindingDraft (53 checks, registry, persist)
+    checks/       pure functions → FindingDraft (registry, persist)
     services/     evidence_pack, pdf_report, github_sync, gitlab_sync
     worker/       celery_app + tasks (run_scan, scan_all_accounts, send_weekly_digests)
   migrations/     Alembic (0001 → 0022)
 web/              React + Vite + Tailwind + TanStack Query
-infra/cfn/        hygiene-readonly-role.yaml
+infra/cfn/        vigil-readonly-role.yaml
 compose.yml
 ```
 
@@ -229,7 +229,9 @@ Shipped in-repo (narrow technical / design-partner launch):
 | **Root pass-state snapshots** | `account_summary` entity per scan (`GetAccountSummary` for `iam.root.*`) |
 | **CIS honesty** | `cis_benchmark_coverage.json` in CIS packs; PDF meta shows mapped vs CIS v5 L1 total (40) |
 | **Pack integrity** | `checksum_manifest.json` — SHA-256 per artifact (manifest not self-hashed) |
-| **CI** | `.github/workflows/ci.yml` — Postgres + Redis + `pytest` on push/PR |
+| **CI** | `.github/workflows/ci.yml` — API tests, frontend build, gitleaks, no tracked `.env` |
+| **Historical packs** | Control status at `as_of` from finding events; benchmark-only fail; roster from snapshots |
+| **Coverage honesty** | `days_with_data` = union of successful scan days + snapshot days (not elapsed since first scan) |
 
 Still manual / planned (not blockers for first design partners):
 

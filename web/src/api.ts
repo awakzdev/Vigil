@@ -1,21 +1,23 @@
 export const BASE = (import.meta.env.VITE_API_URL as string) || "http://localhost:8000";
 
+const ACCESS_KEY = "vigil_access_token";
+
+/** Short-lived access token in sessionStorage (refresh is HttpOnly cookie). */
 export function token(): string | null {
-  return localStorage.getItem("token");
+  return sessionStorage.getItem(ACCESS_KEY);
 }
 
-export function refreshToken(): string | null {
-  return localStorage.getItem("refresh_token");
+export function storeAccessToken(access: string) {
+  sessionStorage.setItem(ACCESS_KEY, access);
 }
 
-export function storeTokens(access: string, refresh: string) {
-  localStorage.setItem("token", access);
-  localStorage.setItem("refresh_token", refresh);
+/** @deprecated refresh is HttpOnly; kept for OAuth transition */
+export function storeTokens(access: string, _refresh?: string) {
+  storeAccessToken(access);
 }
 
 export function clearTokens() {
-  localStorage.removeItem("token");
-  localStorage.removeItem("refresh_token");
+  sessionStorage.removeItem(ACCESS_KEY);
 }
 
 function parseApiError(_status: number, body: string): string {
@@ -54,19 +56,18 @@ let _refreshing: Promise<string | null> | null = null;
 
 async function tryRefresh(): Promise<string | null> {
   if (_refreshing) return _refreshing;
-  const rt = refreshToken();
-  if (!rt) return null;
   _refreshing = (async () => {
     try {
       const res = await fetch(`${BASE}/v1/auth/refresh`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: rt }),
+        credentials: "include",
+        body: JSON.stringify({ refresh_token: "" }),
       });
       if (!res.ok) return null;
-      const data = await res.json();
-      storeTokens(data.access_token, data.refresh_token);
-      return data.access_token as string;
+      const data = (await res.json()) as { access_token: string };
+      storeAccessToken(data.access_token);
+      return data.access_token;
     } catch {
       return null;
     } finally {
@@ -83,13 +84,17 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
   };
   const t = token();
   if (t) headers["Authorization"] = `Bearer ${t}`;
-  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  const res = await fetch(`${BASE}${path}`, { ...init, headers, credentials: "include" });
 
   if (res.status === 401 && t) {
     const newToken = await tryRefresh();
     if (newToken) {
       const retryHeaders = { ...headers, Authorization: `Bearer ${newToken}` };
-      const retry = await fetch(`${BASE}${path}`, { ...init, headers: retryHeaders });
+      const retry = await fetch(`${BASE}${path}`, {
+        ...init,
+        headers: retryHeaders,
+        credentials: "include",
+      });
       if (retry.status === 401) {
         clearTokens();
         window.location.href = "/login";
@@ -100,16 +105,11 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
         throw new Error(parseApiError(retry.status, body));
       }
       if (retry.status === 204) return undefined as T;
-      return retry.json();
+      return retry.json() as Promise<T>;
     }
     clearTokens();
     window.location.href = "/login";
     throw new Error("session expired");
-  }
-
-  if (res.status === 401) {
-    const body = await res.text();
-    throw new Error(parseApiError(res.status, body));
   }
 
   if (!res.ok) {
@@ -117,5 +117,13 @@ export async function api<T = unknown>(path: string, init: RequestInit = {}): Pr
     throw new Error(parseApiError(res.status, body));
   }
   if (res.status === 204) return undefined as T;
-  return res.json();
+  return res.json() as Promise<T>;
+}
+
+export async function logout(): Promise<void> {
+  try {
+    await fetch(`${BASE}/v1/auth/logout`, { method: "POST", credentials: "include" });
+  } finally {
+    clearTokens();
+  }
 }

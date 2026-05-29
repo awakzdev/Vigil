@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 
 const LAST_SCAN_DURATION_KEY = "vigil:lastScanDurationMs";
-const DEFAULT_SCAN_DURATION_MS = 120_000;
+/** Fallback when no history and worker has not reported step progress yet. */
+const DEFAULT_SCAN_DURATION_MS = 600_000;
+
+export type WorkerProgress = { step: number; total: number };
 
 export function loadExpectedScanDurationMs(): number {
   const raw = localStorage.getItem(LAST_SCAN_DURATION_KEY);
@@ -29,9 +32,15 @@ type ScanProgress = {
   expectedMs: number;
   indeterminate: boolean;
   finishing: boolean;
+  progressStep: number | null;
+  progressTotal: number | null;
 };
 
-export function useScanProgress(active: boolean, startedAt: Date | null): ScanProgress {
+export function useScanProgress(
+  active: boolean,
+  startedAt: Date | null,
+  workerProgress?: WorkerProgress | null,
+): ScanProgress {
   const [now, setNow] = useState(Date.now());
   const expectedMs = loadExpectedScanDurationMs();
 
@@ -42,18 +51,59 @@ export function useScanProgress(active: boolean, startedAt: Date | null): ScanPr
     return () => clearInterval(id);
   }, [active]);
 
-  if (!active) {
-    return { progress: 0, elapsedMs: 0, remainingMs: null, expectedMs, indeterminate: false, finishing: false };
-  }
+  const empty: ScanProgress = {
+    progress: 0,
+    elapsedMs: 0,
+    remainingMs: null,
+    expectedMs,
+    indeterminate: false,
+    finishing: false,
+    progressStep: null,
+    progressTotal: null,
+  };
+
+  if (!active) return empty;
 
   if (!startedAt) {
-    return { progress: 0, elapsedMs: 0, remainingMs: null, expectedMs, indeterminate: true, finishing: false };
+    return { ...empty, indeterminate: true };
   }
 
   const elapsedMs = Math.max(0, now - startedAt.getTime());
+
+  if (workerProgress && workerProgress.total > 0) {
+    const step = Math.min(workerProgress.step, workerProgress.total);
+    const ratio = step / workerProgress.total;
+    const progress = Math.min(98, Math.max(2, ratio * 100));
+    const finishing = ratio >= 0.92;
+    let remainingMs: number | null = null;
+    if (step > 0 && !finishing) {
+      const msPerStep = elapsedMs / step;
+      remainingMs = Math.max(0, msPerStep * (workerProgress.total - step));
+    }
+    return {
+      progress,
+      elapsedMs,
+      remainingMs,
+      expectedMs,
+      indeterminate: false,
+      finishing,
+      progressStep: step,
+      progressTotal: workerProgress.total,
+    };
+  }
+
   const finishing = elapsedMs >= expectedMs;
   const progress = finishing ? 95 : Math.min(95, (elapsedMs / expectedMs) * 100);
   const remainingMs = finishing ? null : expectedMs - elapsedMs;
 
-  return { progress, elapsedMs, remainingMs, expectedMs, indeterminate: false, finishing };
+  return {
+    progress,
+    elapsedMs,
+    remainingMs,
+    expectedMs,
+    indeterminate: false,
+    finishing,
+    progressStep: null,
+    progressTotal: null,
+  };
 }

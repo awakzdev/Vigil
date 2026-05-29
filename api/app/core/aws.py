@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from typing import TYPE_CHECKING
@@ -9,6 +10,7 @@ import structlog
 from botocore.config import Config
 from botocore.exceptions import ClientError
 
+from app.core.aws_trust import merge_trust_principal, parse_role_account, parse_role_name
 from app.core.config import get_settings
 
 if TYPE_CHECKING:
@@ -36,13 +38,7 @@ def _audit_assume_role(
     error_code: str | None,
     error_message: str | None,
 ) -> None:
-    """Persist an audit log row for every sts:AssumeRole attempt.
-
-    Uses a fresh DB session so the audit write is isolated from any caller's
-    transaction (the caller might roll back, but the audit row must survive).
-    Errors writing the audit log are logged but never raised — we don't want
-    audit-table failures to break a scan.
-    """
+    """Persist an audit log row for every sts:AssumeRole attempt."""
     try:
         from app.core.db import SessionLocal
         from app.models import AssumeRoleAudit
@@ -67,6 +63,80 @@ def _audit_assume_role(
         log.exception("assume_role_audit.write_failed")
 
 
+def _caller_iam_principal() -> tuple[str, str]:
+    """Return (account_id, IAM ARN suitable for role trust Principal.AWS)."""
+    sts = boto3.client("sts", config=_boto_cfg)
+    ident = sts.get_caller_identity()
+    arn = ident["Arn"]
+    account_id = ident["Account"]
+    if ":assumed-role/" in arn:
+        role_name = arn.split(":assumed-role/")[1].split("/")[0]
+        iam = boto3.client("iam", config=_boto_cfg)
+        role_arn = iam.get_role(RoleName=role_name)["Role"]["Arn"]
+        return account_id, role_arn
+    return account_id, arn
+
+
+def ensure_vigil_role_trust(role_arn: str, external_id: str) -> bool:
+    """Add current caller + external_id to VigilReadOnly trust (dev only). Returns True if updated."""
+    if settings.APP_ENV != "dev":
+        return False
+    role_name = parse_role_name(role_arn)
+    if not role_name or not external_id:
+        return False
+    try:
+        caller_acct, caller_iam = _caller_iam_principal()
+    except ClientError:
+        log.warning("ensure_vigil_role_trust.caller_identity_failed")
+        return False
+    if caller_acct != parse_role_account(role_arn):
+        return False
+    iam = boto3.client("iam", config=_boto_cfg)
+    try:
+        doc = iam.get_role(RoleName=role_name)["Role"]["AssumeRolePolicyDocument"]
+        merged = merge_trust_principal(doc, caller_iam, external_id)
+        if merged == doc:
+            return False
+        iam.update_assume_role_policy(
+            RoleName=role_name,
+            PolicyDocument=json.dumps(merged),
+        )
+        log.info(
+            "ensure_vigil_role_trust.updated",
+            role_name=role_name,
+            principal=caller_iam,
+        )
+        return True
+    except ClientError as e:
+        log.warning(
+            "ensure_vigil_role_trust.failed",
+            role_name=role_name,
+            error_code=e.response.get("Error", {}).get("Code"),
+        )
+        return False
+
+
+def _dev_use_direct_session(role_arn: str) -> bool:
+    """Same-account dev: scan with SSO/admin creds when AssumeRole is blocked."""
+    if settings.APP_ENV != "dev":
+        return False
+    try:
+        caller_acct, _ = _caller_iam_principal()
+    except ClientError:
+        return False
+    return caller_acct == parse_role_account(role_arn)
+
+
+def _sts_assume(role_arn: str, external_id: str, session_name: str) -> dict:
+    sts = boto3.client("sts", config=_boto_cfg)
+    return sts.assume_role(
+        RoleArn=role_arn,
+        RoleSessionName=session_name,
+        ExternalId=external_id,
+        DurationSeconds=3600,
+    )
+
+
 def assume_role(
     role_arn: str,
     external_id: str,
@@ -77,30 +147,59 @@ def assume_role(
 ) -> boto3.Session:
     """Assume the customer's read-only role and return a session.
 
-    Every call (success or failure) is logged to `assume_role_audit` for
-    customer transparency and forensic trail. Pass `aws_account` so the
-    audit row is associated with the right org/account; omitting it still
-    creates an audit row but without those FKs.
+    In ``APP_ENV=dev``, if AssumeRole is denied for same-account SSO users we:
+    1) try to add the caller to the role trust policy, then retry AssumeRole;
+    2) if still denied, use the caller session directly (admin SSO already has read access).
     """
-    if settings.DEV_MODE:
-        return boto3.Session()
-    sts = boto3.client("sts", config=_boto_cfg)
     try:
-        resp = sts.assume_role(
-            RoleArn=role_arn,
-            RoleSessionName=session_name,
-            ExternalId=external_id,
-            DurationSeconds=3600,
-        )
+        resp = _sts_assume(role_arn, external_id, session_name)
     except ClientError as e:
         err = e.response.get("Error", {})
+        code = err.get("Code")
+        if code == "AccessDenied" and settings.APP_ENV == "dev":
+            if ensure_vigil_role_trust(role_arn, external_id):
+                try:
+                    resp = _sts_assume(role_arn, external_id, session_name)
+                    _audit_assume_role(
+                        aws_account=aws_account,
+                        role_arn=role_arn,
+                        session_name=session_name,
+                        purpose=purpose,
+                        success=True,
+                        error_code=None,
+                        error_message="dev: trust policy auto-updated",
+                    )
+                    c = resp["Credentials"]
+                    return boto3.Session(
+                        aws_access_key_id=c["AccessKeyId"],
+                        aws_secret_access_key=c["SecretAccessKey"],
+                        aws_session_token=c["SessionToken"],
+                    )
+                except ClientError:
+                    pass
+            if _dev_use_direct_session(role_arn):
+                log.warning(
+                    "assume_role.dev_direct_session",
+                    role_arn=role_arn,
+                    purpose=purpose,
+                )
+                _audit_assume_role(
+                    aws_account=aws_account,
+                    role_arn=role_arn,
+                    session_name=session_name,
+                    purpose=purpose,
+                    success=True,
+                    error_code=None,
+                    error_message="dev: direct session (SSO same account)",
+                )
+                return boto3.Session()
         _audit_assume_role(
             aws_account=aws_account,
             role_arn=role_arn,
             session_name=session_name,
             purpose=purpose,
             success=False,
-            error_code=err.get("Code"),
+            error_code=code,
             error_message=err.get("Message"),
         )
         raise

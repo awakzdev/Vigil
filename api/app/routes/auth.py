@@ -1,6 +1,7 @@
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, EmailStr, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,6 +17,12 @@ from app.core.security import (
     issue_mfa_challenge_token,
     issue_refresh_token,
     issue_token,
+)
+from app.core.auth_cookies import (
+    attach_refresh_cookie,
+    clear_refresh_cookie,
+    refresh_cookie_enabled,
+    refresh_token_from_request,
 )
 from app.core.totp import new_secret, provisioning_uri, qr_png_data_url, verify_totp
 from app.models import Org, User
@@ -46,8 +53,20 @@ class LoginIn(BaseModel):
 
 class TokenOut(BaseModel):
     access_token: str
-    refresh_token: str
+    refresh_token: str = ""
     org_id: str
+
+
+def _token_json_response(access_token: str, refresh_token: str, org_id: str) -> JSONResponse:
+    """Access token in JSON; refresh in HttpOnly cookie when enabled."""
+    payload: dict = {"access_token": access_token, "org_id": org_id}
+    if not refresh_cookie_enabled():
+        payload["refresh_token"] = refresh_token
+    else:
+        payload["refresh_token"] = ""
+    resp = JSONResponse(content=payload)
+    attach_refresh_cookie(resp, refresh_token)
+    return resp
 
 
 class LoginOut(BaseModel):
@@ -70,10 +89,10 @@ def _login_response(user: User) -> LoginOut:
 
 
 class RefreshIn(BaseModel):
-    refresh_token: str
+    refresh_token: str = ""
 
 
-@router.post("/signup", response_model=TokenOut)
+@router.post("/signup")
 @limiter.limit("5/minute")
 def signup(request: Request, body: SignupIn, db: Session = Depends(get_db)):
     if db.scalar(select(User).where(User.email == body.email)):
@@ -88,7 +107,7 @@ def signup(request: Request, body: SignupIn, db: Session = Depends(get_db)):
     db.add_all([org, user])
     db.commit()
     uid, oid = str(user.id), str(org.id)
-    return TokenOut(access_token=issue_token(uid, oid), refresh_token=issue_refresh_token(uid, oid), org_id=oid)
+    return _token_json_response(issue_token(uid, oid), issue_refresh_token(uid, oid), oid)
 
 
 @router.post("/login", response_model=LoginOut)
@@ -97,7 +116,14 @@ def login(request: Request, body: LoginIn, db: Session = Depends(get_db)):
     user = db.scalar(select(User).where(User.email == body.email))
     if not user or not user.password_hash or not verify_password(body.password, user.password_hash):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "bad credentials")
-    return _login_response(user)
+    out = _login_response(user)
+    if out.mfa_required:
+        return out
+    return _token_json_response(
+        out.access_token or "",
+        out.refresh_token or "",
+        out.org_id or "",
+    )
 
 
 class MfaVerifyIn(BaseModel):
@@ -105,7 +131,7 @@ class MfaVerifyIn(BaseModel):
     code: str
 
 
-@router.post("/mfa/verify", response_model=TokenOut)
+@router.post("/mfa/verify")
 @limiter.limit("30/minute")
 def mfa_verify(request: Request, body: MfaVerifyIn, db: Session = Depends(get_db)):
     payload = decode_mfa_challenge_token(body.mfa_token)
@@ -119,11 +145,7 @@ def mfa_verify(request: Request, body: MfaVerifyIn, db: Session = Depends(get_db
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "invalid code")
     clear_mfa_lockout(user_id)
     uid, oid = str(user.id), str(user.org_id)
-    return TokenOut(
-        access_token=issue_token(uid, oid),
-        refresh_token=issue_refresh_token(uid, oid),
-        org_id=oid,
-    )
+    return _token_json_response(issue_token(uid, oid), issue_refresh_token(uid, oid), oid)
 
 
 class MfaCodeIn(BaseModel):
@@ -199,18 +221,24 @@ def mfa_disable(
     db.commit()
 
 
-@router.post("/refresh", response_model=TokenOut)
-def refresh(body: RefreshIn, db: Session = Depends(get_db)):
-    payload = decode_refresh_token(body.refresh_token)
+@router.post("/refresh")
+def refresh(request: Request, body: RefreshIn, db: Session = Depends(get_db)):
+    raw = refresh_token_from_request(request, body.refresh_token)
+    if not raw:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "missing refresh token")
+    payload = decode_refresh_token(raw)
     user = db.get(User, uuid.UUID(payload["sub"]))
     if not user:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "user not found")
     uid, oid = str(user.id), str(user.org_id)
-    return TokenOut(
-        access_token=issue_token(uid, oid),
-        refresh_token=issue_refresh_token(uid, oid),
-        org_id=oid,
-    )
+    return _token_json_response(issue_token(uid, oid), issue_refresh_token(uid, oid), oid)
+
+
+@router.post("/logout", status_code=204)
+def logout():
+    resp = Response(status_code=204)
+    clear_refresh_cookie(resp)
+    return resp
 
 
 class MeOut(BaseModel):

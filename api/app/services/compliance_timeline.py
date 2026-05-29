@@ -10,18 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.models import Finding, FindingEvent, ScanRun
 from app.models.control import Control, CheckControl
-
-
-def _finding_active_at(f: Finding, t: datetime) -> bool:
-    if f.status == "ignored":
-        return False
-    if f.status in ("excepted", "snoozed"):
-        return False
-    if f.first_seen > t:
-        return False
-    if f.resolved_at and f.resolved_at <= t:
-        return False
-    return f.status == "open"
+from app.services.finding_history import (
+    finding_open_for_control,
+    finding_state_at,
+    load_events_by_finding,
+)
 
 
 def _control_status_at(
@@ -29,13 +22,17 @@ def _control_status_at(
     findings: list[Finding],
     t: datetime,
     has_scan_before: bool,
+    events_by_finding: dict,
 ) -> str:
     if not check_ids:
         return "no_data"
     if not has_scan_before:
         return "no_data"
     for f in findings:
-        if f.check_id in check_ids and _finding_active_at(f, t):
+        if f.check_id not in check_ids:
+            continue
+        state = finding_state_at(f, t, events_by_finding.get(f.id))
+        if finding_open_for_control(f, state):
             return "fail"
     return "pass"
 
@@ -63,6 +60,7 @@ def build_control_history(
         select(Finding).where(Finding.account_id == account_id)
     ).all()
     mapped_findings = [f for f in findings if f.check_id in check_ids]
+    events_by_finding = load_events_by_finding(db, [f.id for f in mapped_findings])
 
     scan_runs = db.scalars(
         select(ScanRun)
@@ -92,7 +90,7 @@ def build_control_history(
             (r.finished_at or r.started_at) <= mid and r.status == "ok"
             for r in scan_runs
         )
-        status = _control_status_at(check_ids, mapped_findings, mid, has_scan)
+        status = _control_status_at(check_ids, mapped_findings, mid, has_scan, events_by_finding)
         if segments and segments[-1]["status"] == status:
             segments[-1]["to"] = end.isoformat()
             segments[-1]["duration_seconds"] = int(
@@ -111,9 +109,13 @@ def build_control_history(
         mapped_findings,
         now,
         any(r.status == "ok" for r in scan_runs),
+        events_by_finding,
     )
 
-    open_findings = [f for f in mapped_findings if f.status == "open"]
+    open_findings = [
+        f for f in mapped_findings
+        if finding_open_for_control(f, finding_state_at(f, now, events_by_finding.get(f.id)))
+    ]
     failing_since: datetime | None = None
     if open_findings:
         failing_since = min(f.first_seen for f in open_findings)

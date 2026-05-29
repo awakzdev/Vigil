@@ -22,7 +22,7 @@ export default function AuthCallback() {
     const next = safeNext(params.get("next"));
 
     if (token) {
-      storeTokens(token, refreshToken ?? "");
+      storeTokens(token);
       nav(next, { replace: true });
     } else {
       nav(`/login?error=${error ?? "unknown"}`, { replace: true });

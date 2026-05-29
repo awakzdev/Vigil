@@ -272,7 +272,7 @@ function MetricStrip({
   ];
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div className="inline-flex flex-wrap items-center gap-x-1 gap-y-1 sm:gap-x-2">
       {segments.map((seg) => {
         const isActive = highlightActive && active === seg.key;
         const tone =
@@ -293,7 +293,7 @@ function MetricStrip({
             key={seg.key}
             type="button"
             onClick={() => onSelect(seg.key)}
-            className={`inline-flex min-w-[4.75rem] flex-col items-start rounded-lg px-3.5 py-2 transition ${tone} ${isActive ? "ring-1" : ""}`}
+            className={`inline-flex flex-col items-start rounded-lg px-2 py-1.5 transition sm:px-2.5 sm:py-2 ${tone} ${isActive ? "ring-1" : ""}`}
           >
             <span className={`tabular-nums leading-none ${seg.prominent ? "text-2xl font-bold" : "text-xl font-semibold"}`}>
               {seg.value}
@@ -810,14 +810,14 @@ export default function Findings() {
             <span className="text-sm font-medium text-indigo-700/90">{frameworkLabel(benchmarkFilter)} scope</span>
           )}
         </div>
-        <div className="mt-3 flex min-h-[4.25rem] flex-wrap items-center justify-between gap-x-4 gap-y-3">
+        <div className="mt-3 flex min-h-[4.25rem] flex-wrap items-center gap-x-4 gap-y-3">
           <MetricStrip
             totals={metricTotals}
             active={severityFilter}
             onSelect={handleMetricSelect}
             highlightActive={status === "open"}
           />
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 items-center gap-2 sm:ml-auto">
             <button onClick={downloadCsv} className="inline-flex items-center rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900">Export</button>
             <button onClick={() => { if (isRefreshing) return; qc.invalidateQueries({ queryKey: ["findings"] }); setIsRefreshing(true); }} disabled={isRefreshing} className="inline-flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3.5 py-2 text-sm font-semibold text-zinc-600 shadow-sm transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900 disabled:cursor-not-allowed disabled:opacity-50">{isRefreshing && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}Refresh</button>
             {connectedId && <button onClick={() => triggerScan(connectedId)} disabled={scanTriggered || isRunning} className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-3.5 py-2 text-sm font-semibold text-white shadow-sm shadow-indigo-600/20 transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50">{(scanTriggered || isRunning) && <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>}{isRunning ? "Scanning…" : scanTriggered ? "Starting…" : "Re-scan"}</button>}
@@ -834,6 +834,8 @@ export default function Findings() {
             remainingMs={scanProgress.remainingMs}
             finishing={scanProgress.finishing}
             indeterminate={scanProgress.indeterminate}
+            progressStep={scanProgress.progressStep}
+            progressTotal={scanProgress.progressTotal}
           />
         </div>
       )}

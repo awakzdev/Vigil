@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
-import { saveScanDurationMs, useScanProgress } from "./useScanProgress";
+import { saveScanDurationMs, useScanProgress, type WorkerProgress } from "./useScanProgress";
 
 export type ScanRunLatest = {
   id: string;
@@ -11,10 +11,12 @@ export type ScanRunLatest = {
   error?: string | null;
   failed_at?: string | null;
   error_type?: string | null;
+  progress_step?: number | null;
+  progress_total?: number | null;
 };
 
-const STARTING_TIMEOUT_MS = 3 * 60 * 1000;
-const SCAN_STUCK_MS = 5 * 60 * 1000;
+/** How long to show "starting" before the latest scan_run appears in the API. */
+const STARTING_TIMEOUT_MS = 5 * 60 * 1000;
 
 /** In-memory pending scans survive SPA navigation; sessionStorage survives refresh. */
 const pendingScanAtMs = new Map<string, number>();
@@ -71,6 +73,13 @@ function pendingMatchesRun(pendingAt: Date, run: ScanRunLatest): boolean {
   return false;
 }
 
+function workerProgressFromRun(run: ScanRunLatest | null | undefined): WorkerProgress | null {
+  const step = run?.progress_step;
+  const total = run?.progress_total;
+  if (step == null || total == null || total <= 0) return null;
+  return { step, total };
+}
+
 type UseTriggeredScanOptions = {
   onScanComplete?: () => void;
   /** Poll while idle (e.g. Accounts page) to catch scans started on other pages. */
@@ -103,12 +112,10 @@ export function useTriggeredScan(accountId: string | undefined, options?: UseTri
 
   const scanStatus = scanRun.data?.status ?? null;
   const scanStartedAt = scanRun.data?.started_at ? new Date(scanRun.data.started_at) : null;
-  const scanStuck = scanStartedAt ? Date.now() - scanStartedAt.getTime() > SCAN_STUCK_MS : false;
   const pendingFromStorage = accountId ? readPendingScan(accountId) : null;
   const pendingAt = localScanStartedAt ?? pendingFromStorage;
   const isRunning =
     scanStatus === "running" &&
-    !scanStuck &&
     !!scanRun.data &&
     (!pendingAt || pendingMatchesRun(pendingAt, scanRun.data));
   const isQueuePending = (scanTriggered || !!pendingFromStorage) && !isRunning;
@@ -118,7 +125,8 @@ export function useTriggeredScan(accountId: string | undefined, options?: UseTri
     : isQueuePending
       ? pendingAt
       : null;
-  const scanProgress = useScanProgress(isScanActive, effectiveScanStartedAt);
+  const workerProgress = isRunning ? workerProgressFromRun(scanRun.data) : null;
+  const scanProgress = useScanProgress(isScanActive, effectiveScanStartedAt, workerProgress);
 
   useEffect(() => {
     if (!accountId) return;
@@ -202,7 +210,6 @@ export function useTriggeredScan(accountId: string | undefined, options?: UseTri
     scanTriggered,
     isScanActive,
     scanProgress,
-    scanStuck,
     triggerScan,
   };
 }

@@ -1,0 +1,59 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Customer-hosted Vigil remediation executor (stub). Vigil control plane stays read-only;
+  this stack runs in YOUR account after you approve a remediation plan.
+
+Parameters:
+  RemediationRoleName:
+    Type: String
+    Default: VigilRemediationRole
+  LambdaName:
+    Type: String
+    Default: VigilRemediationRunner
+
+Resources:
+  RemediationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Ref RemediationRoleName
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: VigilRemediationStub
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:GetRole
+                  - iam:GetPolicy
+                Resource: "*"
+                Sid: ReadOnlyStub
+
+  RemediationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Ref LambdaName
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt RemediationRole.Arn
+      Timeout: 60
+      Code:
+        ZipFile: |
+          def handler(event, context):
+              # Replace with approved plan execution. Event should include plan_id, check_id, resource_arn.
+              print("vigil remediation stub", event)
+              return {"ok": True, "note": "wire your remediation actions here"}
+
+Outputs:
+  RemediationRoleArn:
+    Value: !GetAtt RemediationRole.Arn
+  RemediationFunctionArn:
+    Value: !GetAtt RemediationFunction.Arn

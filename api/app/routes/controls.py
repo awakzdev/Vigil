@@ -24,6 +24,7 @@ from app.services.check_evidence import all_evidence_classes, evidence_class_for
 from app.services.check_frameworks import check_framework_map, framework_catalog
 from app.services.cis_benchmark_coverage import cis_benchmark_coverage
 from app.services.compliance_timeline import build_control_history
+from app.services.finding_history import finding_open_for_control
 
 router = APIRouter()
 
@@ -82,6 +83,14 @@ def benchmark_coverage(framework: str, p=Depends(current_principal)):
     if framework == "cis_aws_l1":
         return cis_benchmark_coverage()
     raise HTTPException(status.HTTP_404_NOT_FOUND, "No coverage matrix for this framework")
+
+
+@router.get("/by-check/{check_id}")
+def controls_for_check(check_id: str, p=Depends(current_principal)):
+    """Control documentation for a finding's check_id (SOC 2 → CIS → ISO priority)."""
+    from app.services.check_controls import check_control_bundle
+
+    return check_control_bundle(check_id)
 
 
 @router.get("", response_model=list[ControlOut])
@@ -147,7 +156,7 @@ def list_controls(
 
         if not check_ids:
             ctrl_status = "no_data"
-        elif hits:
+        elif any(finding_open_for_control(f, f.status) for f in hits):
             ctrl_status = "fail"
         elif acc_id and acc and acc.last_scan_at:
             ctrl_status = "pass"

@@ -5,13 +5,16 @@ Only collects management/write events (not read-only calls) for a focused signal
 """
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timedelta, timezone
 
 import structlog
+from botocore.exceptions import ClientError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from app.collectors.cloudtrail import _discover_trails, _get_regions
 from app.core.aws import assume_role
 from app.models import AwsAccount
 from app.models.cloudtrail import CloudTrailEvent
@@ -61,75 +64,111 @@ def _dedupe_resources(resources: list[dict]) -> list[dict]:
     return out
 
 
+def _lookup_regions(sess) -> list[str]:
+    """Regions where LookupEvents must run (trail home regions, else all opted-in)."""
+    trails = _discover_trails(sess)
+    if trails:
+        return sorted({t.get("HomeRegion") or "us-east-1" for t in trails})
+    return _get_regions(sess)
+
+
 def collect_cloudtrail_events(db: Session, account: AwsAccount) -> int:
-    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-ct-events", aws_account=account, purpose="collect_cloudtrail_events")
-    ct = sess.client("cloudtrail", region_name="us-east-1")
+    sess = assume_role(
+        account.role_arn,
+        account.external_id,
+        session_name="vigil-ct-events",
+        aws_account=account,
+        purpose="collect_cloudtrail_events",
+    )
     now = datetime.now(timezone.utc)
     start = now - timedelta(days=_LOOKBACK_DAYS)
+    regions = _lookup_regions(sess)
 
     collected = 0
-    paginator = ct.get_paginator("lookup_events")
-    pages = paginator.paginate(
-        StartTime=start,
-        EndTime=now,
-        PaginationConfig={"MaxItems": _MAX_EVENTS_PER_RUN, "PageSize": 50},
-    )
+    seen_event_ids: set[str] = set()
 
-    try:
-        for page in pages:
-            for evt in page.get("Events", []):
-                event_name = evt.get("EventName", "")
-                if event_name not in TRACKED_EVENTS:
-                    continue
+    for region in regions:
+        if collected >= _MAX_EVENTS_PER_RUN:
+            break
+        try:
+            ct = sess.client("cloudtrail", region_name=region)
+            paginator = ct.get_paginator("lookup_events")
+            pages = paginator.paginate(
+                StartTime=start,
+                EndTime=now,
+                PaginationConfig={"MaxItems": _MAX_EVENTS_PER_RUN - collected, "PageSize": 50},
+            )
+            for page in pages:
+                for evt in page.get("Events", []):
+                    event_name = evt.get("EventName", "")
+                    if event_name not in TRACKED_EVENTS:
+                        continue
 
-                event_id = evt.get("EventId", "")
-                if not event_id:
-                    continue
+                    event_id = evt.get("EventId", "")
+                    if not event_id or event_id in seen_event_ids:
+                        continue
+                    seen_event_ids.add(event_id)
 
-                ct_event = (evt.get("CloudTrailEvent") or "{}")
-                if isinstance(ct_event, str):
-                    import json
-                    try:
-                        ct_event = json.loads(ct_event)
-                    except Exception:
-                        ct_event = {}
+                    ct_event = evt.get("CloudTrailEvent") or "{}"
+                    if isinstance(ct_event, str):
+                        try:
+                            ct_event = json.loads(ct_event)
+                        except Exception:
+                            ct_event = {}
 
-                actor = (
-                    (ct_event.get("userIdentity") or {}).get("arn")
-                    or (ct_event.get("userIdentity") or {}).get("userName")
-                    or evt.get("Username")
-                )
-                source_ip = ct_event.get("sourceIPAddress")
-                event_time = evt.get("EventTime", now)
-                resources = _dedupe_resources([
-                    {"type": r.get("ResourceType"), "name": r.get("ResourceName")}
-                    for r in (evt.get("Resources") or [])
-                ])
+                    actor = (
+                        (ct_event.get("userIdentity") or {}).get("arn")
+                        or (ct_event.get("userIdentity") or {}).get("userName")
+                        or evt.get("Username")
+                    )
+                    source_ip = ct_event.get("sourceIPAddress")
+                    event_time = evt.get("EventTime", now)
+                    resources = _dedupe_resources([
+                        {"type": r.get("ResourceType"), "name": r.get("ResourceName")}
+                        for r in (evt.get("Resources") or [])
+                    ])
 
-                stmt = pg_insert(CloudTrailEvent).values(
-                    id=uuid.uuid4(),
-                    account_id=account.id,
-                    event_id=event_id,
-                    event_name=event_name,
-                    event_source=evt.get("EventSource", ""),
-                    event_time=event_time,
-                    actor=actor,
-                    source_ip=source_ip,
-                    resources=resources,
-                    raw=ct_event,
-                    last_seen=now,
-                ).on_conflict_do_update(
-                    constraint="uq_cloudtrail_event_account_id",
-                    set_={"last_seen": now, "raw": ct_event},
-                )
-                db.execute(stmt)
-                collected += 1
+                    stmt = pg_insert(CloudTrailEvent).values(
+                        id=uuid.uuid4(),
+                        account_id=account.id,
+                        event_id=event_id,
+                        event_name=event_name,
+                        event_source=evt.get("EventSource", ""),
+                        event_time=event_time,
+                        actor=actor,
+                        source_ip=source_ip,
+                        resources=resources,
+                        raw=ct_event,
+                        last_seen=now,
+                    ).on_conflict_do_update(
+                        constraint="uq_cloudtrail_event_account_id",
+                        set_={"last_seen": now, "raw": ct_event},
+                    )
+                    db.execute(stmt)
+                    collected += 1
 
-            if collected >= _MAX_EVENTS_PER_RUN:
-                break
-    except Exception as e:  # noqa: BLE001
-        log.warning("cloudtrail_events.error", account_id=str(account.id), error=str(e))
+                if collected >= _MAX_EVENTS_PER_RUN:
+                    break
+        except ClientError as e:
+            log.warning(
+                "cloudtrail_events.lookup_failed",
+                account_id=str(account.id),
+                region=region,
+                error_code=e.response.get("Error", {}).get("Code"),
+            )
+        except Exception as e:  # noqa: BLE001
+            log.warning(
+                "cloudtrail_events.error",
+                account_id=str(account.id),
+                region=region,
+                error=str(e),
+            )
 
     db.commit()
-    log.info("cloudtrail_events.done", account_id=str(account.id), collected=collected)
+    log.info(
+        "cloudtrail_events.done",
+        account_id=str(account.id),
+        collected=collected,
+        regions=len(regions),
+    )
     return collected

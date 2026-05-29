@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timezone
 
 import structlog
+from botocore.exceptions import ClientError
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -19,14 +20,100 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
-    sess = assume_role(account.role_arn, account.external_id, session_name="vigil-cloudtrail", aws_account=account, purpose="collect_cloudtrail")
-    ct = sess.client("cloudtrail", region_name="us-east-1")
+def _get_regions(sess) -> list[str]:
+    ec2 = sess.client("ec2", region_name="us-east-1")
+    return [
+        r["RegionName"]
+        for r in ec2.describe_regions(
+            Filters=[{"Name": "opt-in-status", "Values": ["opt-in-not-required", "opted-in"]}]
+        )["Regions"]
+    ]
+
+
+def _discover_trails(sess) -> list[dict]:
+    """Return trail metadata from every opted-in region (deduped by ARN).
+
+    describe_trails is region-scoped; a trail whose home region is not us-east-1
+    is invisible to a single-region collector. get_trail_status must run in the
+    trail's home region.
+    """
+    seen: set[str] = set()
+    trails: list[dict] = []
+    for region in _get_regions(sess):
+        try:
+            ct = sess.client("cloudtrail", region_name=region)
+            for t in ct.describe_trails(includeShadowTrails=False).get("trailList", []):
+                arn = t.get("TrailARN", "")
+                if not arn or arn in seen:
+                    continue
+                seen.add(arn)
+                trails.append(t)
+        except ClientError as e:
+            log.warning(
+                "collect_cloudtrail.describe_failed",
+                region=region,
+                error_code=e.response.get("Error", {}).get("Code"),
+            )
+    return trails
+
+
+def _trail_is_logging(sess, trail: dict) -> bool:
+    home_region = trail.get("HomeRegion") or "us-east-1"
+    name = trail.get("Name", "")
+    arn = trail.get("TrailARN", "")
+    ct = sess.client("cloudtrail", region_name=home_region)
+    for identifier in (name, arn):
+        if not identifier:
+            continue
+        try:
+            return bool(ct.get_trail_status(Name=identifier).get("IsLogging", False))
+        except ClientError:
+            continue
+    return False
+
+
+def _inspect_s3_bucket(sess, bucket_name: str) -> tuple[bool, bool]:
+    """Return (s3_bucket_public, s3_bucket_logging_enabled)."""
+    s3_bucket_public = False
+    s3_bucket_logging_enabled = False
     s3 = sess.client("s3", region_name="us-east-1")
+    try:
+        pab = s3.get_public_access_block(Bucket=bucket_name).get("PublicAccessBlockConfiguration", {})
+        s3_bucket_public = not all([
+            pab.get("BlockPublicAcls", False),
+            pab.get("IgnorePublicAcls", False),
+            pab.get("BlockPublicPolicy", False),
+            pab.get("RestrictPublicBuckets", False),
+        ])
+    except ClientError:
+        try:
+            acl = s3.get_bucket_acl(Bucket=bucket_name)
+            for grant in acl.get("Grants", []):
+                grantee = grant.get("Grantee", {})
+                if grantee.get("URI") == "http://acs.amazonaws.com/groups/global/AllUsers":
+                    s3_bucket_public = True
+                    break
+        except ClientError:
+            pass
+    try:
+        log_cfg = s3.get_bucket_logging(Bucket=bucket_name).get("LoggingEnabled")
+        s3_bucket_logging_enabled = log_cfg is not None
+    except ClientError:
+        pass
+    return s3_bucket_public, s3_bucket_logging_enabled
+
+
+def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
+    sess = assume_role(
+        account.role_arn,
+        account.external_id,
+        session_name="vigil-cloudtrail",
+        aws_account=account,
+        purpose="collect_cloudtrail",
+    )
     count = 0
 
-    trails = ct.describe_trails(includeShadowTrails=False).get("trailList", [])
-    for t in trails:
+    for t in _discover_trails(sess):
         arn = t.get("TrailARN", "")
         name = t.get("Name", "")
         home_region = t.get("HomeRegion", "us-east-1")
@@ -39,35 +126,9 @@ def collect_cloudtrail(db: Session, account: AwsAccount) -> int:
         s3_bucket_public = False
         s3_bucket_logging_enabled = False
         if s3_bucket_name:
-            try:
-                pab = s3.get_public_access_block(Bucket=s3_bucket_name).get("PublicAccessBlockConfiguration", {})
-                s3_bucket_public = not all([
-                    pab.get("BlockPublicAcls", False),
-                    pab.get("IgnorePublicAcls", False),
-                    pab.get("BlockPublicPolicy", False),
-                    pab.get("RestrictPublicBuckets", False),
-                ])
-            except ClientError:
-                try:
-                    acl = s3.get_bucket_acl(Bucket=s3_bucket_name)
-                    for grant in acl.get("Grants", []):
-                        grantee = grant.get("Grantee", {})
-                        if grantee.get("URI") == "http://acs.amazonaws.com/groups/global/AllUsers":
-                            s3_bucket_public = True
-                            break
-                except ClientError:
-                    pass
-            try:
-                log_cfg = s3.get_bucket_logging(Bucket=s3_bucket_name).get("LoggingEnabled")
-                s3_bucket_logging_enabled = log_cfg is not None
-            except ClientError:
-                pass
+            s3_bucket_public, s3_bucket_logging_enabled = _inspect_s3_bucket(sess, s3_bucket_name)
 
-        try:
-            status = ct.get_trail_status(Name=arn)
-            is_logging = status.get("IsLogging", False)
-        except Exception:  # noqa: BLE001
-            is_logging = False
+        is_logging = _trail_is_logging(sess, t)
 
         stmt = pg_insert(CloudTrailTrail).values(
             id=uuid.uuid5(uuid.NAMESPACE_URL, f"{account.id}:{arn}"),

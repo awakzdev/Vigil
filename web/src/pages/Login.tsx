@@ -115,7 +115,7 @@ export default function Login() {
       throw new Error("missing access token");
     }
     clearMfaToken();
-    storeTokens(res.access_token, res.refresh_token ?? "");
+    storeTokens(res.access_token);
     nav("/findings");
   }
 
@@ -163,7 +163,7 @@ export default function Login() {
         body: JSON.stringify({ mfa_token: mfaToken, code: mfaCode }),
       });
       clearMfaToken();
-      storeTokens(res.access_token, res.refresh_token);
+      storeTokens(res.access_token);
       nav("/findings");
     } catch (e) {
       const msg = formatApiError(e);

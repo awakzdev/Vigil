@@ -111,6 +111,11 @@ export const remediationSummaries: Record<string, RemediationSummary> = {
     risk: "No audit trail for bucket access.",
     fix: "Enable logging to a dedicated log bucket.",
   },
+  "kms.key.policy_wildcard_principal": {
+    impact: "KMS key policy allows wildcard principal.",
+    risk: "Any principal matching the policy may use the key.",
+    fix: "Remove `Principal: *` and scope to specific accounts or roles.",
+  },
   "kms.key.no_rotation": {
     impact: "KMS key rotation disabled.",
     risk: "Longer exposure window if key material leaks.",

@@ -188,6 +188,24 @@ def create_exception(finding_id: str, body: ExceptionIn, p=Depends(current_princ
     return _to_out(f)
 
 
+@router.get("/{finding_id}/remediation-plan")
+def remediation_plan(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    """Customer-hosted remediation plan (Vigil stays read-only)."""
+    from app.services.remediation_plan import build_remediation_plan
+
+    f = _get_owned(db, p, finding_id)
+    return build_remediation_plan(f)
+
+
+@router.get("/{finding_id}/iac-snippets")
+def iac_snippets(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    """Deterministic Terraform / CLI snippets (Phase 1 — not automatic PR)."""
+    from app.services.iac_snippets import build_iac_remediation
+
+    f = _get_owned(db, p, finding_id)
+    return build_iac_remediation(f)
+
+
 @router.post("/{finding_id}/recheck")
 def recheck(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
     from app.worker.tasks import recheck_finding

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, token } from "../api";
 import { labelForCheck } from "../data/checkLabels";
 import { FRAMEWORKS } from "../data/frameworks";
@@ -895,7 +895,13 @@ function useFrameworkPassRate(framework: string, accountId: string | undefined, 
 
 export default function Controls() {
   const navigate = useNavigate();
-  const [framework, setFramework] = useState("soc2");
+  const [searchParams] = useSearchParams();
+  const urlFramework = searchParams.get("framework");
+  const urlControl = searchParams.get("control");
+  const urlAccountId = searchParams.get("account_id");
+  const [framework, setFramework] = useState(
+    () => (urlFramework && FRAMEWORKS.some((f) => f.id === urlFramework) ? urlFramework : "soc2"),
+  );
   const [selectedFamilyKey, setSelectedFamilyKey] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [downloading, setDownloading] = useState(false);
@@ -911,17 +917,35 @@ export default function Controls() {
   });
 
   const connectedAccount = accounts.data?.find((a) => a.status === "connected");
-  const hasScanned = !!connectedAccount?.last_scan_at;
+  const activeAccount =
+    (urlAccountId && accounts.data?.find((a) => a.id === urlAccountId && a.status === "connected")) ||
+    connectedAccount;
+  const hasScanned = !!activeAccount?.last_scan_at;
   const activeFramework = FRAMEWORKS.find((fw) => fw.id === framework)!;
 
   const controls = useQuery({
-    queryKey: ["controls", framework, connectedAccount?.id],
+    queryKey: ["controls", framework, activeAccount?.id],
     queryFn: () =>
       api<ControlRow[]>(
-        `/v1/controls?framework=${framework}${connectedAccount ? `&account_id=${connectedAccount.id}` : ""}`
+        `/v1/controls?framework=${framework}${activeAccount ? `&account_id=${activeAccount.id}` : ""}`
       ),
     enabled: !accounts.isLoading,
   });
+
+  const deepLinkDone = useRef(false);
+  useEffect(() => {
+    deepLinkDone.current = false;
+  }, [framework, urlControl]);
+
+  useEffect(() => {
+    if (!urlControl || !controls.data?.length || deepLinkDone.current) return;
+    const match = controls.data.find((r) => r.control_id === urlControl);
+    if (match) {
+      deepLinkDone.current = true;
+      setSelectedFamilyKey(controlFamily(framework, match.control_id).key);
+      setExpanded(match.id);
+    }
+  }, [controls.data, urlControl, framework]);
 
   const cisCoverage = useQuery({
     queryKey: ["benchmark-coverage", "cis_aws_l1"],
@@ -936,7 +960,7 @@ export default function Controls() {
     queryKey: ["findings", "open", connectedAccount?.id, "controls-meta"],
     queryFn: () =>
       api<{ items: OpenFindingMeta[] }>(`/v1/findings?status=open&limit=500`),
-    enabled: !!connectedAccount && hasScanned,
+    enabled: !!activeAccount && hasScanned,
     select: (data) => {
       const map = new Map<string, OpenFindingMeta>();
       for (const f of data.items) map.set(f.id, f);
@@ -947,15 +971,15 @@ export default function Controls() {
   const findingMap = openFindingsMeta.data ?? new Map<string, OpenFindingMeta>();
 
   const evidenceCoverage = useQuery({
-    queryKey: ["evidence-coverage", connectedAccount?.id, period, asOf],
+    queryKey: ["evidence-coverage", activeAccount?.id, period, asOf],
     queryFn: () => {
       const params = new URLSearchParams({ period: String(period) });
       if (asOf.trim()) params.set("as_of", asOf.trim());
       return api<EvidenceCoverage>(
-        `/v1/accounts/${connectedAccount!.id}/evidence-coverage?${params}`
+        `/v1/accounts/${activeAccount!.id}/evidence-coverage?${params}`
       );
     },
-    enabled: !!connectedAccount && hasScanned,
+    enabled: !!activeAccount && hasScanned,
   });
 
   useEffect(() => {
@@ -1004,13 +1028,13 @@ export default function Controls() {
   }, [rows]);
 
   async function downloadPack() {
-    if (!connectedAccount) return;
+    if (!activeAccount) return;
     setDownloading(true);
     try {
       const tok = token();
       const params = new URLSearchParams({
         framework,
-        account_id: connectedAccount.id,
+        account_id: activeAccount.id,
         period: String(period),
       });
       if (asOf.trim()) params.set("as_of", asOf.trim());
@@ -1484,17 +1508,17 @@ export default function Controls() {
                               <p className="text-sm leading-relaxed text-zinc-700">{controlSummary(ctrl)}</p>
                             )}
 
-                            {connectedAccount && hasScanned && ctrl.check_ids.length > 0 && (
+                            {activeAccount && hasScanned && ctrl.check_ids.length > 0 && (
                               <div className={`${ctrl.narrative || ctrl.description ? "mt-4" : "mt-0"}`}>
                                 <EvidencePreviewPanel
                                   controlId={ctrl.control_id}
-                                  accountId={connectedAccount.id}
+                                  accountId={activeAccount.id}
                                   period={period}
                                 />
                                 <ControlHistoryPanel
                                   controlId={ctrl.control_id}
                                   framework={framework}
-                                  accountId={connectedAccount.id}
+                                  accountId={activeAccount.id}
                                   period={period}
                                 />
                               </div>

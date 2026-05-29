@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from botocore.exceptions import ClientError
 
-from app.core.aws import assume_role, verify_account
+from app.core.aws import assume_role, ensure_vigil_role_trust, verify_account
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.iam_usage import (
@@ -173,6 +173,20 @@ def iam_history(
     return build_iam_history(db, acc.id, end)
 
 
+@router.post("/{account_id}/sync-local-trust", status_code=200)
+def sync_local_trust(account_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
+    """Dev helper: add your current AWS caller (e.g. SSO) to VigilReadOnly trust policy."""
+    if settings.APP_ENV != "dev":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "only available in dev")
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    if not acc.role_arn:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "connect the account first")
+    updated = ensure_vigil_role_trust(acc.role_arn, acc.external_id)
+    return {"ok": True, "trust_policy_updated": updated}
+
+
 @router.post("/{account_id}/verify", response_model=AccountOut)
 def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Session = Depends(get_db)):
     acc = db.get(AwsAccount, uuid.UUID(account_id))
@@ -243,6 +257,8 @@ class ScanRunOut(BaseModel):
     error_type: str | None = None  # exception class name
     findings_opened: int
     findings_resolved: int
+    progress_step: int | None = None  # worker phase counter (from stats._progress_step)
+    progress_total: int | None = None  # total phases (from stats._progress_total)
 
 
 @router.get("/{account_id}/scan-runs/latest", response_model=ScanRunOut | None)
@@ -269,6 +285,8 @@ def latest_scan_run(account_id: str, p=Depends(current_principal), db: Session =
         error_type=stats.get("error_type"),
         findings_opened=run.findings_opened or 0,
         findings_resolved=run.findings_resolved or 0,
+        progress_step=stats.get("_progress_step"),
+        progress_total=stats.get("_progress_total"),
     )
 
 
@@ -1586,11 +1604,13 @@ def get_timeline(
         .where(CloudTrailEvent.account_id == acc.id)
     ) or 0
 
+    logging_active = any(t.is_logging for t in trails) or events_in_account > 0
+
     return {
         "events": result,
         "total": len(result),
         "meta": {
-            "cloudtrail_logging": any(t.is_logging for t in trails),
+            "cloudtrail_logging": logging_active,
             "trail_count": len(trails),
             "events_in_account": events_in_account,
             "last_scan_at": acc.last_scan_at.isoformat() if acc.last_scan_at else None,

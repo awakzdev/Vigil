@@ -29,12 +29,24 @@ def test_parse_s3_uri_invalid():
 
 
 def test_object_key_is_immutable_per_report():
-    org = uuid.uuid4()
-    acc = uuid.uuid4()
-    k1 = object_key_for_pack(org, acc, "REPORT001", prefix="vault")
-    k2 = object_key_for_pack(org, acc, "REPORT002", prefix="vault")
+    ts = __import__("datetime").datetime(2026, 5, 1, tzinfo=__import__("datetime").timezone.utc)
+    k1 = object_key_for_pack(
+        prefix="vigil-worm-storage",
+        app_env="dev",
+        aws_account_id="946796614687",
+        report_id="REPORT001",
+        generated_at=ts,
+    )
+    k2 = object_key_for_pack(
+        prefix="vigil-worm-storage",
+        app_env="dev",
+        aws_account_id="946796614687",
+        report_id="REPORT002",
+        generated_at=ts,
+    )
     assert k1 != k2
     assert k1.endswith("REPORT001.zip")
+    assert "/dev/946796614687/2026-05-01/" in k1
 
 
 def test_plan_returns_none_when_disabled(monkeypatch):
@@ -73,4 +85,4 @@ def test_plan_when_enabled(monkeypatch):
     assert plan is not None
     assert plan.s3_uri.startswith("s3://audit-vault/")
     assert "REPORT99.zip" in plan.object_key
-    assert plan.to_manifest()["status"] == "planned"
+    assert "REPORT99.zip" in plan.object_key

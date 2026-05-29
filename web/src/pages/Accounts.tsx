@@ -28,30 +28,6 @@ function AwsIcon({ className = "h-full w-full max-h-16 object-contain" }: { clas
   return <img src="/aws.png" alt="AWS" className={className} />;
 }
 
-type ControlRow = { status: string };
-
-function useComplianceScore(framework: string, accountId: string | null, enabled: boolean) {
-  return useQuery({
-    queryKey: ["controls", framework, accountId],
-    queryFn: () =>
-      api<ControlRow[]>(
-        `/v1/controls?framework=${framework}${accountId ? `&account_id=${accountId}` : ""}`
-      ),
-    enabled: enabled && !!accountId,
-    select: (rows) => {
-      const total = rows.length;
-      const passed = rows.filter((r) => r.status === "pass").length;
-      return total === 0 ? null : Math.round((passed / total) * 100);
-    },
-  });
-}
-
-function averageCompliance(...scores: (number | null | undefined)[]): number | null {
-  const valid = scores.filter((s): s is number => s != null);
-  if (valid.length === 0) return null;
-  return Math.round(valid.reduce((sum, s) => sum + s, 0) / valid.length);
-}
-
 function scanAgeMs(iso: string | null): number | null {
   if (!iso) return null;
   const d = new Date(iso);
@@ -244,161 +220,9 @@ function CompactTokenField({ value, maxWidth = "max-w-xs" }: { value: string; ma
   );
 }
 
-function postureBarTone(score: number): string {
-  if (score >= 80) return "bg-emerald-500";
-  if (score >= 40) return "bg-amber-500";
-  return "bg-orange-500";
-}
-
-function frameworkScoreTextClass(score: number | null | undefined): string {
-  if (score == null) return "text-zinc-400";
-  if (score >= 80) return "text-emerald-700";
-  if (score >= 40) return "text-amber-700";
-  return "text-orange-600";
-}
-
-function complianceRingColor(score: number): { arc: string; text: string } {
-  if (score >= 80) return { arc: "text-emerald-500", text: "text-emerald-700" };
-  if (score >= 40) return { arc: "text-amber-400", text: "text-amber-700" };
-  return { arc: "text-orange-500", text: "text-orange-600" };
-}
-
-/** Donut only — no caption (used inside expanded security posture). */
-function ComplianceRingGraphic({ score, size = 46 }: { score: number | null; size?: number }) {
-  const strokeWidth = 3;
-  const radius = (size - strokeWidth) / 2;
-  const circumference = 2 * Math.PI * radius;
-
-  if (score == null) {
-    return (
-      <div
-        className="flex shrink-0 items-center justify-center rounded-full border border-dashed border-zinc-200/80 bg-zinc-50/50"
-        style={{ width: size, height: size }}
-      >
-        <span className="text-xs font-medium text-zinc-300">—</span>
-      </div>
-    );
-  }
-
-  const colors = complianceRingColor(score);
-  const offset = circumference - (score / 100) * circumference;
-
-  return (
-    <div className="relative shrink-0" style={{ width: size, height: size }} aria-hidden>
-      <svg width={size} height={size} className="-rotate-90">
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={strokeWidth}
-          className="text-zinc-200/80"
-        />
-        <circle
-          cx={size / 2}
-          cy={size / 2}
-          r={radius}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={strokeWidth}
-          strokeDasharray={circumference}
-          strokeDashoffset={offset}
-          strokeLinecap="round"
-          className={colors.arc}
-        />
-      </svg>
-      <div className="absolute inset-0 flex items-center justify-center">
-        <span className={`text-sm font-semibold tabular-nums leading-none ${colors.text}`}>
-          {score}%
-        </span>
-      </div>
-    </div>
-  );
-}
-
-function SecurityPostureDetail({
-  score,
-  soc2,
-  cis,
-  iso,
-  loading,
-  hasScanned,
-}: {
-  score: number | null;
-  soc2: number | null | undefined;
-  cis: number | null | undefined;
-  iso: number | null | undefined;
-  loading?: boolean;
-  hasScanned: boolean;
-}) {
-  if (!hasScanned && !loading) {
-    return (
-      <p className="text-sm text-zinc-500">Run a scan to compute security posture.</p>
-    );
-  }
-
-  if (loading) {
-    return (
-      <div className="flex items-start gap-4" aria-hidden>
-        <div className="h-[46px] w-[46px] shrink-0 animate-pulse rounded-full bg-zinc-100" />
-        <div className="min-w-0 pt-0.5">
-          <div className="h-3.5 w-28 animate-pulse rounded bg-zinc-200/70" />
-          <div className="mt-2.5 h-2 w-56 max-w-full animate-pulse rounded-full bg-zinc-100" />
-          <div className="mt-2 h-3 w-52 animate-pulse rounded bg-zinc-100" />
-        </div>
-      </div>
-    );
-  }
-
-  const benchmarks = [
-    { label: "SOC2", score: soc2 },
-    { label: "CIS", score: cis },
-    { label: "ISO", score: iso },
-  ];
-
-  return (
-    <div
-      className="flex items-start gap-4"
-      role="group"
-      aria-label={score != null ? `Security posture ${score}% passing` : "Security posture"}
-    >
-      <ComplianceRingGraphic score={score} />
-      <div className="min-w-0 pt-0.5">
-        <p className="text-xs font-medium text-zinc-600">Security posture</p>
-        {score != null && (
-          <div
-            className="mt-2 h-2 w-56 max-w-full overflow-hidden rounded-full bg-zinc-100"
-            role="progressbar"
-            aria-valuenow={score}
-            aria-valuemin={0}
-            aria-valuemax={100}
-          >
-            <div
-              className={`h-full rounded-full transition-[width] duration-500 ${postureBarTone(score)}`}
-              style={{ width: `${score}%` }}
-            />
-          </div>
-        )}
-        <p className="mt-2 text-xs tabular-nums text-zinc-500">
-          {benchmarks.map((b, i) => (
-            <span key={b.label}>
-              {i > 0 && <span className="text-zinc-300"> · </span>}
-              <span className="text-zinc-500">{b.label} </span>
-              <span className={`font-medium ${frameworkScoreTextClass(b.score)}`}>
-                {b.score != null ? `${b.score}%` : "—"}
-              </span>
-            </span>
-          ))}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function DetailCell({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="min-w-0">
+    <div className="w-fit max-w-full min-w-0">
       <p className="text-[10px] font-semibold uppercase tracking-wider leading-none text-zinc-400">{label}</p>
       <div className="mt-1.5 flex min-h-[34px] items-center">{children}</div>
     </div>
@@ -413,12 +237,6 @@ const dangerGhostBtn =
 
 function AccountDetailsPanel({
   acc,
-  soc2,
-  cis,
-  iso,
-  complianceAvg,
-  hasScanned,
-  complianceLoading,
   isScanActive,
   scanError,
   showUpdateArn,
@@ -431,12 +249,6 @@ function AccountDetailsPanel({
   removePending,
 }: {
   acc: Account;
-  soc2: number | null | undefined;
-  cis: number | null | undefined;
-  iso: number | null | undefined;
-  complianceAvg: number | null;
-  hasScanned: boolean;
-  complianceLoading: boolean;
   isScanActive: boolean;
   scanError: string | null;
   showUpdateArn: boolean;
@@ -497,30 +309,19 @@ function AccountDetailsPanel({
         </div>
       )}
 
-      <div className="grid gap-4 px-4 py-3 sm:grid-cols-2">
+      <div className="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-start sm:gap-x-6 sm:gap-y-3">
         <DetailCell label="External ID">
-          <CompactTokenField value={acc.external_id} />
+          <CompactTokenField value={acc.external_id} maxWidth="max-w-[18rem]" />
         </DetailCell>
         <DetailCell label="Role ARN">
           {roleDisplay ? (
-            <CompactTokenField value={roleDisplay} maxWidth="max-w-sm" />
+            <CompactTokenField value={roleDisplay} maxWidth="max-w-[28rem]" />
           ) : (
             <div className={metadataFieldShell}>
               <span className="text-[11px] text-zinc-400">—</span>
             </div>
           )}
         </DetailCell>
-      </div>
-
-      <div className="border-t border-zinc-200/60 px-4 py-4">
-        <SecurityPostureDetail
-          score={complianceAvg}
-          soc2={soc2}
-          cis={cis}
-          iso={iso}
-          loading={complianceLoading}
-          hasScanned={hasScanned}
-        />
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3 border-t border-zinc-200/60 px-4 py-3">
@@ -1019,10 +820,6 @@ function AccountCard({
     },
   });
 
-  const soc2 = useComplianceScore("soc2", acc.id, connected && hasScanned);
-  const cis = useComplianceScore("cis_aws_l1", acc.id, connected && hasScanned);
-  const iso = useComplianceScore("iso27001", acc.id, connected && hasScanned);
-
   const remove = useMutation({
     mutationFn: () => api(`/v1/accounts/${acc.id}`, { method: "DELETE" }),
     onSuccess: () => {
@@ -1032,8 +829,6 @@ function AccountCard({
   });
 
   const hasStats = connected && hasScanned && !!stats;
-  const complianceAvg = averageCompliance(soc2.data, cis.data, iso.data);
-  const complianceLoading = soc2.isLoading || cis.isLoading || iso.isLoading;
 
   return (
     <div className={`group ${cardClass} ${!connected ? "border-l-[3px] border-l-amber-400" : ""}`}>
@@ -1114,13 +909,29 @@ function AccountCard({
             remainingMs={scanProgress.remainingMs}
             finishing={scanProgress.finishing}
             indeterminate={scanProgress.indeterminate}
+            progressStep={scanProgress.progressStep}
+            progressTotal={scanProgress.progressTotal}
+            className="mb-0"
           />
+        </div>
+      )}
+
+      {connected && !isScanActive && scanStatus === "error" && scanRun.data?.error && (
+        <div className="border-t border-red-100/80 bg-red-50/60 px-4 py-2.5 text-xs text-red-700">
+          <span className="font-semibold">Last scan failed</span>
+          {scanRun.data.failed_at && (
+            <>
+              {" "}
+              at <code className="rounded bg-red-100 px-1 font-mono">{scanRun.data.failed_at}</code>
+            </>
+          )}
+          <div className="mt-1 line-clamp-2 break-words text-red-700/90">{scanRun.data.error}</div>
         </div>
       )}
 
       {connected && !hasScanned && !isScanActive && (
         <div className="border-t border-zinc-100/80 bg-zinc-50/40 px-4 py-2.5 text-center text-xs text-zinc-500">
-          Run a scan to populate findings and compliance scores.
+          Run a scan to populate findings.
         </div>
       )}
 
@@ -1157,12 +968,6 @@ function AccountCard({
             <div className="border-t border-zinc-200/60 bg-zinc-50/50">
               <AccountDetailsPanel
                 acc={acc}
-                soc2={soc2.data}
-                cis={cis.data}
-                iso={iso.data}
-                complianceAvg={complianceAvg}
-                hasScanned={hasScanned}
-                complianceLoading={complianceLoading}
                 isScanActive={isScanActive}
                 scanError={
                   scanStatus === "error" && scanRun.data?.error
@@ -1316,7 +1121,7 @@ export default function Accounts() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-zinc-950">AWS Accounts</h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Connected accounts, scan freshness, and security posture at a glance.
+            Connected accounts and scan freshness at a glance.
           </p>
         </div>
         {accs.length > 0 && (
