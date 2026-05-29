@@ -23,7 +23,7 @@
     {"id": "1.16", "title": "Ensure a support role exists to manage incidents with AWS Support", "vigil_status": "manual"},
     {"id": "1.17", "title": "Ensure IAM instance roles are used for AWS resource access", "vigil_status": "manual"},
     {"id": "1.18", "title": "Ensure expired SSL/TLS certificates in IAM are removed", "vigil_status": "manual"},
-    {"id": "1.19", "title": "Ensure IAM Access Analyzer is enabled in all regions", "vigil_status": "extended", "vigil_check_ids": ["aws.access_analyzer.not_enabled"]},
+    {"id": "1.19", "title": "Ensure IAM Access Analyzer is enabled in all regions", "vigil_status": "automated", "vigil_check_ids": ["aws.access_analyzer.not_enabled"]},
     {"id": "1.20", "title": "Ensure IAM password policy expires passwords within 90 days", "vigil_status": "partial", "vigil_check_ids": ["iam.account.password_policy_weak"]},
     {"id": "1.21", "title": "Ensure access to AWSCloudShellFullAccess is restricted", "vigil_status": "manual"},
     {"id": "1.22", "title": "Ensure no customer-managed policy allows full admin (*:*)", "vigil_status": "automated", "vigil_check_ids": ["iam.role.full_admin_policy"]},
@@ -35,17 +35,17 @@
     {"id": "2.3.1", "title": "Ensure RDS storage is encrypted", "vigil_status": "automated", "vigil_check_ids": ["rds.instance.no_encryption"]},
     {"id": "2.3.2", "title": "Ensure RDS instances are not publicly accessible", "vigil_status": "automated", "vigil_check_ids": ["rds.instance.publicly_accessible"]},
     {"id": "2.3.3", "title": "Ensure RDS automated backups are enabled", "vigil_status": "automated", "vigil_check_ids": ["rds.instance.no_automated_backup"]},
-    {"id": "3.1", "title": "Ensure CloudTrail is enabled in all regions", "vigil_status": "extended", "vigil_check_ids": ["cloudtrail.trail.not_enabled"]},
-    {"id": "3.2", "title": "Ensure CloudTrail log file validation is enabled", "vigil_status": "extended", "vigil_check_ids": ["cloudtrail.trail.no_log_validation"]},
+    {"id": "3.1", "title": "Ensure CloudTrail is enabled in all regions", "vigil_status": "automated", "vigil_check_ids": ["cloudtrail.trail.not_enabled"]},
+    {"id": "3.2", "title": "Ensure CloudTrail log file validation is enabled", "vigil_status": "automated", "vigil_check_ids": ["cloudtrail.trail.no_log_validation"]},
     {"id": "3.3", "title": "Ensure CloudTrail logs are encrypted at rest with KMS", "vigil_status": "extended", "vigil_check_ids": ["cloudtrail.trail.no_kms"]},
     {"id": "3.4", "title": "Ensure S3 bucket access logging on CloudTrail bucket", "vigil_status": "automated", "vigil_check_ids": ["cloudtrail.trail.s3_bucket_no_logging"]},
-    {"id": "3.5", "title": "Ensure AWS Config is enabled", "vigil_status": "extended", "vigil_check_ids": ["aws.config.not_enabled"]},
+    {"id": "3.5", "title": "Ensure AWS Config is enabled", "vigil_status": "automated", "vigil_check_ids": ["aws.config.not_enabled"]},
     {"id": "3.6", "title": "Ensure S3 bucket used for CloudTrail is not publicly accessible", "vigil_status": "automated", "vigil_check_ids": ["cloudtrail.trail.s3_bucket_public"]},
     {"id": "3.8", "title": "Ensure KMS key rotation is enabled", "vigil_status": "automated", "vigil_check_ids": ["kms.key.no_rotation"]},
     {"id": "4.1", "title": "Ensure unauthorized SSH/RDP access is restricted", "vigil_status": "automated", "vigil_check_ids": ["ec2.security_group.unrestricted_ssh", "ec2.security_group.unrestricted_rdp"]},
-    {"id": "4.2", "title": "Ensure default security groups restrict all traffic", "vigil_status": "extended", "vigil_check_ids": ["ec2.security_group.default_allows_traffic"]},
-    {"id": "4.3", "title": "Ensure VPC flow logging is enabled", "vigil_status": "extended", "vigil_check_ids": ["vpc.flow_logs.not_enabled"]},
-    {"id": "4.4", "title": "Ensure EC2 instances use IMDSv2", "vigil_status": "extended", "vigil_check_ids": ["ec2.instance.imdsv2_not_required"]},
-    {"id": "5.1", "title": "Ensure EBS default encryption is enabled", "vigil_status": "extended", "vigil_check_ids": ["ec2.ebs.encryption_not_default"]}
+    {"id": "EC2.2", "title": "Ensure default security groups restrict all traffic", "vigil_status": "automated", "vigil_check_ids": ["ec2.security_group.default_allows_traffic"]},
+    {"id": "4.3", "title": "Ensure VPC flow logging is enabled", "vigil_status": "automated", "vigil_check_ids": ["vpc.flow_logs.not_enabled"]},
+    {"id": "4.4", "title": "Ensure EC2 instances use IMDSv2", "vigil_status": "automated", "vigil_check_ids": ["ec2.instance.imdsv2_not_required"]},
+    {"id": "5.1", "title": "Ensure EBS default encryption is enabled", "vigil_status": "automated", "vigil_check_ids": ["ec2.ebs.encryption_not_default"]}
   ]
 }

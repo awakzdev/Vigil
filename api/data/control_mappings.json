@@ -565,6 +565,96 @@
     ]
   },
   {
+    "framework": "cis_aws_l1",
+    "control_id": "3.1",
+    "title": "Ensure CloudTrail is enabled in all regions",
+    "description": "AWS CloudTrail records API activity for security monitoring and audit evidence.",
+    "guidance": "Enable a multi-region trail with management events. Re-scan after enabling.",
+    "checks": [
+      "cloudtrail.trail.not_enabled"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "3.2",
+    "title": "Ensure CloudTrail log file validation is enabled",
+    "description": "Log file validation detects tampering with delivered CloudTrail logs.",
+    "guidance": "Enable log file validation on each trail.",
+    "checks": [
+      "cloudtrail.trail.no_log_validation"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "3.5",
+    "title": "Ensure AWS Config is enabled",
+    "description": "AWS Config records configuration changes for compliance monitoring.",
+    "guidance": "Enable Config recorder and delivery channel in each active region.",
+    "checks": [
+      "aws.config.not_enabled"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "EC2.2",
+    "title": "Ensure default security groups restrict all traffic",
+    "description": "The default security group in each VPC should not allow inbound or outbound traffic.",
+    "guidance": "Remove all rules from default security groups; attach named groups to workloads.",
+    "checks": [
+      "ec2.security_group.default_allows_traffic"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "4.3",
+    "title": "Ensure VPC flow logging is enabled",
+    "description": "VPC Flow Logs capture network traffic metadata for detective controls.",
+    "guidance": "Enable flow logs on each VPC or subnet per your logging architecture.",
+    "checks": [
+      "vpc.flow_logs.not_enabled"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "4.4",
+    "title": "Ensure EC2 instances use IMDSv2",
+    "description": "IMDSv2 mitigates SSRF-based credential theft from EC2 metadata.",
+    "guidance": "Set HttpTokens to required on instance metadata options.",
+    "checks": [
+      "ec2.instance.imdsv2_not_required"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "5.1",
+    "title": "Ensure EBS default encryption is enabled",
+    "description": "EBS encryption by default protects new volumes at rest.",
+    "guidance": "Enable encryption by default in each region; migrate existing volumes as needed.",
+    "checks": [
+      "ec2.ebs.encryption_not_default"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.19",
+    "title": "Ensure IAM Access Analyzer is enabled",
+    "description": "Access Analyzer identifies unintended external access to IAM resources.",
+    "guidance": "Enable Access Analyzer in each active region.",
+    "checks": [
+      "aws.access_analyzer.not_enabled"
+    ]
+  },
+  {
+    "framework": "cis_aws_l1",
+    "control_id": "1.12",
+    "title": "Ensure only one active access key per IAM user",
+    "description": "Multiple active keys complicate rotation and ownership.",
+    "guidance": "Deactivate and delete unused keys after validating workloads.",
+    "checks": [
+      "iam.access_key.multiple_active"
+    ]
+  },
+  {
     "framework": "iso27001",
     "control_id": "A.12.3.1",
     "title": "Information Backup",

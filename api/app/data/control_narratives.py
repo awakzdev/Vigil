@@ -145,6 +145,30 @@ NARRATIVES: dict[str, str] = {
     "CIS 2.1.3": (
         "Vigil checks whether S3 buckets have MFA Delete enabled on versioning configuration."
     ),
+    "CIS 3.1": (
+        "Vigil verifies that at least one CloudTrail trail is enabled and logging management events."
+    ),
+    "CIS 3.2": (
+        "Vigil verifies CloudTrail log file validation is enabled on collected trails."
+    ),
+    "CIS 3.5": (
+        "Vigil verifies AWS Config recorder status per region."
+    ),
+    "CIS EC2.2": (
+        "Vigil flags VPC default security groups that contain inbound or outbound rules."
+    ),
+    "CIS 4.3": (
+        "Vigil verifies VPC flow logging is enabled for collected VPCs."
+    ),
+    "CIS 4.4": (
+        "Vigil verifies EC2 instances require IMDSv2 (HttpTokens required)."
+    ),
+    "CIS 5.1": (
+        "Vigil verifies EBS encryption-by-default is enabled per region."
+    ),
+    "CIS 1.19": (
+        "Vigil verifies IAM Access Analyzer is enabled in scanned regions."
+    ),
     "CIS 2.1.5": (
         "Vigil verifies account-level and per-bucket S3 Block Public Access settings."
     ),
