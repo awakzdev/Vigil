@@ -307,8 +307,31 @@ def build_evidence_pack(
         if sig_doc:
             _write("pack_signature.json", json.dumps(sig_doc, indent=2))
 
-        # WORM vault (not wired): when enabled, plan_vault_upload() + upload_pack_to_vault()
-        # write immutable copy to EVIDENCE_VAULT_S3_URI — see docs/evidence-vault.md
+        from app.services.evidence_vault import plan_auditor_access, plan_vault_upload, vault_enabled
+
+        checksum_sha = None
+        try:
+            import hashlib as _hashlib
+
+            checksum_sha = _hashlib.sha256(checksum_body.encode("utf-8")).hexdigest()
+        except Exception:  # noqa: BLE001
+            pass
+        vault_plan = plan_vault_upload(
+            org_id=acc.org_id,
+            account_id=account_id,
+            report_id=report_id,
+            framework=framework,
+            content_sha256=checksum_sha,
+            generated_at=generated_at,
+            customer_s3_uri=None,
+        )
+        if vault_plan:
+            vault_doc = vault_plan.to_manifest()
+            vault_doc["vault_enabled"] = vault_enabled()
+            auditor = plan_auditor_access(vault_plan)
+            if auditor:
+                vault_doc["auditor_access_plan"] = auditor.to_manifest()
+            _write("vault_upload_plan.json", json.dumps(vault_doc, indent=2))
 
     return buf.getvalue()
 
@@ -935,6 +958,8 @@ def _build_source_manifest(
             "check_evidence_classes.json": "Per-check classification: benchmark | supporting | hygiene",
             "checksum_manifest.json": "SHA-256 checksums for pack integrity verification",
             "pack_signature.json": "Ed25519 signature over checksum_manifest.json (when signing key configured)",
+            "vault_upload_plan.json": "Planned immutable S3 destination (when EVIDENCE_VAULT_ENABLED)",
+            "iam_history.json": "Snapshot-based IAM entities as of period end",
             "cis_benchmark_coverage.json": "CIS mapped-control matrix (CIS packs only)",
         },
         "auditor_note": (
