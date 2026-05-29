@@ -843,17 +843,21 @@ digest one-click unsubscribe, `/reference` route, sample pack
 - Re-scan connected accounts after deploy so new collectors (IC, GuardDuty findings, Config compliance) populate
 
 **Type II / release hardening (README “planned” items):**
-- WORM / immutable evidence storage
-- Signed evidence packs (checksum manifest exists; no crypto signing yet)
-- CIS AWS v5 benchmark pack (v1.5 matrix is honest partial coverage today)
-- Historical snapshot query UI (“state at date X” beyond roster + rolling pack window)
+- WORM / immutable evidence storage (external archive)
 - Google Workspace identity
 - Prod deploy + Stripe billing
 
-**Product backlog (not blocking demo):**
-- “What If” blast radius tab (HANDOFF differentiator — uses `iam_perm_usage`)
-- Throwaway AWS sandbox for e2e
-- Deeper point-in-time IAM from per-scan evidence snapshots (roster is latest collection today)
+**Shipped session 28 (`feat/evidence-signing-iam-history`):**
+- Ed25519 `pack_signature.json` when `EVIDENCE_PACK_SIGNING_KEY` set; `GET /v1/meta/evidence-pack-signing-key`
+- `cis_v5_level1_matrix.json` — 40 L1 controls with automated/partial/extended/manual status in coverage API
+- `GET /v1/accounts/:id/iam-history?as_of=` — snapshot-based IAM roster; Timeline panel
+- What If tab: policy diff (`GeneratePolicySection`) for `iam.role.full_admin_policy` and other role checks
+
+**Product backlog:**
+- Map more CIS v5 controls into `control_mappings.json` (matrix lists extended checks not yet in Compliance pass/fail)
+- Sigstore / per-org signing keys
+- Deeper IAM history UI (per-user drill-down, export slice in ZIP)
+- S3/CloudFront dependency hints in What If
 
 **Optional hygiene (off by default, unmapped):** `iam.policy.unattached`, `github.repo.no_codeowners`
 

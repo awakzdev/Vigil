@@ -2606,7 +2606,15 @@ function InfoNote({ children }: { children: React.ReactNode }) {
   );
 }
 
-function BlastRadiusSection({ accountId, finding }: { accountId: string; finding: Finding }) {
+function BlastRadiusSection({
+  accountId,
+  finding,
+  cloudTrailLogging,
+}: {
+  accountId: string;
+  finding: Finding;
+  cloudTrailLogging: boolean;
+}) {
   const [enabled, setEnabled] = useState(false);
   const { data, isLoading, error } = useQuery<BlastRadiusData>({
     queryKey: ["blast-radius", accountId, finding.resource_arn, finding.check_id, finding.last_seen],
@@ -3281,6 +3289,14 @@ function BlastRadiusSection({ accountId, finding }: { accountId: string; finding
             )}
           </div>
         )}
+
+        {ROLE_POLICY_GEN_CHECKS.has(finding.check_id) && finding.resource_arn.includes(":role/") && (
+          <GeneratePolicySection
+            accountId={accountId}
+            finding={finding}
+            cloudTrailLogging={cloudTrailLogging}
+          />
+        )}
       </div>
     </div>
   );
@@ -3301,6 +3317,7 @@ type GeneratedS3HttpsPolicy = {
 const ROLE_POLICY_GEN_CHECKS = new Set([
   "iam.role.unused_services_90d",
   "iam.role.wildcard_action",
+  "iam.role.full_admin_policy",
   "iam.perm.granted_vs_used",
 ]);
 
@@ -4214,7 +4231,11 @@ export function FindingDrawer({
         </div>
       )}
       {tab === "whatif" && showBlastRadius && (
-        <BlastRadiusSection accountId={accountId!} finding={finding} />
+        <BlastRadiusSection
+          accountId={accountId!}
+          finding={finding}
+          cloudTrailLogging={cloudTrailLogging}
+        />
       )}
     </div>
     <div className="flex gap-2 border-t border-zinc-200/50 bg-white/90 px-6 py-3 shadow-[0_-1px_0_rgba(0,0,0,0.03),0_-6px_16px_-6px_rgba(0,0,0,0.04)] backdrop-blur-sm">

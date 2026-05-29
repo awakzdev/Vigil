@@ -6,9 +6,15 @@ from functools import lru_cache
 from pathlib import Path
 
 _MAPPINGS_PATH = Path(__file__).parent.parent.parent / "data" / "control_mappings.json"
+_V5_MATRIX_PATH = Path(__file__).parent.parent.parent / "data" / "cis_v5_level1_matrix.json"
 
 # CIS AWS Foundations Benchmark v5.0 Level 1 control count (reference for buyers/auditors).
 CIS_V5_LEVEL1_TOTAL = 40
+
+
+@lru_cache(maxsize=1)
+def cis_v5_level1_matrix() -> dict:
+    return json.loads(_V5_MATRIX_PATH.read_text())
 
 
 @lru_cache(maxsize=1)
@@ -24,6 +30,13 @@ def cis_benchmark_coverage() -> dict:
         }
         for e in sorted(cis_rows, key=lambda x: x["control_id"])
     ]
+    v5 = cis_v5_level1_matrix()
+    v5_controls = v5.get("controls") or []
+    automated_v5 = sum(1 for c in v5_controls if c.get("vigil_status") == "automated")
+    partial_v5 = sum(1 for c in v5_controls if c.get("vigil_status") == "partial")
+    extended_v5 = sum(1 for c in v5_controls if c.get("vigil_status") == "extended")
+    manual_v5 = sum(1 for c in v5_controls if c.get("vigil_status") == "manual")
+
     return {
         "framework": "cis_aws_l1",
         "reference_benchmark": "CIS Amazon Web Services Foundations Benchmark",
@@ -32,6 +45,15 @@ def cis_benchmark_coverage() -> dict:
         "cis_v5_level1_total": CIS_V5_LEVEL1_TOTAL,
         "mapped_control_count": len(controls),
         "coverage_ratio": round(len(controls) / CIS_V5_LEVEL1_TOTAL, 3) if CIS_V5_LEVEL1_TOTAL else 0,
+        "cis_v5_matrix": {
+            "version": v5.get("version"),
+            "control_count": len(v5_controls),
+            "automated": automated_v5,
+            "partial": partial_v5,
+            "extended": extended_v5,
+            "manual": manual_v5,
+            "controls": v5_controls,
+        },
         "disclaimer": (
             "Vigil automates a subset of CIS AWS Foundations controls mapped in control_mappings.json. "
             "This is not full CIS v5.0 Level 1 parity. Unmapped CIS controls require manual attestation."

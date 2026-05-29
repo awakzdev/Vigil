@@ -167,6 +167,71 @@ function VerbIcon({ verb }: { verb: ReturnType<typeof eventVerb> }) {
   );
 }
 
+type IamHistoryResponse = {
+  as_of: string;
+  snapshot_count: number;
+  summary: Record<string, number>;
+  note: string;
+  entities: Record<string, { entity_id: string; taken_at: string; data: Record<string, unknown> }[]>;
+};
+
+function IamHistoryPanel({ accountId }: { accountId: string }) {
+  const [asOf, setAsOf] = useState(() => new Date().toISOString().slice(0, 10));
+  const [open, setOpen] = useState(false);
+  const { data, isLoading } = useQuery<IamHistoryResponse>({
+    queryKey: ["iam-history", accountId, asOf],
+    queryFn: () => api(`/v1/accounts/${accountId}/iam-history?as_of=${asOf}`),
+    enabled: open && !!accountId,
+  });
+
+  return (
+    <div className="mt-10 rounded-2xl border border-zinc-200 bg-white">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 px-5 py-4 text-left"
+      >
+        <div>
+          <p className="text-sm font-semibold text-zinc-900">IAM roster from snapshots</p>
+          <p className="mt-0.5 text-xs text-zinc-500">Point-in-time users, roles, and keys for audit sampling (not live IAM).</p>
+        </div>
+        <Chevron open={open} />
+      </button>
+      {open && (
+        <div className="border-t border-zinc-100 px-5 pb-5 pt-4">
+          <label className="flex flex-wrap items-center gap-2 text-xs text-zinc-600">
+            As of
+            <input
+              type="date"
+              value={asOf}
+              onChange={(e) => setAsOf(e.target.value)}
+              className="rounded-lg border border-zinc-200 px-2 py-1 text-sm text-zinc-800"
+            />
+          </label>
+          {isLoading && <p className="mt-3 text-xs text-zinc-400">Loading snapshot roster…</p>}
+          {data && (
+            <div className="mt-3 space-y-3 text-xs text-zinc-700">
+              <p className="text-zinc-500">{data.note}</p>
+              <div className="flex flex-wrap gap-2">
+                {Object.entries(data.summary).map(([k, n]) => (
+                  <span key={k} className="rounded-full border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-mono">
+                    {k}: {n}
+                  </span>
+                ))}
+              </div>
+              {data.snapshot_count === 0 ? (
+                <p className="text-zinc-500">No snapshots on or before this date — run scans earlier in the audit period.</p>
+              ) : (
+                <p className="text-zinc-600">{data.snapshot_count} entities from collected scan evidence.</p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Chevron({ open }: { open: boolean }) {
   return (
     <svg
@@ -563,6 +628,8 @@ export default function Timeline() {
           ))}
         </div>
       )}
+
+      {effectiveAccountId && <IamHistoryPanel accountId={effectiveAccountId} />}
     </div>
   );
 }

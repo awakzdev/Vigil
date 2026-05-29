@@ -297,6 +297,12 @@ def build_evidence_pack(
         checksum_body = _build_checksum_manifest(artifacts, generated_at=generated_at, report_id=report_id)
         _write("checksum_manifest.json", checksum_body)
 
+        from app.services.pack_signing import build_pack_signature
+
+        sig_doc = build_pack_signature(checksum_body)
+        if sig_doc:
+            _write("pack_signature.json", json.dumps(sig_doc, indent=2))
+
     return buf.getvalue()
 
 
@@ -880,7 +886,7 @@ def _build_source_manifest(
     successful_scans = [r for r in scan_runs if r.status == "ok"]
 
     return {
-        "pack_version": "2.1",
+        "pack_version": "2.2",
         "generated_at": generated_at.isoformat(),
         "report_id": report_id,
         "framework": framework,
@@ -920,6 +926,7 @@ def _build_source_manifest(
             "evidence_coverage.json": "Days of scan data vs requested audit period",
             "check_evidence_classes.json": "Per-check classification: benchmark | supporting | hygiene",
             "checksum_manifest.json": "SHA-256 checksums for pack integrity verification",
+            "pack_signature.json": "Ed25519 signature over checksum_manifest.json (when signing key configured)",
             "cis_benchmark_coverage.json": "CIS mapped-control matrix (CIS packs only)",
         },
         "auditor_note": (
@@ -997,6 +1004,7 @@ def _build_readme(
         "  hygiene    — optional cleanup checks (off by default)",
         "",
         "checksum_manifest.json lists SHA-256 hashes for every file except itself.",
+        "pack_signature.json (when present) proves manifest integrity — verify with GET /v1/meta/evidence-pack-signing-key.",
         "",
         "NOTE: Evidence in snapshots.json is raw API data collected by",
         "Vigil during scans. Each entry includes a taken_at timestamp.",

@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     # when a user signs in via a personal IdP under a different email).
     ALLOW_SSO_SIGNUP: bool = True
 
+    # Optional Ed25519 seed (32 bytes, base64) to sign evidence pack checksum manifests.
+    # Generate: python -c "import base64,os; print(base64.urlsafe_b64encode(os.urandom(32)).decode())"
+    EVIDENCE_PACK_SIGNING_KEY: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

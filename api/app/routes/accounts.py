@@ -156,6 +156,23 @@ def access_roster(
     return _build_access_roster(db, acc.id, end)
 
 
+@router.get("/{account_id}/iam-history")
+def iam_history(
+    account_id: str,
+    as_of: str | None = Query(default=None, description="Point-in-time roster from snapshots (YYYY-MM-DD)"),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """IAM + Identity Center state from evidence snapshots at or before as_of."""
+    from app.services.iam_history import build_iam_history
+
+    acc = db.get(AwsAccount, uuid.UUID(account_id))
+    if not acc or str(acc.org_id) != p["org_id"]:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
+    end = parse_as_of(as_of) or datetime.now(timezone.utc)
+    return build_iam_history(db, acc.id, end)
+
+
 @router.post("/{account_id}/verify", response_model=AccountOut)
 def verify(account_id: str, body: VerifyIn, p=Depends(current_principal), db: Session = Depends(get_db)):
     acc = db.get(AwsAccount, uuid.UUID(account_id))
