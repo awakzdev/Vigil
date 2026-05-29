@@ -137,6 +137,20 @@ function buildPayload(state: {
 
 export default function Settings() {
   const qc = useQueryClient();
+  const vaultStatus = useQuery({
+    queryKey: ["evidence-vault-status"],
+    queryFn: () =>
+      api<{
+        enabled: boolean;
+        configured: boolean;
+        s3_uri: string | null;
+        retention_days: number | null;
+        object_lock_mode: string | null;
+        auditor_access_mode: string | null;
+        implementation: string;
+      }>("/v1/meta/evidence-vault-status"),
+  });
+
   const { data, isLoading } = useQuery<SettingsData>({
     queryKey: ["settings"],
     queryFn: () => api("/v1/settings"),
@@ -510,6 +524,42 @@ export default function Settings() {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div>
+            <ColumnHeading
+              title="Evidence vault"
+              description="Immutable archive target for evidence packs (operator-configured)."
+            />
+            <div className={`${settingsCardClass} mb-6`}>
+              {vaultStatus.isLoading && (
+                <p className="px-4 py-3 text-xs text-zinc-400">Loading vault status…</p>
+              )}
+              {vaultStatus.data && (
+                <div className="space-y-2 px-4 py-3 text-xs text-zinc-600">
+                  <p>
+                    <span className="font-medium text-zinc-800">Status:</span>{" "}
+                    {vaultStatus.data.enabled
+                      ? "Enabled — packs include vault_upload_plan.json"
+                      : vaultStatus.data.configured
+                        ? "Configured but disabled (set EVIDENCE_VAULT_ENABLED=true)"
+                        : "Not configured"}
+                  </p>
+                  {vaultStatus.data.s3_uri && (
+                    <p className="font-mono text-[11px] text-zinc-700">{vaultStatus.data.s3_uri}</p>
+                  )}
+                  {vaultStatus.data.enabled && vaultStatus.data.retention_days != null && (
+                    <p>
+                      Object Lock: {vaultStatus.data.object_lock_mode} · {vaultStatus.data.retention_days} day
+                      retention · auditor mode: {vaultStatus.data.auditor_access_mode}
+                    </p>
+                  )}
+                  <p className="text-zinc-500">
+                    S3 upload is plan-only until the vault bucket and IAM are provisioned. See docs/evidence-vault.md.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>

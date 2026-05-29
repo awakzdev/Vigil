@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from app.core.client_ip import client_ip_from_request
+from app.services.evidence_vault import vault_config
 from app.services.pack_signing import public_key_base64, signing_enabled
 
 router = APIRouter()
@@ -24,6 +25,30 @@ class SigningKeyOut(BaseModel):
     key_id: str
     algorithm: str
     public_key_base64: str | None = None
+
+
+class EvidenceVaultStatusOut(BaseModel):
+    enabled: bool
+    configured: bool
+    s3_uri: str | None = None
+    retention_days: int | None = None
+    object_lock_mode: str | None = None
+    auditor_access_mode: str | None = None
+    implementation: str = "plan_only"
+
+
+@router.get("/evidence-vault-status", response_model=EvidenceVaultStatusOut)
+def evidence_vault_status() -> EvidenceVaultStatusOut:
+    cfg = vault_config()
+    loc = cfg["location"]
+    return EvidenceVaultStatusOut(
+        enabled=bool(cfg["enabled"]),
+        configured=loc is not None,
+        s3_uri=loc.base_uri if loc else None,
+        retention_days=int(cfg["retention_days"]) if loc else None,
+        object_lock_mode=cfg["object_lock_mode"].value if loc else None,
+        auditor_access_mode=cfg["auditor_access_mode"].value if loc else None,
+    )
 
 
 @router.get("/evidence-pack-signing-key", response_model=SigningKeyOut)
