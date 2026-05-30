@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     GITHUB_CLIENT_ID: str = ""
     GITHUB_CLIENT_SECRET: str = ""
     GITHUB_INTEGRATION_CALLBACK_PATH: str = "/v1/auth/github/callback"
+    # Shared secret for verifying inbound GitHub webhook signatures (X-Hub-Signature-256) on the
+    # IaC PR/push scan trigger. Empty => the webhook endpoint rejects everything (fail closed).
+    GITHUB_WEBHOOK_SECRET: str = ""
 
     GITLAB_CLIENT_ID: str = ""
     GITLAB_CLIENT_SECRET: str = ""

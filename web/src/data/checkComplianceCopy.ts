@@ -13,7 +13,9 @@ function copy(
   evidenceGuidance: string,
   auditNarrative: string,
 ): CheckComplianceCopy {
-  return { evidenceGuidance, auditNarrative };
+  // UI labels this block "Evidence guidance:" — drop duplicate prefix from copy strings.
+  const guidance = evidenceGuidance.replace(/^Evidence:\s*/i, "");
+  return { evidenceGuidance: guidance, auditNarrative };
 }
 
 function iamAccessKey(checkId: string, _s: RemediationSummary): CheckComplianceCopy {

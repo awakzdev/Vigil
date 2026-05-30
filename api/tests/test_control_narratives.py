@@ -22,6 +22,14 @@ def test_physical_scope_limitation_is_pack_level_not_cc61():
     assert not any("physical" in g.lower() for g in detail["known_gaps"])
 
 
+def test_read_only_posture_is_first_scope_limitation_every_framework():
+    for fw in ("soc2", "cis_aws_l1", "iso27001"):
+        limits = scope_limitations_for(fw)
+        assert limits, f"{fw} has no scope limitations"
+        assert "read-only" in limits[0].lower()
+        assert "never disables" in limits[0] and "modifies any resource" in limits[0]
+
+
 def test_cis_narrative_lookup():
     detail = narrative_detail_for("cis_aws_l1", "1.10", ["iam.user.no_mfa"])
     assert detail["long_answer"]

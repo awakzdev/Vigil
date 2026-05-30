@@ -3232,13 +3232,42 @@ type GeneratedPolicy = {
   advanced_note?: string | null;
   policy_warnings?: string[];
   used_services_service_only?: string[];
+  confidence?: "high" | "medium" | "low";
+  confidence_note?: string;
+  access_analyzer?: {
+    available: boolean;
+    reason?: string | null;
+    region?: string | null;
+    job_id?: string | null;
+    completed_on?: string | null;
+    resource_statements?: { actions: string[]; resources: string[] }[];
+  };
+};
+
+const POLICY_CONFIDENCE_STYLE: Record<string, string> = {
+  high: "border-emerald-200 bg-emerald-50 text-emerald-900",
+  medium: "border-amber-200 bg-amber-50 text-amber-900",
+  low: "border-zinc-300 bg-zinc-100 text-zinc-700",
 };
 
 function PolicyCoverageMeta({ data }: { data: GeneratedPolicy }) {
   const cov = data.coverage ?? { actions: (data.used_actions?.length ?? 0) > 0, resources: false };
+  const aaStatements = data.access_analyzer?.resource_statements ?? [];
   return (
     <div className="rounded-lg border border-zinc-200 bg-zinc-50/90 px-3 py-2.5 text-[11px] leading-relaxed text-zinc-700">
-      <p className="font-semibold text-zinc-800">Coverage</p>
+      <div className="flex items-center justify-between gap-2">
+        <p className="font-semibold text-zinc-800">Coverage</p>
+        {data.confidence && (
+          <span
+            className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+              POLICY_CONFIDENCE_STYLE[data.confidence] ?? POLICY_CONFIDENCE_STYLE.low
+            }`}
+            title={data.confidence_note}
+          >
+            {data.confidence} confidence
+          </span>
+        )}
+      </div>
       <p className="mt-1">
         <span className={cov.actions ? "text-emerald-800" : "text-amber-800"}>
           {cov.actions ? "✓" : "✗"} Actions
@@ -3249,6 +3278,25 @@ function PolicyCoverageMeta({ data }: { data: GeneratedPolicy }) {
         </span>
       </p>
       <p className="mt-0.5 text-zinc-500">Source: {data.source_label ?? "IAM last accessed"}</p>
+      {data.confidence_note && <p className="mt-0.5 text-zinc-500">{data.confidence_note}</p>}
+      {aaStatements.length > 0 && (
+        <div className="mt-2 rounded-md border border-emerald-100 bg-emerald-50/70 px-2 py-1.5 text-emerald-950">
+          <p className="font-semibold">Access Analyzer resource scope ({aaStatements.length})</p>
+          <ul className="mt-1 space-y-1">
+            {aaStatements.slice(0, 6).map((st, i) => (
+              <li key={i} className="font-mono text-[10px] leading-snug">
+                {st.actions.slice(0, 3).join(", ")}
+                {st.actions.length > 3 ? ` +${st.actions.length - 3}` : ""}
+                {st.resources.length > 0 ? ` → ${st.resources[0]}` : ""}
+                {st.resources.length > 1 ? ` +${st.resources.length - 1}` : ""}
+              </li>
+            ))}
+          </ul>
+          {aaStatements.length > 6 && (
+            <p className="mt-1 text-[10px] text-emerald-800">+{aaStatements.length - 6} more statements</p>
+          )}
+        </div>
+      )}
       {data.advanced_note && (
         <p className="mt-2 rounded-md border border-indigo-100 bg-indigo-50/80 px-2 py-1.5 text-indigo-950">
           {data.advanced_note}

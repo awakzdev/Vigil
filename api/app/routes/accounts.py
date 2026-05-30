@@ -9,9 +9,15 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError
 
 from app.core.aws import assume_role, ensure_vigil_role_trust, verify_account
+from app.services.access_analyzer_policy import (
+    confidence_for,
+    derive_advanced_role_arn,
+    fetch_latest_generated_policy,
+    merge_access_analyzer,
+)
 from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.iam_usage import (
@@ -467,6 +473,78 @@ def _clean_policy_doc(
     return doc, removed, modified
 
 
+_CONFIDENCE_NOTE = {
+    "high": "High confidence — actions and resource ARNs are CloudTrail-derived via IAM Access Analyzer.",
+    "medium": "Medium confidence — action-level scoping from IAM last-accessed; resource ARNs unavailable. "
+    "Enable the advanced Access Analyzer role for ARN-level scoping.",
+    "low": "Low confidence — only service-level evidence is available, so scoping stays broad. "
+    "Permissions are preserved (never silently dropped); see warnings.",
+}
+
+
+def _resolve_advanced_policy_generation(
+    db: Session, acc: AwsAccount, role_arn: str
+) -> dict:
+    """Best-effort: assume the optional advanced role and fetch the latest *completed* Access
+    Analyzer generated policy for this principal. Never raises — any failure degrades to a note
+    so the action-level result (IAM last-accessed) is always returned. Read-only: no generation
+    is started inline and nothing is written to customer AWS.
+    """
+    active = db.scalars(
+        select(AccessAnalyzer).where(
+            AccessAnalyzer.account_id == acc.id,
+            AccessAnalyzer.status == "ACTIVE",
+        )
+    ).all()
+    if not active:
+        return {
+            "available": False,
+            "reason": "analyzer_off",
+            "note": "Enable IAM Access Analyzer in your active regions, then re-scan.",
+        }
+    advanced_arn = derive_advanced_role_arn(acc.role_arn)
+    if not advanced_arn:
+        return {
+            "available": False,
+            "reason": "no_advanced_role",
+            "note": "Could not derive the advanced policy-gen role ARN from the connected role.",
+        }
+    try:
+        sess = assume_role(
+            advanced_arn,
+            acc.external_id,
+            session_name="vigil-policy-gen",
+            aws_account=acc,
+            purpose="generate_role_policy_advanced",
+        )
+    except (ClientError, BotoCoreError):
+        return {
+            "available": False,
+            "reason": "assume_failed",
+            "note": (
+                "Advanced policy-generation role is not assumable. Re-deploy the CloudFormation "
+                "stack with EnableAdvancedPolicyGeneration=Yes to create the *AdvancedPolicyGen role."
+            ),
+        }
+    for region in [a.region for a in active if a.region]:
+        try:
+            client = sess.client("accessanalyzer", region_name=region)
+            result = fetch_latest_generated_policy(client, role_arn)
+        except (ClientError, BotoCoreError):
+            continue
+        if result:
+            return {"available": True, "region": region, **result}
+    return {
+        "available": False,
+        "reason": "no_generation",
+        "note": (
+            "Access Analyzer is enabled but has no completed policy generation for this role yet. "
+            "Start one (Console -> Access Analyzer -> Generate policy based on CloudTrail), then "
+            "re-open this panel to integrate resource-level ARNs."
+        ),
+    }
+
+
 def _policy_generation_meta(
     db: Session,
     account_id: uuid.UUID,
@@ -474,6 +552,7 @@ def _policy_generation_meta(
     threshold_days: int,
     advanced: bool,
     has_action_data: bool,
+    aa: dict | None = None,
 ) -> dict:
     active_analyzers = db.scalars(
         select(AccessAnalyzer).where(
@@ -482,29 +561,46 @@ def _policy_generation_meta(
         )
     ).all()
     aa_on = len(active_analyzers) > 0
-    actions = has_action_data
-    resources = False
-    if advanced and aa_on:
-        resources = False
-    return {
-        "coverage": {"actions": actions, "resources": resources},
-        "source": "iam_last_accessed",
-        "source_label": f"IAM last accessed ({threshold_days} days)",
+    aa_resource = bool(aa and aa.get("available") and aa.get("statements"))
+    confidence = confidence_for(aa_resource_data=aa_resource, has_action_data=has_action_data)
+
+    if not advanced:
+        advanced_note = None
+    elif aa_resource:
+        advanced_note = (
+            f"Integrated IAM Access Analyzer generated policy (job {aa.get('job_id')}, completed "
+            f"{aa.get('completed_on')}). Actions and resource ARNs are CloudTrail-derived."
+        )
+    else:
+        advanced_note = (aa or {}).get("note") or (
+            "Enable IAM Access Analyzer in your active regions, then re-scan."
+        )
+
+    meta = {
+        "coverage": {"actions": has_action_data, "resources": aa_resource},
+        "source": "access_analyzer+iam_last_accessed" if aa_resource else "iam_last_accessed",
+        "source_label": (
+            f"IAM Access Analyzer (CloudTrail) + IAM last accessed ({threshold_days} days)"
+            if aa_resource
+            else f"IAM last accessed ({threshold_days} days)"
+        ),
         "access_analyzer_enabled": aa_on,
         "advanced_available": aa_on,
         "advanced_requested": advanced,
-        "advanced_note": (
-            None
-            if not advanced
-            else (
-                "Resource-level ARNs need IAM Access Analyzer policy generation. "
-                "Automated Advanced mode is not wired yet — this preview still scopes Actions only. "
-                "Use AWS Console → Access Analyzer → Policy generation for ARN-level output."
-                if aa_on
-                else "Enable IAM Access Analyzer in your active regions, then re-scan."
-            )
-        ),
+        "advanced_note": advanced_note,
+        "confidence": confidence,
+        "confidence_note": _CONFIDENCE_NOTE[confidence],
     }
+    if advanced:
+        meta["access_analyzer"] = {
+            "available": aa_resource,
+            "reason": (aa or {}).get("reason"),
+            "region": (aa or {}).get("region"),
+            "job_id": (aa or {}).get("job_id"),
+            "completed_on": str((aa or {}).get("completed_on")) if (aa or {}).get("completed_on") else None,
+            "resource_statements": (aa or {}).get("statements") or [],
+        }
+    return meta
 
 
 @router.get("/{account_id}/roles/generated-policy")
@@ -545,9 +641,23 @@ def generate_role_policy(
     service_only = sorted(services_with_service_only_evidence(usages, cutoff))
     action_evidence = sorted(services_with_action_evidence(usages, cutoff))
 
+    # Advanced (opt-in): integrate IAM Access Analyzer CloudTrail-derived resource-scoped policy.
+    # Union-only merge — never drops a used service; degrades to action-level on any AA failure.
+    aa = _resolve_advanced_policy_generation(db, acc, role_arn) if advanced else None
+    if aa and aa.get("available") and aa.get("statements"):
+        used_actions, aa_merge_warnings = merge_access_analyzer(
+            used_actions, aa["statements"], used_set
+        )
+        policy_warnings = [*policy_warnings, *aa_merge_warnings]
+
     inline = role.inline_policies or {}
     meta = _policy_generation_meta(
-        db, acc.id, threshold_days=threshold_days, advanced=advanced, has_action_data=bool(tracked_actions)
+        db,
+        acc.id,
+        threshold_days=threshold_days,
+        advanced=advanced,
+        has_action_data=bool(tracked_actions),
+        aa=aa,
     )
 
     base_out = {

@@ -93,9 +93,19 @@ def augment_used_actions_with_granted_for_service_only(
     cutoff: datetime,
     granted_actions: list[str],
 ) -> tuple[list[str], list[str]]:
-    """When IAM reports service use without action detail, keep already-granted actions for that service.
+    """Preserve permissions for services that are used but lack action-level detail.
 
-    Does not invent service:* wildcards. Returns (actions, warnings).
+    IAM service-last-accessed sometimes reports that a service was used recently without
+    per-action timestamps. Dropping such a service would break the workload, so we preserve
+    the best signal available, in order of preference (least-privilege first):
+
+      1. Specific granted actions for the service (e.g. ``dynamodb:PutItem``) — kept as-is.
+      2. Otherwise, if the service is only granted via a wildcard (``svc:*`` or ``*``),
+         preserve a service-scoped wildcard (``svc:*``) and warn. This narrows ``*`` to the
+         single service and never silently removes a service that has recorded usage.
+      3. Otherwise (no grant matches the service), warn only — there is nothing to preserve.
+
+    Returns (actions, warnings).
     """
     seen: dict[str, str] = {a.lower(): a for a in tracked_actions}
     warnings: list[str] = []
@@ -113,30 +123,30 @@ def augment_used_actions_with_granted_for_service_only(
         if svc in tracked_svcs:
             continue
 
-        preserved: list[str] = []
-        for g in granted_actions:
-            if g == "*":
-                continue
-            if not g.endswith(":*") and ":" in g and g.split(":")[0].lower() == svc:
-                preserved.append(g)
-
-        if preserved:
-            for action in preserved:
-                key = action.lower()
-                if key not in seen:
-                    seen[key] = action
+        specific = [
+            g
+            for g in granted_actions
+            if g != "*" and not g.endswith(":*") and ":" in g and g.split(":")[0].lower() == svc
+        ]
+        if specific:
+            for action in specific:
+                seen.setdefault(action.lower(), action)
             continue
 
-        if granted_has_star or any(
+        svc_wildcard_granted = granted_has_star or any(
             g.endswith(":*") and g.split(":")[0].lower() == svc for g in granted_actions
-        ):
+        )
+        if svc_wildcard_granted:
+            wildcard = f"{svc}:*"
+            seen.setdefault(wildcard.lower(), wildcard)
             warnings.append(
-                f"{svc}: IAM reported service-level use only (no tracked actions). "
-                "Granted permissions are wildcard — re-scan or use Access Analyzer for action-level output."
+                f"{svc}: used recently but IAM returned service-level evidence only and the grant is a "
+                f"wildcard. Preserved as {wildcard} so the workload keeps working — could not scope to "
+                "specific actions. Enable IAM Access Analyzer for action/resource-level least-privilege."
             )
         else:
             warnings.append(
-                f"{svc}: IAM reported service-level use only; no matching inline grants for this service."
+                f"{svc}: IAM reported service-level use only; no matching grant found for this service."
             )
 
     return sorted(seen.values(), key=str.lower), warnings

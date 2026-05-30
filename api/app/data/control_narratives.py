@@ -116,6 +116,60 @@ NARRATIVES: dict[str, str] = {
         "Vigil verifies that a support role exists in the account for incident management. "
         "IAM roles with AWSSupportAccess policy attachment are checked."
     ),
+    "CIS 1.1": (
+        "Vigil verifies the AWS account primary contact details are complete so billing and "
+        "security notifications reach the account owner. Contact completeness is collected at "
+        "each scan; missing fields are reported as findings."
+    ),
+    "CIS 1.2": (
+        "Vigil verifies an alternate security contact is registered on the AWS account so AWS "
+        "security notifications reach a monitored channel. The security contact is collected at "
+        "each scan; a missing contact is reported as a finding."
+    ),
+    "CIS 1.3": (
+        "Vigil verifies the AWS root account has no programmatic access keys. Root credential "
+        "state is read from the IAM credential report at each scan; any root access key is "
+        "reported as a finding."
+    ),
+    "CIS 1.6": (
+        "Vigil checks CloudTrail for root user activity. Root sign-in and API events are flagged "
+        "so routine administration is performed with scoped IAM roles or users rather than root."
+    ),
+    "CIS 1.11": (
+        "Vigil flags IAM users with no console or API activity in the inactivity window and "
+        "access keys with no recorded use in 90+ days, supporting credential deactivation per "
+        "CIS guidance. Vigil is read-only: it reports these stale credentials and provides "
+        "console/CLI remediation guidance, but never disables or deletes them — that change is "
+        "performed in your own AWS account."
+    ),
+    "CIS 1.13": (
+        "Vigil flags IAM access keys older than the rotation threshold without rotation. Key "
+        "creation and last-used dates are collected from the IAM credential report at each scan."
+    ),
+    "CIS 1.15": (
+        "Vigil scans customer-managed IAM policies for the full-administrative pattern "
+        "(Allow with Action '*' on Resource '*') and reports any role or principal carrying it."
+    ),
+    "CIS 1.17": (
+        "AWS recommends EC2 workloads obtain credentials from instance roles rather than "
+        "long-lived IAM user access keys. Vigil does not automate detection of static credentials "
+        "on instances, so this control requires manual attestation; related Vigil evidence "
+        "includes the IAM access-key inventory and unused-key findings."
+    ),
+    "CIS 1.18": (
+        "Vigil enumerates IAM server certificates and flags any past their expiration date. "
+        "Certificate metadata is collected via iam:ListServerCertificates at each scan."
+    ),
+    "CIS 1.21": (
+        "Vigil checks whether the AWSCloudShellFullAccess managed policy is attached to IAM "
+        "users, groups, or roles. Broad CloudShell access grants internet egress and file "
+        "transfer, so attachments are collected at each scan and reported as findings."
+    ),
+    "CIS 2.1.4": (
+        "Vigil verifies S3 Block Public Access is enabled at both the account level and per "
+        "bucket. Account and bucket public-access configuration is collected at each scan; "
+        "any gap is reported as a finding."
+    ),
     "CIS 2.1": (
         "Vigil verifies that AWS CloudTrail is enabled and covers all regions. "
         "Trail configuration is collected via cloudtrail:DescribeTrails at each scan."
@@ -386,9 +440,21 @@ def evidence_refs_from_checks(check_ids: list[str]) -> list[str]:
     return refs
 
 
+_READ_ONLY_POSTURE = (
+    "Vigil is read-only and performs detection only — it never disables, deletes, rotates, "
+    "or modifies any resource in your AWS account. All remediation (including disabling or "
+    "deleting stale or unused credentials) is performed by your team in your own environment; "
+    "Vigil surfaces per-finding console/CLI guidance and re-verifies on the next scan."
+)
+
+
 def scope_limitations_for(framework: str) -> list[str]:
-    """Platform-wide audit scope boundaries for evidence pack export artifacts."""
-    return list(PLATFORM_SCOPE_LIMITATIONS.get(framework, []))
+    """Platform-wide audit scope boundaries for evidence pack export artifacts.
+
+    The read-only posture is listed first for every framework so the auditor-facing
+    README, source_manifest.json, and PDF all state that Vigil never writes to customer AWS.
+    """
+    return [_READ_ONLY_POSTURE, *PLATFORM_SCOPE_LIMITATIONS.get(framework, [])]
 
 
 def narrative_for(framework: str, control_id: str) -> str | None:

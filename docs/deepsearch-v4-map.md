@@ -71,6 +71,24 @@ Source: `deepsearch/v4.txt` (architecture review, 2026-05). Use this to track wh
 | KPI cards, control status bar, change sparkline, posture trend chart | Per-control sparklines, scan cadence heatmap, framework overlay, PNG export |
 | `scan_count` on timeline API | Collapsible timeline on mobile; infra events as chart series |
 
+## Compliance control expand (UX)
+
+**Search terms:** Controls page, expanded control, Auditor summary, Short answer, CC6.3
+
+Expanded failing/passing controls use a single-audience flow (no SOC2 textbook paste):
+
+| Section | Purpose |
+|---------|---------|
+| **Control status** | Pass/fail, finding count, scan coverage |
+| **How Vigil evaluates** | Mapped check labels (what runs each scan) |
+| **Evidence sources** | Snapshot / integration sources |
+| **Findings** | Open findings by check (fail only) |
+| **Auditor response** | Copyable Vigil-focused text (not `NARRATIVES` long form) |
+
+Removed from UI: **Auditor summary**, **Short answer** (duplicated SOC2 boilerplate).
+
+Code: `web/src/pages/Controls.tsx` — `ControlStatusBlock`, `ControlEvaluationBlock`, `buildQuestionnaireDraft()`.
+
 ## Policy generator (IAM last-accessed) — issue map
 
 **Full write-up:** [policy-generator-iam-last-accessed.md](./policy-generator-iam-last-accessed.md)

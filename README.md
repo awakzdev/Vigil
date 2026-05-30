@@ -226,7 +226,9 @@ Deployed via [`infra/cfn/vigil-readonly-role.yaml`](infra/cfn/vigil-readonly-rol
 
 **Read-only. No write permissions. Ever.**
 
-Key actions: `iam:Get*` / `iam:List*` · `iam:GenerateServiceLastAccessedDetails` · `s3:GetBucket*` · `s3:ListAllMyBuckets` · `kms:Describe*` / `kms:List*` · `cloudtrail:Describe*` / `cloudtrail:LookupEvents` · `guardduty:List*` / `guardduty:Get*` · `ec2:Describe*` · `rds:Describe*` · `access-analyzer:List*` / `StartPolicyGeneration` / `GetGeneratedPolicy` · `config:Describe*` · `securityhub:Describe*` · `sts:GetCallerIdentity`. Optional second role `*AccessAnalyzerMonitor` (Access Analyzer service principal) for CloudTrail S3 read during policy generation.
+Base role is strictly **Read / List / Describe** access-level. Key actions: `iam:Get*` / `iam:List*` · `iam:GenerateServiceLastAccessedDetails` / `iam:GetServiceLastAccessedDetails` (read access reports; no mutation) · `s3:GetBucket*` · `s3:ListAllMyBuckets` · `kms:Describe*` / `kms:List*` · `cloudtrail:Describe*` / `cloudtrail:LookupEvents` · `guardduty:List*` / `guardduty:Get*` · `ec2:Describe*` · `rds:Describe*` · `access-analyzer:ListAnalyzers` · `config:Describe*` · `securityhub:Describe*` · `sts:GetCallerIdentity`.
+
+The Write access-level IAM Access Analyzer **policy-generation** actions (`StartPolicyGeneration` / `GetGeneratedPolicy` / `ListPolicyGenerations` / `CancelPolicyGeneration`) are **not** in the base role. They live in an optional separate role `*AdvancedPolicyGen`, created only when `EnableAdvancedPolicyGeneration=Yes` — enable it only if you want Vigil's Advanced least-privilege policy generation. A second optional role `*AccessAnalyzerMonitor` (Access Analyzer service principal) grants CloudTrail S3 read during policy generation.
 
 The role uses `ExternalId` (confused-deputy protection). Only `TRUST_PRINCIPAL_ARN` can assume it.
 
