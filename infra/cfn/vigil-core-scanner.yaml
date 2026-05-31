@@ -304,6 +304,8 @@ Resources:
                     - ssm:GetDocument
                   Resource:
                     - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:document/${RemediationAutomationDocumentName}"
+                    - !Sub "arn:${AWS::Partition}:ssm:*::document/AWS-*"
+                    - !Sub "arn:${AWS::Partition}:ssm:*::document/AWSConfigRemediation-*"
                 - Sid: StartApprovedSsmAutomation
                   Effect: Allow
                   Action:
@@ -312,6 +314,8 @@ Resources:
                     - ssm:DescribeAutomationExecutions
                   Resource:
                     - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:automation-definition/${RemediationAutomationDocumentName}:*"
+                    - !Sub "arn:${AWS::Partition}:ssm:*::automation-definition/AWS-*:*"
+                    - !Sub "arn:${AWS::Partition}:ssm:*::automation-definition/AWSConfigRemediation-*:*"
                     - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:automation-execution/*"
                 - Sid: PassRemediationAutomationRole
                   Effect: Allow
