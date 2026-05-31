@@ -281,23 +281,42 @@ export function HistorySnapshotDrawer({
                     {snap?.controls_no_data ?? "—"}
                   </span>{" "}
                   no data
-                  <span className="mx-1.5 text-zinc-300">·</span>
-                  <span className="font-semibold tabular-nums text-zinc-900">
-                    {snap?.findings_opened ?? event.findings_opened}
-                  </span>{" "}
-                  findings opened
+                  {event.type === "baseline_established" ? (
+                    <>
+                      <span className="mx-1.5 text-zinc-300">·</span>
+                      <span className="font-semibold tabular-nums text-zinc-900">
+                        {event.findings_discovered ?? event.findings_opened}
+                      </span>{" "}
+                      open findings in baseline
+                    </>
+                  ) : (
+                    <>
+                      <span className="mx-1.5 text-zinc-300">·</span>
+                      <span className="font-semibold tabular-nums text-zinc-900">
+                        {snap?.findings_opened ?? event.findings_opened}
+                      </span>{" "}
+                      findings opened this scan
+                    </>
+                  )}
                 </p>
               </div>
 
-              {/* Infrastructure events */}
-              <div className="mt-4">
-                <InfrastructureEventsList
-                  accountId={accountId}
-                  onDate={scanAsOfDate(event.timestamp)}
-                  count={event.infrastructure_events_count ?? 0}
-                  defaultExpanded={expandInfrastructure}
-                />
-              </div>
+              {(event.infrastructure_events_count ?? 0) > 0 &&
+                event.type !== "baseline_established" && (
+                  <details className="mt-4 rounded-lg border border-zinc-200/80 bg-zinc-50/40 px-3 py-2" open={expandInfrastructure}>
+                    <summary className="cursor-pointer text-[12px] font-semibold text-zinc-600">
+                      Technical CloudTrail context ({event.infrastructure_events_count})
+                    </summary>
+                    <div className="mt-2">
+                      <InfrastructureEventsList
+                        accountId={accountId}
+                        onDate={scanAsOfDate(event.timestamp)}
+                        count={event.infrastructure_events_count ?? 0}
+                        defaultExpanded
+                      />
+                    </div>
+                  </details>
+                )}
             </>
           )}
 

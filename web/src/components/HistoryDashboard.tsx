@@ -2,6 +2,7 @@ import type {
   CurrentSummary,
   HistoryEvent,
   PeriodSummary,
+  PersistentGap,
   ScanCadenceDay,
 } from "../lib/complianceHistory";
 import { ComplianceTrendChart } from "./ComplianceTrendChart";
@@ -86,9 +87,38 @@ function ControlStatusRow({ summary }: { summary: CurrentSummary }) {
   );
 }
 
-function ScanCadence({ cadence, days }: { cadence: ScanCadenceDay[]; days: number }) {
+function TopPersistentGaps({ gaps }: { gaps: PersistentGap[] }) {
+  if (gaps.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-zinc-200 bg-white px-4 py-3.5 shadow-sm shadow-zinc-950/[0.03]">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">
+        Top persistent gaps
+      </p>
+      <p className="mt-0.5 text-xs text-zinc-500">Failing controls with the most open findings right now.</p>
+      <ul className="mt-3 space-y-2">
+        {gaps.map((g) => (
+          <li
+            key={g.control_id}
+            className="flex flex-wrap items-baseline justify-between gap-2 rounded-lg border border-zinc-100 bg-zinc-50/60 px-3 py-2"
+          >
+            <div className="min-w-0">
+              <span className="font-mono text-[10px] font-semibold text-zinc-500">{g.control_id}</span>
+              <p className="mt-0.5 text-sm font-medium text-zinc-900">{g.title}</p>
+            </div>
+            <span className="shrink-0 text-xs font-semibold tabular-nums text-rose-700">
+              {g.open_finding_count} open
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ScanCadence({ cadence, days, scanCount }: { cadence: ScanCadenceDay[]; days: number; scanCount: number }) {
+  if (scanCount < 2) return null;
   const visible = cadence.slice(-18);
-  if (visible.length === 0) return null;
+  if (visible.length < 2) return null;
   const maxScans = Math.max(1, ...visible.map((d) => d.scan_count));
 
   return (
@@ -135,6 +165,7 @@ export function HistoryDashboard({
   periodSummary,
   scanCount,
   scanCadence = [],
+  persistentGaps = [],
   onSelectSnapshot,
 }: {
   events: HistoryEvent[];
@@ -144,6 +175,7 @@ export function HistoryDashboard({
   periodSummary?: PeriodSummary;
   scanCount?: number;
   scanCadence?: ScanCadenceDay[];
+  persistentGaps?: PersistentGap[];
   onSelectSnapshot?: (scanRunId: string) => void;
 }) {
   const failing = currentSummary?.controls_failed ?? 0;
@@ -179,13 +211,14 @@ export function HistoryDashboard({
         />
       </div>
 
+      <TopPersistentGaps gaps={persistentGaps} />
+
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1.15fr)_minmax(18rem,0.85fr)]">
         {currentSummary && <ControlStatusRow summary={currentSummary} />}
-        <ScanCadence cadence={scanCadence} days={days} />
+        <ScanCadence cadence={scanCadence} days={days} scanCount={scanCount ?? 0} />
       </div>
 
-      {/* Trend chart — hero element. Score movement + story + clickable points */}
-      {events.length > 0 && (
+      {events.length >= 2 ? (
         <ComplianceTrendChart
           events={events}
           currentScore={currentScore}
@@ -193,7 +226,15 @@ export function HistoryDashboard({
           periodSummary={periodSummary}
           onSelectSnapshot={onSelectSnapshot}
         />
-      )}
+      ) : events.length === 1 ? (
+        <div className="rounded-2xl border border-dashed border-zinc-200 bg-zinc-50/50 px-5 py-5 text-sm text-zinc-600">
+          <p className="font-medium text-zinc-800">Posture trend</p>
+          <p className="mt-1">
+            Trend appears after another scan. You have one evidence snapshot — use the audit timeline below to
+            download point-in-time evidence.
+          </p>
+        </div>
+      ) : null}
 
       {events.length === 0 && currentScore != null && (
         <div className="rounded-2xl border border-zinc-200/90 bg-white px-5 py-5 shadow-sm shadow-zinc-950/[0.04]">

@@ -20,6 +20,12 @@ SG_CHECKS = frozenset(
     }
 )
 SSM_CHECKS = frozenset({"ssm.parameter.plaintext_secret"})
+IAM_ACCESS_KEY_CHECKS = frozenset(
+    {
+        "iam.access_key.unused_45d",
+        "iam.access_key.unused_90d",
+    }
+)
 
 
 def _region_from_arn(arn: str | None) -> str | None:
@@ -46,6 +52,8 @@ def _supported_action(check_id: str) -> str | None:
         return "put_public_access_block"
     if check_id in SSM_CHECKS:
         return "migrate_ssm_string_to_secure_string"
+    if check_id in IAM_ACCESS_KEY_CHECKS:
+        return "deactivate_access_key"
     return None
 
 
@@ -153,6 +161,11 @@ def _steps_for_check(finding: Finding) -> list[dict[str, str]]:
         return [
             {"action": "review", "detail": "Confirm the parameter name is a secret and applications can read SecureString values"},
             {"action": "execute", "detail": "SSM Automation rewrites the same parameter name as SecureString with overwrite"},
+        ]
+    if cid in IAM_ACCESS_KEY_CHECKS:
+        return [
+            {"action": "review", "detail": "Confirm no workload still uses this access key (check last-used service in evidence)"},
+            {"action": "execute", "detail": "SSM Automation sets the key status to Inactive (deactivate)"},
         ]
     return [
         {"action": "review", "detail": "Follow Console/CLI remediation in Vigil finding drawer"},

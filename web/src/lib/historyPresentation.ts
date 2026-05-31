@@ -104,6 +104,29 @@ export type ImpactItem = {
 };
 
 export function impactItems(event: HistoryEvent): ImpactItem[] {
+  if (event.type === "baseline_established") {
+    const items: ImpactItem[] = [];
+    const open = event.findings_discovered ?? event.findings_opened;
+    if (open > 0) {
+      items.push({
+        value: open,
+        label: "open findings in baseline",
+        tone: "neutral",
+        direction: "flat",
+      });
+    }
+    const failing = event.controls_failed_after ?? event.snapshot?.controls_failed ?? 0;
+    if (failing > 0) {
+      items.push({
+        value: failing,
+        label: `failing control${failing === 1 ? "" : "s"}`,
+        tone: "bad",
+        direction: "flat",
+      });
+    }
+    return items;
+  }
+
   const items: ImpactItem[] = [];
   if (event.findings_opened > 0) {
     items.push({
@@ -137,12 +160,6 @@ export function impactItems(event: HistoryEvent): ImpactItem[] {
       direction: "down",
     });
   }
-  if (event.type === "baseline_established") {
-    const d = event.findings_discovered ?? event.findings_opened;
-    if (d > 0 && items.length === 0) {
-      items.push({ value: d, label: "findings in baseline", tone: "neutral", direction: "flat" });
-    }
-  }
   return items;
 }
 
@@ -173,9 +190,10 @@ export function impactLines(event: HistoryEvent): string[] {
   }
   if (event.type === "baseline_established") {
     const d = event.findings_discovered ?? event.findings_opened;
-    if (d > 0 && lines.length === 0) {
-      lines.push(`${d} findings in baseline`);
-    }
+    if (d > 0) lines.push(`${d} open findings in baseline`);
+    const failing = event.controls_failed_after ?? event.snapshot?.controls_failed ?? 0;
+    if (failing > 0) lines.push(`${failing} failing control${failing === 1 ? "" : "s"}`);
+    return lines;
   }
   return lines;
 }

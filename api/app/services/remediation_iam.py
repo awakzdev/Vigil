@@ -46,6 +46,18 @@ def inline_policy_for_check(check_id: str) -> list[dict[str, Any]]:
                 "Resource": "*",
             }
         ]
+    if check_id in (
+        "iam.access_key.unused_45d",
+        "iam.access_key.unused_90d",
+    ):
+        return [
+            {
+                "Sid": "IamAccessKeyDeactivate",
+                "Effect": "Allow",
+                "Action": ["iam:UpdateAccessKey", "iam:GetAccessKeyLastUsed"],
+                "Resource": "*",
+            },
+        ]
     if check_id.startswith("iam."):
         return [
             {

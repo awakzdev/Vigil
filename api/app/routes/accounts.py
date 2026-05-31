@@ -2462,16 +2462,17 @@ def get_timeline(
 @router.get("/{account_id}/remediation-runner/status")
 def remediation_runner_status(
     account_id: str,
+    check_id: str | None = Query(default=None),
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    """Read-only check: SSM Automation document deployed in REMEDIATION_AUTOMATION_REGION."""
+    """Read-only SSM Automation readiness (optional check_id selects runbook document)."""
     from app.services.remediation_runner_status import check_remediation_runner
 
     acc = db.get(AwsAccount, uuid.UUID(account_id))
     if not acc or str(acc.org_id) != p["org_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
-    return check_remediation_runner(acc)
+    return check_remediation_runner(acc, check_id=check_id)
 
 
 @router.get("/{account_id}/evidence-exports")

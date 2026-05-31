@@ -58,8 +58,10 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         permissions=(
             "iam:UpdateAccessKey",
             "iam:DeleteAccessKey",
+            "iam:GetAccessKeyLastUsed",
+            "iam:ListAccessKeys",
         ),
-        runner_supported=False,
+        runner_supported=True,
     ),
     RemediationModuleSpec(
         id="iam_policies",
@@ -110,6 +112,21 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
 
 REMEDIATION_MODULE_BY_ID = {m.id: m for m in REMEDIATION_MODULES}
 DEFAULT_REMEDIATION_ROLE_NAME = "VigilRemediationAutomationRole"
+
+# Finding check_id → remediation module (SSM automation).
+CHECK_TO_REMEDIATION_MODULE: dict[str, str] = {
+    "ec2.security_group.unrestricted_ssh": "security_groups",
+    "ec2.security_group.unrestricted_rdp": "security_groups",
+    "s3.bucket.public_access_not_blocked": "s3_public_access",
+    "iam.access_key.unused_45d": "iam_access_keys",
+    "iam.access_key.unused_90d": "iam_access_keys",
+    "ssm.parameter.plaintext_secret": "ssm_parameters",
+    "cloudtrail.trail.not_enabled": "cloudtrail_logging",
+}
+
+
+def remediation_module_for_check(check_id: str) -> str | None:
+    return CHECK_TO_REMEDIATION_MODULE.get(check_id)
 
 
 def remediation_modules_dict(acc: Any) -> dict[str, bool]:

@@ -28,8 +28,9 @@ def build_remediation_dispatch(
     approved_by: str,
     db: Session | None = None,
     org_id: uuid.UUID | None = None,
+    execute: bool = False,
 ) -> dict[str, Any]:
-    """Return approved plan + SSM Automation CLI for the customer account executor."""
+    """Return approved plan; start SSM Automation only when execute=True."""
     plan = build_approved_remediation_plan(finding, approved_by=approved_by)
     settings = get_settings()
     automation_region = settings.REMEDIATION_AUTOMATION_REGION
@@ -57,7 +58,7 @@ def build_remediation_dispatch(
 
     automation_execution_id: str | None = None
     automation_error: str | None = None
-    if db is not None:
+    if execute and db is not None:
         acc = db.get(AwsAccount, finding.account_id)
         if acc and acc.role_arn:
             try:
@@ -107,12 +108,11 @@ def build_remediation_dispatch(
             "start_automation": start_automation_cli,
         },
         "cfn_template_url": settings.CFN_REMEDIATION_SSM_TEMPLATE_URL,
+        "prepared": True,
+        "executed": automation_execution_id is not None,
         "instructions": [
-            "1. Deploy/update infra/cfn/vigil-remediation-ssm.yaml in the automation region "
-            f"({automation_region}) — not necessarily the resource region ({resource_region}).",
-            "2. Keep the SSM document name aligned with document_name below.",
-            "3. Vigil starts SSM Automation when the connector has remediation permissions; otherwise use the CLI fallback.",
-            "4. Plan expires — prepare a fresh plan after re-scan if the resource changed.",
-            "5. SSM Automation execution output records ok / stale_plan / plan_expired.",
+            "Update the Vigil connector stack with the SSM remediation module for this finding family.",
+            "When execute=true, Vigil calls ssm:StartAutomationExecution using the connector role.",
+            "Plan expires — prepare again after re-scan if the resource changed.",
         ],
     }

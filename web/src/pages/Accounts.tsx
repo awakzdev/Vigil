@@ -1166,11 +1166,11 @@ function RemediationAutomationSection({
           />
           <span className="min-w-0 flex-1">
             <span className="flex flex-wrap items-center gap-2">
-              <span className="text-sm font-medium text-zinc-900">Automated remediation</span>
+              <span className="text-sm font-medium text-zinc-900">SSM remediation</span>
               {anyEnabled && <CapabilityAccessBadge kind="scoped-write" />}
             </span>
             <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
-              Optional scoped write modules — enable only what you plan to automate.
+              Use AWS Systems Manager Automation for approved fixes. Enable only the modules you need.
             </p>
           </span>
         </label>
@@ -1215,9 +1215,10 @@ function RemediationAutomationSection({
           onChange={(e) => handleMasterToggle(e.target.checked)}
         />
         <span className="min-w-0 flex-1">
-          <span className="text-sm font-medium text-zinc-900">Automated remediation</span>
+          <span className="text-sm font-medium text-zinc-900">SSM remediation</span>
           <p className="mt-1 text-xs leading-relaxed text-zinc-500">
-            Deploy approved remediation modules. Each module grants narrowly scoped write permissions.
+            Approved fixes run via SSM Automation under your VigilRemediationRole. Each module adds scoped
+            permissions only.
           </p>
         </span>
       </label>
@@ -1286,6 +1287,10 @@ function RemediationAutomationSection({
                   <div className="space-y-4 border-t border-zinc-100 bg-zinc-50/50 px-3 py-3">
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                        Execution
+                      </p>
+                      <p className="mt-0.5 text-xs text-zinc-600">AWS Systems Manager Automation</p>
+                      <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
                         What Vigil can do
                       </p>
                       <ul className="mt-1 space-y-0.5">
@@ -1307,7 +1312,7 @@ function RemediationAutomationSection({
 
                     <div>
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                        Required permissions
+                        Permissions added to VigilRemediationRole
                       </p>
                       <div className="mt-2">
                         <RemediationPermissionsBlock

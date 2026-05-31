@@ -155,6 +155,10 @@ Resources:
                     "ec2.security_group.unrestricted_rdp",
                 }
                 SSM_CHECKS = {"ssm.parameter.plaintext_secret"}
+                IAM_ACCESS_KEY_CHECKS = {
+                    "iam.access_key.unused_45d",
+                    "iam.access_key.unused_90d",
+                }
 
                 def _finish(plan, result):
                     result["plan_id"] = plan.get("plan_id")
@@ -273,6 +277,32 @@ Resources:
                                     break
                     return revoked
 
+                def _iam_user_name(user_arn):
+                    return user_arn.split("/")[-1] if user_arn and "/" in user_arn else user_arn
+
+                def _access_key_from_plan(plan):
+                    ev = plan.get("evidence") or {}
+                    user_arn = ev.get("user_arn")
+                    key_id = ev.get("key_id")
+                    if user_arn and key_id:
+                        return str(user_arn), str(key_id)
+                    raw = plan.get("resource_arn") or ""
+                    if "#" in raw:
+                        u, k = raw.split("#", 1)
+                        return u, k
+                    return None, None
+
+                def _deactivate_access_key(iam, user_arn, key_id):
+                    user_name = _iam_user_name(user_arn)
+                    iam.update_access_key(UserName=user_name, AccessKeyId=key_id, Status="Inactive")
+                    return {
+                        "changed": True,
+                        "user_arn": user_arn,
+                        "user_name": user_name,
+                        "key_id": key_id,
+                        "status": "Inactive",
+                    }
+
                 def _migrate_ssm_to_secure_string(ssm, name):
                     current = ssm.get_parameter(Name=name, WithDecryption=False)["Parameter"]
                     if current.get("Type") == "SecureString":
@@ -308,6 +338,13 @@ Resources:
                             return _finish(plan, {"ok": False, "error": "missing SSM parameter name"})
                         result = _migrate_ssm_to_secure_string(boto3.client("ssm", region_name=region), name)
                         return _finish(plan, {"ok": True, "action": "migrate_ssm_string_to_secure_string", "region": region, **result})
+
+                    if check_id in IAM_ACCESS_KEY_CHECKS:
+                        user_arn, key_id = _access_key_from_plan(plan)
+                        if not user_arn or not key_id:
+                            return _finish(plan, {"ok": False, "error": "missing user_arn or key_id"})
+                        result = _deactivate_access_key(boto3.client("iam"), user_arn, key_id)
+                        return _finish(plan, {"ok": True, "action": "deactivate_access_key", **result})
 
                     return _finish(plan, {"ok": False, "error": "unsupported check_id {}".format(check_id)})
 

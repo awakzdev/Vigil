@@ -59,10 +59,18 @@ export const REMEDIATION_MODULE_SPECS: readonly RemediationModuleSpec[] = [
     label: "IAM Access Keys",
     badgeLabel: "IAM keys remediation",
     cfnParameter: "EnableIamAccessKeyRemediation",
-    summary: "Disable or rotate dormant credentials",
-    bullets: ["Disable stale access keys", "Delete unused keys after approval"],
-    permissions: ["iam:UpdateAccessKey", "iam:DeleteAccessKey"],
-    runnerSupported: false,
+    summary: "Disable or delete dormant keys using SSM Automation",
+    bullets: [
+      "Deactivate unused access keys after approval",
+      "Runs under your VigilRemediationRole via Systems Manager",
+    ],
+    permissions: [
+      "iam:UpdateAccessKey",
+      "iam:DeleteAccessKey",
+      "iam:GetAccessKeyLastUsed",
+      "iam:ListAccessKeys",
+    ],
+    runnerSupported: true,
   },
   {
     id: "iam_policies",

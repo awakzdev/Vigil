@@ -74,10 +74,17 @@ export interface ScanCadenceDay {
   posture_change_count: number;
 }
 
+export interface PersistentGap {
+  control_id: string;
+  title: string;
+  open_finding_count: number;
+}
+
 export interface ComplianceHistoryResponse {
   framework: string;
   period_days: number;
   events: HistoryEvent[];
+  persistent_gaps?: PersistentGap[];
   period_summary?: PeriodSummary;
   current_summary?: CurrentSummary | null;
   current_posture_score: number | null;

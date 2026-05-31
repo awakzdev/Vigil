@@ -197,9 +197,10 @@ export default function ComplianceHistory() {
     <div className={`w-full ${drawer ? "xl:pr-[26rem]" : ""}`}>
       <header className="mb-6 flex flex-wrap items-end justify-between gap-4 border-b border-zinc-200/80 pb-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">History</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-zinc-950">Posture history</h1>
           <p className="mt-1 text-sm text-zinc-600">
-            Compliance dashboard — posture trend, control status, and audit timeline.
+            How compliance changed over time — control pass/fail, evidence snapshots, and remediation context.
+            CloudTrail is supporting detail only, not the main story.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -270,6 +271,7 @@ export default function ComplianceHistory() {
           periodSummary={data.period_summary}
           scanCount={data.scan_count}
           scanCadence={data.scan_cadence}
+          persistentGaps={data.persistent_gaps}
           onSelectSnapshot={(scanRunId) => {
             const evt = events.find((e) => e.scan_run_id === scanRunId);
             if (!evt) return;

@@ -7,8 +7,12 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Finding
+from app.core.config import get_settings
+from app.data.remediation_modules import REMEDIATION_MODULE_BY_ID, remediation_module_for_check
+from app.models import AwsAccount, Finding
 from app.models.github import IdentityProvider, Repo
+from app.services.remediation_plan import _supported_action
+from app.services.ssm_remediation_catalog import runbook_for_check, runbook_payload
 
 IAC_NOT_AVAILABLE = "iac_not_available"
 IAC_SNIPPETS = "iac_snippets"
@@ -25,6 +29,8 @@ AUTOMATION_CHECKS = frozenset(
     {
         *SG_CHECKS,
         "ssm.parameter.plaintext_secret",
+        "iam.access_key.unused_45d",
+        "iam.access_key.unused_90d",
     }
 )
 
@@ -65,7 +71,49 @@ def build_iac_remediation(db: Session, finding: Finding, org_id: uuid.UUID) -> d
         body["pr_automation"]["note"] = (
             "Opens a PR with hclpatch + terraform validate when you pick a connected repo."
         )
+    ssm = _ssm_remediation_panel(db, finding)
+    if ssm:
+        body["ssm_remediation"] = ssm
     return body
+
+
+_ACTION_LABELS: dict[str, str] = {
+    "deactivate_access_key": "Disable access key",
+    "revoke_public_ingress": "Revoke public ingress",
+    "put_public_access_block": "Block public access",
+    "migrate_ssm_string_to_secure_string": "Migrate parameter to SecureString",
+}
+
+
+def _ssm_remediation_panel(db: Session, finding: Finding) -> dict[str, Any] | None:
+    cid = finding.check_id
+    if cid not in AUTOMATION_CHECKS:
+        return None
+    module_id = remediation_module_for_check(cid)
+    if not module_id:
+        return None
+    spec = REMEDIATION_MODULE_BY_ID[module_id]
+    acc = db.get(AwsAccount, finding.account_id)
+    enabled = deployed = False
+    if acc:
+        enabled = bool(getattr(acc, spec.enable_column))
+        deployed = bool(getattr(acc, spec.deployed_column))
+    action = _supported_action(cid)
+    runbook = runbook_for_check(cid)
+    settings = get_settings()
+    return {
+        "module_id": module_id,
+        "module_label": spec.label,
+        "module_enabled": enabled,
+        "module_deployed": deployed,
+        "action": action,
+        "action_label": _ACTION_LABELS.get(action or "", action or "Remediate"),
+        "execution": "AWS Systems Manager Automation",
+        "automation_role_name": settings.CFN_REMEDIATION_AUTOMATION_ROLE_NAME,
+        "automation_region": settings.REMEDIATION_AUTOMATION_REGION,
+        "runbook": runbook_payload(runbook) if runbook else None,
+        "requires_vigil_document": bool(runbook and runbook.owner == "vigil"),
+    }
 
 
 def _github_context(db: Session, org_id: uuid.UUID) -> dict[str, Any]:

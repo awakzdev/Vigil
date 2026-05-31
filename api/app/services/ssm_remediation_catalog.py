@@ -51,10 +51,17 @@ RUNBOOKS: dict[str, SsmRemediationRunbook] = {
     ),
     "iam.access_key.unused_45d": SsmRemediationRunbook(
         check_id="iam.access_key.unused_45d",
-        document_name="AWSConfigRemediation-RevokeUnusedIAMUserCredentials",
-        owner="aws",
-        parameter_mode="aws_owned",
-        note="Prefer AWS-owned IAM credential revocation when parameters are wired.",
+        document_name=VIGIL_PLAN_DOCUMENT,
+        owner="vigil",
+        parameter_mode="plan_json",
+        note="Vigil plan executor deactivates the access key via iam:UpdateAccessKey.",
+    ),
+    "iam.access_key.unused_90d": SsmRemediationRunbook(
+        check_id="iam.access_key.unused_90d",
+        document_name=VIGIL_PLAN_DOCUMENT,
+        owner="vigil",
+        parameter_mode="plan_json",
+        note="Same deactivate flow as the 45-day CIS check (legacy finding id).",
     ),
     "cloudtrail.trail.not_enabled": SsmRemediationRunbook(
         check_id="cloudtrail.trail.not_enabled",

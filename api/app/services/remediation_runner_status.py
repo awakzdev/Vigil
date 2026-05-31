@@ -12,21 +12,28 @@ from app.models import AwsAccount
 DOCUMENT_NAME = "Vigil-RemediationPlanExecutor"
 
 
-def check_remediation_runner(acc: AwsAccount) -> dict[str, Any]:
+def check_remediation_runner(acc: AwsAccount, *, check_id: str | None = None) -> dict[str, Any]:
     """
-    Inspect the customer-owned SSM Automation document in the remediation region.
+    Inspect SSM Automation readiness in the remediation region (connector can describe/start).
     """
+    from app.services.ssm_remediation_catalog import runbook_for_check
+
     settings = get_settings()
     automation_region = settings.REMEDIATION_AUTOMATION_REGION
-    document_name = settings.REMEDIATION_SSM_DOCUMENT_NAME or DOCUMENT_NAME
+    runbook = runbook_for_check(check_id) if check_id else None
+    document_name = (
+        runbook.document_name
+        if runbook
+        else (settings.REMEDIATION_SSM_DOCUMENT_NAME or DOCUMENT_NAME)
+    )
 
     out: dict[str, Any] = {
         "automation_region": automation_region,
         "document": {"name": document_name, "exists": False, "status": None},
         "ready": False,
         "rule": {"name": document_name, "exists": False, "state": None},
-        "lambda": {"name": None, "exists": False},
-        "schema_discovery": {"enabled": None, "note": "Not used by SSM Automation"},
+        "lambda": {"name": None, "exists": False, "deprecated": True},
+        "schema_discovery": {"enabled": None, "note": "SSM Automation only — no Lambda runner"},
         "blockers": [],
         "warnings": [],
         "hints": [],
@@ -67,16 +74,27 @@ def check_remediation_runner(acc: AwsAccount) -> dict[str, Any]:
             out["blockers"].append(f"Cannot describe SSM document: {e}")
 
     out["ready"] = not out["blockers"] and out["document"].get("exists")
+    if runbook and runbook.owner == "aws":
+        out["warnings"].append(
+            f"AWS-owned runbook {document_name} — no Vigil custom document required."
+        )
+    elif runbook and runbook.owner == "vigil":
+        out["hints"].append(
+            "Custom Vigil document: deploy infra/cfn/vigil-remediation-ssm.yaml in "
+            f"{automation_region} when this check uses Vigil-RemediationPlanExecutor."
+        )
+
     if out["ready"]:
         out["hints"] = [
-            f"SSM Automation is ready in {automation_region}. Prepare a plan, then start automation.",
+            *out["hints"],
+            f"SSM remediation ready in {automation_region}. Approve on the finding, then start automation.",
             "Re-scan after remediation so the next plan matches live resources.",
         ]
     else:
         out["hints"] = [
-            "Deploy: aws cloudformation deploy --region "
-            f"{automation_region} --template-file infra/cfn/vigil-remediation-ssm.yaml "
-            "--capabilities CAPABILITY_NAMED_IAM",
-            f"Set REMEDIATION_AUTOMATION_REGION={automation_region} in Vigil .env to match the SSM document region.",
+            *out["hints"],
+            "Update the Vigil connector stack (vigil-stack / core scanner) with SSM remediation modules enabled.",
+            f"Connector needs ssm:DescribeDocument and ssm:StartAutomationExecution in {automation_region}.",
+            f"Set REMEDIATION_AUTOMATION_REGION={automation_region} in Vigil .env to match the document region.",
         ]
     return out

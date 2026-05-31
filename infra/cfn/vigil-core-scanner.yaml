@@ -297,6 +297,13 @@ Resources:
             PolicyDocument:
               Version: "2012-10-17"
               Statement:
+                - Sid: DescribeApprovedSsmDocuments
+                  Effect: Allow
+                  Action:
+                    - ssm:DescribeDocument
+                    - ssm:GetDocument
+                  Resource:
+                    - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:document/${RemediationAutomationDocumentName}"
                 - Sid: StartApprovedSsmAutomation
                   Effect: Allow
                   Action:

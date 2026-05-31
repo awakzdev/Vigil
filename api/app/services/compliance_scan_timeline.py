@@ -151,30 +151,60 @@ def _infra_event_counts_by_day(
 
 
 def _attach_infra_counts(events: list[dict[str, Any]], counts: dict[str, int]) -> None:
+    """Only surface infra counts when a scan changed control pass/fail (not baseline noise)."""
     for evt in events:
+        if evt.get("type") == "baseline_established":
+            evt["infrastructure_events_count"] = 0
+            continue
+        diff = evt.get("diff") or {}
+        has_control_flip = bool(diff.get("newly_failed")) or bool(diff.get("newly_passed"))
+        if not has_control_flip:
+            evt["infrastructure_events_count"] = 0
+            continue
         day = evt["timestamp"][:10]
         evt["infrastructure_events_count"] = counts.get(day, 0)
 
 
 def _period_summary(events: list[dict[str, Any]]) -> dict[str, int]:
+    change_events = [e for e in events if e.get("type") != "baseline_established"]
     controls_regressed = 0
     controls_improved = 0
-    for e in events:
-        if e.get("type") == "baseline_established":
-            continue
+    for e in change_events:
         controls_regressed += len(e.get("diff", {}).get("newly_failed", []))
         controls_improved += len(e.get("diff", {}).get("newly_passed", []))
     return {
-        "compliance_changes": len(events),
+        "compliance_changes": len(change_events),
         "controls_regressed": controls_regressed,
         "controls_improved": controls_improved,
         "evidence_snapshots": len(events),
     }
 
 
+def _persistent_failing_controls(
+    snap: dict[str, dict[str, Any]] | None,
+    *,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    if not snap:
+        return []
+    failing = [
+        {
+            "control_id": cid,
+            "title": v["title"],
+            "open_finding_count": v.get("open_finding_count", 0),
+        }
+        for cid, v in snap.items()
+        if v.get("status") == "fail"
+    ]
+    failing.sort(key=lambda c: c.get("open_finding_count", 0), reverse=True)
+    return failing[:limit]
+
+
 def _scan_cadence(scan_runs: list[ScanRun], events: list[dict[str, Any]]) -> list[dict[str, Any]]:
     posture_days: dict[str, int] = {}
     for evt in events:
+        if evt.get("type") == "baseline_established":
+            continue
         day = evt["timestamp"][:10]
         posture_days[day] = posture_days.get(day, 0) + 1
 
@@ -293,6 +323,7 @@ def build_compliance_scan_timeline(
             "total_failing": 0,
             "scan_count": 0,
             "scan_cadence": [],
+            "persistent_gaps": [],
         }
 
     findings = list(db.scalars(select(Finding).where(Finding.account_id == account_id)).all())
@@ -449,6 +480,7 @@ def build_compliance_scan_timeline(
         "current_summary": current_summary,
         "current_posture_score": current_posture_score,
         "total_failing": total_failing,
+        "persistent_gaps": _persistent_failing_controls(last_snap),
         "scan_count": len(scan_runs),
         "scan_cadence": _scan_cadence(scan_runs, events),
     }

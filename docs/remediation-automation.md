@@ -8,7 +8,7 @@ document only when extra guardrails are needed.
 ## Architecture
 
 ```
-Vigil UI -> approval -> ssm:StartAutomationExecution
+Vigil UI -> review -> explicit Start remediation -> ssm:StartAutomationExecution
 -> AWS-owned runbook or Vigil guardrail document
 -> SSM Automation assumes customer remediation role
 -> document applies the approved action in resource_region
@@ -20,17 +20,27 @@ Vigil UI -> approval -> ssm:StartAutomationExecution
 - **Exact-match revoke**: security-group fixes only remove tuples from `exact_match_rules`; returns `stale_plan` if live rules drifted.
 - **No custom Lambda runner**: SSM owns execution, audit trail, and output.
 
-## Deploy
+## Deploy (connector-first)
+
+1. **Update the Vigil connector stack** (`vigil-stack` / core scanner) with SSM remediation modules enabled.
+   The connector role receives scoped `ssm:DescribeDocument`, `ssm:GetDocument`,
+   `ssm:StartAutomationExecution`, `ssm:GetAutomationExecution`, and `iam:PassRole` for
+   `VigilRemediationAutomationRole` only.
+
+2. **Custom Vigil document** (SG exact-match, IAM access keys, SSM parameters) — deploy once per automation region:
 
 ```bash
 aws cloudformation deploy \
   --region us-east-1 \
   --stack-name Vigil-Remediation-SSM \
   --template-file infra/cfn/vigil-remediation-ssm.yaml \
-  --capabilities CAPABILITY_NAMED_IAM
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameter-overrides EnableIamAccessKeyRemediation=Yes EnableSecurityGroupRemediation=Yes
 ```
 
-Set Vigil `REMEDIATION_AUTOMATION_REGION=us-east-1` to the same region.
+AWS-owned runbooks (S3 public access, CloudTrail) do not require this stack.
+
+Set Vigil `REMEDIATION_AUTOMATION_REGION=us-east-1` to the automation home region.
 
 ## Supported Actions
 
@@ -39,6 +49,7 @@ Set Vigil `REMEDIATION_AUTOMATION_REGION=us-east-1` to the same region.
 | `ec2.security_group.unrestricted_ssh` | Revoke exact public SSH ingress from the finding plan |
 | `ec2.security_group.unrestricted_rdp` | Revoke exact public RDP ingress from the finding plan |
 | `ssm.parameter.plaintext_secret` | Rewrite plaintext `String` parameter as `SecureString` |
+| `iam.access_key.unused_45d` / `unused_90d` | Deactivate access key (`Inactive`) via plan executor |
 
 AWS-owned runbook mappings are tracked in `api/app/services/ssm_remediation_catalog.py`.
 They should be wired only when Vigil can provide the document's required parameters safely.

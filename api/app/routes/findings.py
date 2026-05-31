@@ -309,9 +309,18 @@ def get_remediation_execution(finding_id: str, p=Depends(current_principal), db:
     }
 
 
+class RemediationDispatchIn(BaseModel):
+    execute: bool = False
+
+
 @router.post("/{finding_id}/remediation/dispatch")
-def remediation_dispatch(finding_id: str, p=Depends(current_principal), db: Session = Depends(get_db)):
-    """Approve and start customer-hosted SSM Automation when scoped permissions are enabled."""
+def remediation_dispatch(
+    finding_id: str,
+    body: RemediationDispatchIn = RemediationDispatchIn(),
+    p=Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Approve remediation plan; start SSM Automation only when body.execute is true."""
     from app.services.remediation_dispatch import build_remediation_dispatch
 
     f = _get_owned(db, p, finding_id)
@@ -321,6 +330,7 @@ def remediation_dispatch(finding_id: str, p=Depends(current_principal), db: Sess
         approved_by=str(approved_by),
         db=db,
         org_id=uuid.UUID(p["org_id"]),
+        execute=body.execute,
     )
 
 
