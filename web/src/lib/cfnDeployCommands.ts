@@ -108,9 +108,10 @@ export function buildCfnCliCommand(
   const meta = parseCfnLaunchMeta(
     variant === "update" ? acc.cfn_update_launch_url : acc.cfn_launch_url,
   );
+  const region = cfnConsoleRegion(acc.cfn_template_url);
   const verb = variant === "create" ? "create-stack" : "update-stack";
   const lines = [
-    `aws cloudformation ${verb} \\`,
+    `aws cloudformation ${verb} --region ${region} \\`,
     `  --stack-name ${stackName} \\`,
     `  --template-url ${acc.cfn_template_url} \\`,
     "  --parameters \\",

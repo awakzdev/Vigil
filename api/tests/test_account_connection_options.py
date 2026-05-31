@@ -82,6 +82,7 @@ def test_cli_uses_stack_name():
         remediation_modules=_MODULES_OFF,
     )
     assert f"--stack-name {settings.CFN_STACK_NAME}" in cli
+    assert "--region" in cli
 
 
 def test_update_cli_uses_update_stack():

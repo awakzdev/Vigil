@@ -100,7 +100,11 @@ def _ssm_remediation_panel(db: Session, finding: Finding) -> dict[str, Any] | No
         deployed = bool(getattr(acc, spec.deployed_column))
     action = _supported_action(cid)
     runbook = runbook_for_check(cid)
+    from app.services.remediation_plan import automation_region_for_finding, resource_region_for_finding
+
     settings = get_settings()
+    resource_region = resource_region_for_finding(finding)
+    automation_region = automation_region_for_finding(finding)
     return {
         "module_id": module_id,
         "module_label": spec.label,
@@ -110,7 +114,8 @@ def _ssm_remediation_panel(db: Session, finding: Finding) -> dict[str, Any] | No
         "action_label": _ACTION_LABELS.get(action or "", action or "Remediate"),
         "execution": "AWS Systems Manager Automation",
         "automation_role_name": settings.CFN_REMEDIATION_AUTOMATION_ROLE_NAME,
-        "automation_region": settings.REMEDIATION_AUTOMATION_REGION,
+        "resource_region": resource_region,
+        "automation_region": automation_region,
         "runbook": runbook_payload(runbook) if runbook else None,
         "requires_vigil_document": bool(runbook and runbook.owner == "vigil"),
     }

@@ -33,7 +33,7 @@ def test_remediation_plan_v2_fields():
     plan = build_remediation_plan(f)
     assert plan["schema"] == PLAN_SCHEMA
     assert plan["resource_region"] == "us-east-2"
-    assert plan["automation_region"]
+    assert plan["automation_region"] == "us-east-2"
     assert plan["exact_match_rules"]
     assert plan["expires_at"]
     assert plan["content_sha256"]
@@ -55,18 +55,42 @@ def test_preview_plan_has_no_approval():
     assert "approval" not in plan
 
 
-def test_dispatch_uses_ssm_automation_region_not_resource_region():
+def test_dispatch_uses_resource_region_for_ssm_automation():
     f = _sg_finding()
     out = build_remediation_dispatch(f, approved_by="user-abc")
-    region = out["automation_region"]
-    assert region
+    assert out["automation_region"] == "us-east-2"
     assert out["resource_region"] == "us-east-2"
+    assert out["plan"]["automation_region"] == "us-east-2"
     assert out["plan"]["execution"]["runner_type"] == "ssm"
     cli = out["cli"]["start_automation"]
     assert "ssm start-automation-execution" in cli
-    assert f"--region {region}" in cli or f"--region '{region}'" in cli
-    if region != "us-east-2":
-        assert "--region us-east-2" not in cli
+    assert "--region us-east-2" in cli
+
+
+def test_dispatch_iam_keys_use_home_automation_region(monkeypatch):
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("REMEDIATION_AUTOMATION_REGION", "us-east-1")
+    get_settings.cache_clear()
+
+    now = datetime.now(timezone.utc)
+    f = Finding(
+        id=uuid.uuid4(),
+        org_id=uuid.uuid4(),
+        account_id=uuid.uuid4(),
+        check_id="iam.access_key.unused_45d",
+        resource_arn="arn:aws:iam::123456789012:user/alice#AKIAEXAMPLE",
+        title="Unused access key",
+        severity="high",
+        risk_score=90,
+        status="open",
+        evidence={"user_arn": "arn:aws:iam::123456789012:user/alice", "key_id": "AKIAEXAMPLE"},
+        first_seen=now,
+        last_seen=now,
+    )
+    out = build_remediation_dispatch(f, approved_by="user-abc")
+    assert out["automation_region"] == "us-east-1"
+    assert "--region us-east-1" in out["cli"]["start_automation"]
 
 
 def test_sg_iac_no_terraform():

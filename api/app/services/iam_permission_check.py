@@ -83,9 +83,58 @@ def load_role_policy_documents(iam_client, role_name: str) -> list[dict[str, Any
     return documents
 
 
-def check_role_actions(iam_client, role_name: str, actions: tuple[str, ...]) -> dict[str, bool]:
-    documents = load_role_policy_documents(iam_client, role_name)
+def connector_can_start_document_automation(
+    documents: list[dict[str, Any]],
+    document_name: str,
+) -> bool:
+    """True if an Allow statement grants StartAutomationExecution on document/ ARNs."""
+    doc_key = f"document/{document_name}".lower()
+    for policy in documents:
+        for stmt in policy.get("Statement") or []:
+            if stmt.get("Effect") != "Allow":
+                continue
+            actions = _normalize_actions(stmt.get("Action"))
+            if not any(iam_action_matches(p, "ssm:StartAutomationExecution") for p in actions):
+                continue
+            resources = stmt.get("Resource")
+            if resources is None:
+                continue
+            if isinstance(resources, str):
+                resources = [resources]
+            for res in resources:
+                res_lower = res.lower()
+                if res_lower == "*":
+                    return True
+                if "document/" not in res_lower:
+                    continue
+                if "*" in res_lower or doc_key in res_lower:
+                    return True
+    return False
+
+
+def check_actions_on_documents(
+    documents: list[dict[str, Any]], actions: tuple[str, ...]
+) -> dict[str, bool]:
     statements: list[dict[str, Any]] = []
     for doc in documents:
         statements.extend(doc.get("Statement") or [])
     return {action: statements_allow_action(statements, action) for action in actions}
+
+
+def load_role_policy_names(iam_client, role_name: str) -> tuple[set[str], set[str]]:
+    """Inline and attached managed policy names for a role (one IAM list round-trip each)."""
+    try:
+        inline = set(iam_client.list_role_policies(RoleName=role_name).get("PolicyNames") or [])
+        attached = {
+            p.get("PolicyName")
+            for p in (iam_client.list_attached_role_policies(RoleName=role_name).get("AttachedPolicies") or [])
+            if p.get("PolicyName")
+        }
+        return inline, attached
+    except ClientError:
+        return set(), set()
+
+
+def check_role_actions(iam_client, role_name: str, actions: tuple[str, ...]) -> dict[str, bool]:
+    documents = load_role_policy_documents(iam_client, role_name)
+    return check_actions_on_documents(documents, actions)

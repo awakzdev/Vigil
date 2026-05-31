@@ -212,8 +212,9 @@ def _cli_command(
     remediation_modules: dict[str, bool],
 ) -> str:
     s = get_settings()
+    region = s.CFN_CONSOLE_REGION or "us-east-1"
     lines = [
-        "aws cloudformation create-stack \\",
+        f"aws cloudformation create-stack --region {region} \\",
         f"  --stack-name {stack_name} \\",
         f"  --template-url {s.CFN_TEMPLATE_URL} \\",
         "  --parameters \\",
@@ -238,8 +239,9 @@ def _update_cli_command(
     remediation_modules: dict[str, bool],
 ) -> str:
     s = get_settings()
+    region = s.CFN_CONSOLE_REGION or "us-east-1"
     lines = [
-        "aws cloudformation update-stack \\",
+        f"aws cloudformation update-stack --region {region} \\",
         f"  --stack-name {stack_name} \\",
         f"  --template-url {s.CFN_TEMPLATE_URL} \\",
         "  --parameters \\",
@@ -2491,6 +2493,7 @@ def get_timeline(
 def remediation_runner_status(
     account_id: str,
     check_id: str | None = Query(default=None),
+    resource_region: str | None = Query(default=None, description="AWS region of the finding resource"),
     p=Depends(current_principal),
     db: Session = Depends(get_db),
 ):
@@ -2500,7 +2503,11 @@ def remediation_runner_status(
     acc = db.get(AwsAccount, uuid.UUID(account_id))
     if not acc or str(acc.org_id) != p["org_id"]:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "account not found")
-    return check_remediation_runner(acc, check_id=check_id)
+    return check_remediation_runner(
+        acc,
+        check_id=check_id,
+        resource_region=resource_region,
+    )
 
 
 @router.get("/{account_id}/evidence-exports")

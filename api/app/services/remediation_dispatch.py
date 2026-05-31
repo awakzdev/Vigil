@@ -12,9 +12,17 @@ from sqlalchemy.orm import Session
 from app.core.aws import assume_role
 from app.core.config import get_settings
 from app.models import AwsAccount, Finding
-from app.services.remediation_execution_store import record_automation_start, record_dispatch
+from app.services.remediation_execution_store import (
+    record_automation_start,
+    record_automation_start_failed,
+    record_dispatch,
+)
 from app.services.remediation_iam import inline_policy_document
-from app.services.remediation_plan import build_approved_remediation_plan
+from app.services.remediation_plan import (
+    automation_region_for_finding,
+    build_approved_remediation_plan,
+    resource_region_for_finding,
+)
 from app.services.ssm_remediation_catalog import (
     automation_parameters_for_plan,
     runbook_for_check,
@@ -33,10 +41,10 @@ def build_remediation_dispatch(
     """Return approved plan; start SSM Automation only when execute=True."""
     plan = build_approved_remediation_plan(finding, approved_by=approved_by)
     settings = get_settings()
-    automation_region = settings.REMEDIATION_AUTOMATION_REGION
+    resource_region = plan.get("resource_region") or resource_region_for_finding(finding)
+    automation_region = plan.get("automation_region") or automation_region_for_finding(finding)
     runbook = runbook_for_check(finding.check_id)
     document_name = (runbook.document_name if runbook else None) or settings.REMEDIATION_SSM_DOCUMENT_NAME
-    resource_region = plan.get("resource_region") or "us-east-1"
 
     detail = json.dumps(plan, separators=(",", ":"))
     parameters = automation_parameters_for_plan(detail, runbook) if runbook else {"PlanJson": [detail]}
@@ -69,6 +77,8 @@ def build_remediation_dispatch(
                     aws_account=acc,
                     purpose="start_remediation_automation",
                 )
+                # Execution role is set on the document (assumeRole in vigil-remediation-ssm.yaml),
+                # not via StartAutomationExecution (that API has no AutomationAssumeRole param).
                 resp = sess.client("ssm", region_name=automation_region).start_automation_execution(
                     DocumentName=document_name,
                     Parameters=parameters,
@@ -84,6 +94,12 @@ def build_remediation_dispatch(
                     )
             except Exception as exc:  # noqa: BLE001
                 automation_error = str(exc)
+            if automation_error and db is not None and plan.get("plan_id"):
+                record_automation_start_failed(
+                    db,
+                    plan_id=str(plan["plan_id"]),
+                    error=automation_error,
+                )
 
     return {
         "plan": plan,
@@ -112,7 +128,8 @@ def build_remediation_dispatch(
         "executed": automation_execution_id is not None,
         "instructions": [
             "Update the Vigil connector stack with the SSM remediation module for this finding family.",
-            "When execute=true, Vigil calls ssm:StartAutomationExecution using the connector role.",
+            f"Deploy Vigil-RemediationPlanExecutor in {automation_region} (matches this resource).",
+            "When execute=true, Vigil calls ssm:StartAutomationExecution in that region using the connector role.",
             "Plan expires — prepare again after re-scan if the resource changed.",
         ],
     }

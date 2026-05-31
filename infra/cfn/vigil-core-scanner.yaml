@@ -313,8 +313,12 @@ Resources:
                     - ssm:GetAutomationExecution
                     - ssm:DescribeAutomationExecutions
                   Resource:
+                    # StartAutomationExecution is authorized on document ARNs (not automation-definition alone).
+                    - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:document/${RemediationAutomationDocumentName}"
                     - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:automation-definition/${RemediationAutomationDocumentName}:*"
+                    - !Sub "arn:${AWS::Partition}:ssm:*::document/AWS-*"
                     - !Sub "arn:${AWS::Partition}:ssm:*::automation-definition/AWS-*:*"
+                    - !Sub "arn:${AWS::Partition}:ssm:*::document/AWSConfigRemediation-*"
                     - !Sub "arn:${AWS::Partition}:ssm:*::automation-definition/AWSConfigRemediation-*:*"
                     - !Sub "arn:${AWS::Partition}:ssm:*:${AWS::AccountId}:automation-execution/*"
                 - Sid: PassRemediationAutomationRole

@@ -224,6 +224,12 @@ function ModuleStatusBadge({
   );
 }
 
+const VERIFY_PROGRESS_STEPS = [
+  "Assuming connector role…",
+  "Reading IAM policies…",
+  "Checking SSM automation…",
+] as const;
+
 function PermissionVerificationPanel({
   onVerify,
   verifying,
@@ -237,6 +243,19 @@ function PermissionVerificationPanel({
   verificationMeta: VerificationMeta | null;
   showButton: boolean;
 }) {
+  const [progressStep, setProgressStep] = useState(0);
+
+  useEffect(() => {
+    if (!verifying) {
+      setProgressStep(0);
+      return;
+    }
+    const tick = window.setInterval(() => {
+      setProgressStep((s) => (s + 1) % VERIFY_PROGRESS_STEPS.length);
+    }, 1200);
+    return () => window.clearInterval(tick);
+  }, [verifying]);
+
   if (!showButton && !verificationMeta && !feedback) return null;
 
   const verified =
@@ -265,8 +284,11 @@ function PermissionVerificationPanel({
           disabled={verifying}
           className={workflowInlineActionBtn}
         >
-          {verifying ? "Verifying…" : "Verify permissions in AWS"}
+          {verifying ? VERIFY_PROGRESS_STEPS[progressStep] : "Verify permissions in AWS"}
         </button>
+      )}
+      {verifying && (
+        <p className="mt-2 text-[11px] text-zinc-500">One AWS round-trip — usually a few seconds.</p>
       )}
       {feedback?.tone === "error" && (
         <p className="mt-2 text-xs leading-relaxed text-red-600">{feedback.message}</p>
@@ -815,29 +837,57 @@ function CapabilityBadges({
   const connected = isAccountConnected(acc);
   const opts = connectionOptions ?? accountConnectionOptions(acc);
   const policyGenDeployed = acc.advanced_policy_generation_deployed ?? false;
+  const policyGenSelected =
+    (connected && acc.enable_advanced_policy_generation) ||
+    (!connected && opts.enable_advanced_policy_generation);
+  const remediationEnabled = REMEDIATION_MODULE_SPECS.filter((m) =>
+    connected ? acc.remediation_modules[m.id] : opts.remediation_modules[m.id],
+  );
+  const ssmAllDeployed =
+    connected &&
+    remediationEnabled.length > 0 &&
+    remediationEnabled.every((m) => acc.remediation_modules_deployed[m.id]);
 
   return (
     <div className="mt-1.5 flex flex-wrap gap-1">
       <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-800 ring-1 ring-emerald-200/60">
         Core Scanner
       </span>
-      {(policyGenDeployed ||
-        (connected && acc.enable_advanced_policy_generation) ||
-        (!connected && opts.enable_advanced_policy_generation)) && (
-        <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-800 ring-1 ring-indigo-200/60">
+      {(policyGenDeployed || policyGenSelected) && (
+        <span
+          className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${
+            policyGenDeployed
+              ? "bg-indigo-50 text-indigo-800 ring-indigo-200/60"
+              : "bg-indigo-50/50 text-indigo-700 ring-indigo-200/40"
+          }`}
+        >
           Policy Generation
         </span>
       )}
-      {REMEDIATION_MODULE_SPECS.filter((m) =>
-        connected ? acc.remediation_modules_deployed[m.id] : opts.remediation_modules[m.id],
-      ).map((m) => (
+      {ssmAllDeployed ? (
         <span
-          key={m.id}
           className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-900 ring-1 ring-amber-200/60"
+          title={remediationEnabled.map((m) => m.label).join(" · ")}
         >
-          {m.badgeLabel}
+          SSM remediation
         </span>
-      ))}
+      ) : (
+        remediationEnabled.map((m) => {
+          const deployed = connected && acc.remediation_modules_deployed[m.id];
+          return (
+            <span
+              key={m.id}
+              className={`rounded-full px-2 py-0.5 text-[10px] font-medium ring-1 ${
+                deployed || !connected
+                  ? "bg-amber-50 text-amber-900 ring-amber-200/60"
+                  : "bg-amber-50/40 text-amber-800/70 ring-amber-200/40"
+              }`}
+            >
+              {m.badgeLabel}
+            </span>
+          );
+        })
+      )}
     </div>
   );
 }

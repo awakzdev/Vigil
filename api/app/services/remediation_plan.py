@@ -27,6 +27,9 @@ IAM_ACCESS_KEY_CHECKS = frozenset(
     }
 )
 
+# IAM API is global — SSM document stays in the connector / REMEDIATION_AUTOMATION_REGION.
+IAM_GLOBAL_SSM_CHECKS = IAM_ACCESS_KEY_CHECKS
+
 
 def _region_from_arn(arn: str | None) -> str | None:
     parts = (arn or "").split(":")
@@ -35,7 +38,7 @@ def _region_from_arn(arn: str | None) -> str | None:
     return None
 
 
-def _resource_region(finding: Finding) -> str:
+def resource_region_for_finding(finding: Finding) -> str:
     ev = finding.evidence or {}
     if isinstance(ev.get("region"), str) and ev["region"]:
         return ev["region"]
@@ -43,6 +46,24 @@ def _resource_region(finding: Finding) -> str:
     if arn_region:
         return arn_region
     return "us-east-1"
+
+
+def automation_region_for_finding(finding: Finding) -> str:
+    """SSM Automation region: match the resource region, except global IAM keys."""
+    return resolve_automation_region(
+        finding.check_id,
+        resource_region_for_finding(finding),
+    )
+
+
+def resolve_automation_region(check_id: str | None, resource_region: str | None) -> str:
+    """Pick SSM Automation region for a check + resource (API status / runner verify)."""
+    settings = get_settings()
+    if check_id and check_id in IAM_GLOBAL_SSM_CHECKS:
+        return settings.REMEDIATION_AUTOMATION_REGION or resource_region or "us-east-1"
+    if resource_region:
+        return resource_region
+    return settings.REMEDIATION_AUTOMATION_REGION or "us-east-1"
 
 
 def _supported_action(check_id: str) -> str | None:
@@ -79,7 +100,8 @@ def build_remediation_plan_body(
     now = datetime.now(timezone.utc)
     ttl = max(5, int(settings.REMEDIATION_PLAN_TTL_MINUTES))
     expires = now + timedelta(minutes=ttl)
-    resource_region = _resource_region(finding)
+    resource_region = resource_region_for_finding(finding)
+    automation_region = automation_region_for_finding(finding)
     ev = finding.evidence or {}
 
     return {
@@ -91,7 +113,7 @@ def build_remediation_plan_body(
         "check_id": finding.check_id,
         "resource_arn": finding.resource_arn,
         "resource_region": resource_region,
-        "automation_region": settings.REMEDIATION_AUTOMATION_REGION,
+        "automation_region": automation_region,
         "evidence": ev,
         "title": finding.title,
         "severity": finding.severity,
@@ -103,8 +125,8 @@ def build_remediation_plan_body(
             "delivery": delivery,
             "document_name": settings.REMEDIATION_SSM_DOCUMENT_NAME,
             "note": (
-                "Start the customer-owned SSM Automation document in automation_region. "
-                "The document executes AWS APIs in resource_region."
+                "Start SSM Automation in automation_region (same as resource_region for regional resources). "
+                "Deploy Vigil-RemediationPlanExecutor in that region. IAM key remediation uses the connector home region."
             ),
         },
         "steps": _steps_for_check(finding),

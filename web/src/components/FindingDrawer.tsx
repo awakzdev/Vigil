@@ -16,8 +16,12 @@ import { policyGenerationReasonLabel } from "../data/policyGenerationCopy";
 import { remediationSummaryFor } from "../data/remediationSummaries";
 import {
   daysAgo,
+  awsRegionFromArn,
   regionsFromFindingEvidence,
+  resourceDetailRowsFromFinding,
   resourceDisplayName,
+  resourceRegionForFinding,
+  resourceShortName,
   resourceTypeLabel,
 } from "../lib/findingDisplay";
 import {
@@ -189,7 +193,6 @@ function SelectedResourceInspector({
   finding: Finding;
   attachedToList?: boolean;
 }) {
-  const name = resourceDisplayName(finding);
   const accountId = awsAccountIdFromArn(finding.resource_arn);
   const ev = finding.evidence;
   const isUnusedRoleFinding = finding.check_id === "iam.role.unused_services_90d";
@@ -201,6 +204,8 @@ function SelectedResourceInspector({
   const thresholdDays = ev.threshold_days as number | undefined;
   const withRecordedUse =
     totalGranted != null && unusedCount != null ? Math.max(0, totalGranted - unusedCount) : null;
+  const detailRows = resourceDetailRowsFromFinding(finding);
+  const exposingRules = Array.isArray(ev.exposing_rules) ? (ev.exposing_rules as Record<string, unknown>[]) : [];
   const affectedRegions = regionsFromFindingEvidence(ev);
   const affectedRegionsLabel =
     finding.check_id === "aws.access_analyzer.not_enabled"
@@ -227,13 +232,73 @@ function SelectedResourceInspector({
         attachedToList ? "border-l-2 border-l-zinc-300/45 shadow-sm shadow-zinc-900/[0.04]" : ""
       }`}
     >
-      <div
-        className={`border-b border-zinc-100 px-4 py-3.5 pr-5 ${attachedToList ? "bg-zinc-50/70" : "bg-white"}`}
-      >
-        <h3 className={`${drawerSectionTitle} font-mono text-[15px] leading-snug break-all`}>{name}</h3>
-      </div>
+      {detailRows.length === 0 && (
+        <div
+          className={`border-b border-zinc-100 px-4 py-3.5 pr-5 ${attachedToList ? "bg-zinc-50/70" : "bg-white"}`}
+        >
+          <h3 className={`${drawerSectionTitle} text-[15px] leading-snug break-words`}>
+            {resourceShortName(finding)}
+          </h3>
+        </div>
+      )}
 
-      <ResourceGroup className="border-t-0">
+      {detailRows.length > 0 && (
+        <ResourceGroup className="border-t-0 bg-zinc-50/30">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+            {detailRows.map((row) => (
+              <div
+                key={row.label}
+                className="min-w-0 rounded-lg border border-zinc-200/80 bg-white px-2.5 py-2 shadow-sm shadow-zinc-900/[0.02]"
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                  {row.label}
+                </div>
+                <div
+                  className={`mt-0.5 truncate text-[12px] font-medium text-zinc-900 ${row.mono ? "font-mono text-[11px]" : ""}`}
+                  title={row.value}
+                >
+                  {row.value}
+                </div>
+              </div>
+            ))}
+          </div>
+        </ResourceGroup>
+      )}
+
+      {exposingRules.length > 0 && (
+        <ResourceGroup>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            Public ingress ({exposingRules.length})
+          </p>
+          <ul className="space-y-1.5">
+            {exposingRules.map((rule, i) => {
+              const proto = String(rule.protocol ?? "tcp");
+              const from = rule.from_port as number | null | undefined;
+              const to = rule.to_port as number | null | undefined;
+              const cidr = String(rule.cidr ?? "0.0.0.0/0");
+              const portLabel =
+                proto === "all" || from == null || to == null
+                  ? "all ports"
+                  : from === to
+                    ? `${from}`
+                    : `${from}–${to}`;
+              return (
+                <li
+                  key={`${cidr}-${portLabel}-${i}`}
+                  className="flex items-center justify-between gap-2 rounded-md border border-red-100/80 bg-red-50/50 px-2.5 py-1.5 text-[11px]"
+                >
+                  <span className="font-mono text-zinc-800">
+                    {proto.toUpperCase()} {portLabel}
+                  </span>
+                  <span className="shrink-0 font-mono text-red-800/90">{cidr}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </ResourceGroup>
+      )}
+
+      <ResourceGroup className={detailRows.length > 0 ? "" : "border-t-0"}>
         {accountId && <ResourceFieldRow label="Account">{accountId}</ResourceFieldRow>}
         <ResourceFieldRow label="ARN" mono>
           {finding.resource_arn}
@@ -4407,7 +4472,14 @@ function AffectedResourcesPanel({
                     : "border-l-transparent pl-3 text-zinc-600 hover:bg-zinc-50 hover:text-zinc-800"
                 }`}
               >
-                <span className="min-w-0 truncate">{resourceDisplayName(f)}</span>
+                <span className="min-w-0">
+                  <span className="block truncate">{resourceDisplayName(f)}</span>
+                  {f.check_id.startsWith("ec2.security_group.") && (
+                    <span className="mt-0.5 block truncate font-mono text-[10px] text-zinc-400">
+                      {(f.evidence.group_id as string) || f.resource_arn.split("/").pop()}
+                    </span>
+                  )}
+                </span>
                 <span className="shrink-0 pl-2 text-[10px] tabular-nums text-zinc-400">{daysAgo(f.first_seen)}</span>
               </button>
             </li>
@@ -4668,6 +4740,7 @@ export function FindingDrawer({
                   findingId={finding.id}
                   checkId={finding.check_id}
                   accountId={accountId}
+                  resourceRegion={resourceRegionForFinding(finding)}
                 />
               )}
             </div>

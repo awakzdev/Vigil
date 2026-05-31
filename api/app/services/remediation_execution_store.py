@@ -67,6 +67,23 @@ def record_execution_result(
     return row
 
 
+def record_automation_start_failed(
+    db: Session,
+    *,
+    plan_id: str,
+    error: str,
+) -> RemediationExecution | None:
+    row = db.get(RemediationExecution, plan_id)
+    if not row:
+        return None
+    row.status = "failed"
+    row.error = (error or "automation_start_failed")[:2000]
+    row.completed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(row)
+    return row
+
+
 def record_automation_start(
     db: Session,
     *,

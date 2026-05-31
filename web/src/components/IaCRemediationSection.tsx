@@ -35,6 +35,7 @@ type SsmRemediationMeta = {
   action_label: string;
   execution: string;
   automation_role_name: string;
+  resource_region: string;
   automation_region: string;
   runbook?: { document_name: string; owner: string; note?: string } | null;
   requires_vigil_document: boolean;
@@ -64,6 +65,34 @@ type RunnerStatus = {
   hints: string[];
   document?: { name: string; exists: boolean; status?: string | null };
 };
+
+function formatAutomationStartError(message: string): string {
+  if (
+    message.includes("AccessDenied") &&
+    message.includes("ssm:StartAutomationExecution") &&
+    message.includes("VigilScannerRole")
+  ) {
+    if (message.includes(":document/")) {
+      return (
+        "VigilScannerRole has VigilSsmRemediationStart but it does not allow StartAutomationExecution on this " +
+        "document ARN. Update VigilAccountConnector to the latest connector template (document resource in IAM), " +
+        "wait for UPDATE_COMPLETE, then Accounts → Verify capabilities and Retry."
+      );
+    }
+    return (
+      "VigilScannerRole is missing ssm:StartAutomationExecution. " +
+      "Update your VigilAccountConnector CloudFormation stack with SSM remediation modules enabled " +
+      "(EnableIamAccessKeyRemediation=Yes, etc.), then Accounts → Verify capabilities."
+    );
+  }
+  if (message.includes("AutomationAssumeRole") && message.includes("Unknown parameter")) {
+    return (
+      "The API sent an invalid StartAutomationExecution parameter (AutomationAssumeRole). " +
+      "Restart the Vigil API to pick up the latest build, then Retry."
+    );
+  }
+  return message;
+}
 
 function CopyBlock({ label, text }: { label: string; text: string }) {
   const [copied, setCopied] = useState(false);
@@ -105,7 +134,13 @@ function SsmDetail({ label, children }: { label: string; children: React.ReactNo
   );
 }
 
-function SsmStatusBadge({ tone, children }: { tone: "ready" | "loading" | "blocked" | "failed" | "running"; children: React.ReactNode }) {
+function SsmStatusBadge({
+  tone,
+  children,
+}: {
+  tone: "ready" | "loading" | "blocked" | "failed" | "running";
+  children: React.ReactNode;
+}) {
   const toneClass = {
     ready: "bg-emerald-50 text-emerald-800 ring-emerald-200/80",
     loading: "bg-zinc-100 text-zinc-600 ring-zinc-200/80",
@@ -115,7 +150,7 @@ function SsmStatusBadge({ tone, children }: { tone: "ready" | "loading" | "block
   }[tone];
 
   return (
-    <span className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${toneClass}`}>
+    <span className={`inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ${toneClass}`}>
       {children}
     </span>
   );
@@ -125,21 +160,23 @@ function SsmRemediationPanel({
   findingId,
   checkId,
   accountId,
+  resourceRegion,
   ssm,
 }: {
   findingId: string;
   checkId: string;
   accountId: string | null;
+  resourceRegion: string;
   ssm: SsmRemediationMeta;
 }) {
   const [dispatch, setDispatch] = useState<DispatchResponse | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const { data: runnerStatus, isLoading: runnerLoading } = useQuery({
-    queryKey: ["remediation-runner-status", accountId, checkId],
+    queryKey: ["remediation-runner-status", accountId, checkId, resourceRegion],
     queryFn: () =>
       api<RunnerStatus>(
-        `/v1/accounts/${accountId}/remediation-runner/status?check_id=${encodeURIComponent(checkId)}`,
+        `/v1/accounts/${accountId}/remediation-runner/status?check_id=${encodeURIComponent(checkId)}&resource_region=${encodeURIComponent(resourceRegion)}`,
       ),
     enabled: !!accountId && ssm.module_enabled,
     staleTime: 60_000,
@@ -163,18 +200,18 @@ function SsmRemediationPanel({
       <div className="rounded-xl border border-amber-200/80 bg-amber-50/70 p-4">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[13px] font-semibold text-zinc-900">SSM automation unavailable</p>
+            <p className="text-[13px] font-semibold text-zinc-900">Automated fix</p>
             <p className="mt-1 text-[12px] leading-relaxed text-amber-950">
               Enable <span className="font-semibold">{ssm.module_label}</span> in the AWS connector before running this fix.
             </p>
           </div>
-          <SsmStatusBadge tone="blocked">Setup needed</SsmStatusBadge>
+          <SsmStatusBadge tone="blocked">Not enabled</SsmStatusBadge>
         </div>
         <Link
           to="/accounts"
           className="mt-3 inline-flex rounded-lg bg-zinc-900 px-3 py-1.5 text-[12px] font-semibold text-white hover:bg-zinc-800"
         >
-          Update connector
+          Update AWS connector
         </Link>
       </div>
     );
@@ -186,19 +223,26 @@ function SsmRemediationPanel({
   const startFailed = Boolean(dispatch?.automation_error);
   const documentName = ssm.runbook?.document_name ?? "Vigil remediation plan";
   const documentOwner = ssm.runbook?.owner === "aws" ? "AWS-owned" : "Vigil";
+  const regionLabel =
+    ssm.resource_region && ssm.resource_region !== ssm.automation_region
+      ? "SSM region"
+      : "Region";
+  const regionValue = ssm.automation_region || ssm.resource_region;
 
   return (
     <div className="space-y-3">
       <section className="overflow-hidden rounded-xl border border-zinc-200/80 bg-white shadow-sm shadow-zinc-900/[0.03]">
         <div className="flex items-start justify-between gap-3 border-b border-zinc-100 bg-zinc-50/80 px-4 py-3">
-          <div>
+          <div className="min-w-0">
             <p className="text-[13px] font-semibold text-zinc-900">Automated fix</p>
-            <p className="mt-0.5 text-[12px] text-zinc-500">AWS Systems Manager Automation</p>
+            <p className="mt-0.5 truncate text-[11px] text-zinc-500">
+              {ssm.execution || "AWS Systems Manager Automation"}
+            </p>
           </div>
           {runnerLoading ? (
             <SsmStatusBadge tone="loading">Checking</SsmStatusBadge>
           ) : startFailed ? (
-            <SsmStatusBadge tone="failed">Blocked</SsmStatusBadge>
+            <SsmStatusBadge tone="failed">Failed</SsmStatusBadge>
           ) : started ? (
             <SsmStatusBadge tone="running">Running</SsmStatusBadge>
           ) : ready ? (
@@ -215,11 +259,18 @@ function SsmRemediationPanel({
 
           {!runnerLoading && !ready && runnerStatus && (
             <div className="rounded-xl border border-amber-200/70 bg-amber-50/80 px-3 py-2.5 text-[12px] leading-relaxed text-amber-950">
-              <p className="font-semibold">SSM automation is not ready in this account.</p>
-              {runnerStatus.blockers.map((b) => (
-                <p key={b} className="mt-1 break-words">{b}</p>
-              ))}
-              <Link to="/accounts" className="mt-2 inline-flex text-[12px] font-semibold text-indigo-700 underline">
+              <p className="font-semibold">SSM automation is not ready in {regionValue}.</p>
+              <ul className="mt-2 list-disc space-y-1.5 pl-4 text-zinc-700 marker:text-amber-600">
+                {runnerStatus.blockers.map((b) => (
+                  <li key={b} className="break-words">
+                    {b}
+                  </li>
+                ))}
+              </ul>
+              <Link
+                to="/accounts"
+                className="mt-3 inline-flex rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-[12px] font-semibold text-indigo-800 shadow-sm hover:bg-indigo-50"
+              >
                 Update AWS connector
               </Link>
             </div>
@@ -230,20 +281,30 @@ function SsmRemediationPanel({
               <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/60 px-3 py-2.5">
                 <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-700">What will run</p>
                 <p className="mt-1 text-[12px] leading-relaxed text-zinc-700">
-                  Signed remediation plan. You explicitly start the execution; Vigil will not auto-run fixes.
+                  Signed remediation plan in <span className="font-mono font-medium">{regionValue}</span>. You start
+                  execution explicitly; Vigil will not auto-run fixes.
                 </p>
               </div>
 
               <dl className="grid grid-cols-2 gap-2">
                 <SsmDetail label="Action">{ssm.action_label}</SsmDetail>
-                <SsmDetail label="Region">{ssm.automation_region}</SsmDetail>
+                <SsmDetail label={regionLabel}>
+                  <span className="font-mono">{regionValue}</span>
+                </SsmDetail>
+                {ssm.resource_region && ssm.resource_region !== ssm.automation_region && (
+                  <SsmDetail label="Resource">
+                    <span className="font-mono">{ssm.resource_region}</span>
+                  </SsmDetail>
+                )}
                 <SsmDetail label="Runbook">
                   <span className="font-mono" title={`${documentOwner} · ${documentName}`}>
                     {documentOwner} · {documentName}
                   </span>
                 </SsmDetail>
                 <SsmDetail label="Role">
-                  <span className="font-mono" title={ssm.automation_role_name}>{ssm.automation_role_name}</span>
+                  <span className="font-mono" title={ssm.automation_role_name}>
+                    {ssm.automation_role_name}
+                  </span>
                 </SsmDetail>
               </dl>
 
@@ -252,8 +313,14 @@ function SsmRemediationPanel({
                   type="button"
                   disabled={running || !accountId}
                   onClick={() => startMutation.mutate()}
-                  className="inline-flex items-center justify-center rounded-lg bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white shadow-sm shadow-zinc-900/10 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="inline-flex items-center justify-center gap-2 rounded-lg bg-zinc-900 px-4 py-2 text-[12px] font-semibold text-white shadow-sm shadow-zinc-900/10 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-50"
                 >
+                  {running && (
+                    <span
+                      className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white"
+                      aria-hidden
+                    />
+                  )}
                   {running ? "Starting…" : "Start remediation"}
                 </button>
                 <p className="text-[11px] leading-relaxed text-zinc-500 sm:max-w-[16rem] sm:text-right">
@@ -264,17 +331,21 @@ function SsmRemediationPanel({
           )}
 
           {started && (
-            <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/70 px-3 py-2.5 text-[12px]">
-              <p className="font-semibold text-emerald-950">Execution dispatched</p>
-              <p className="mt-1 break-all font-mono text-[11px] text-zinc-700">
-                {dispatch!.automation_execution_id}
-              </p>
-              <p className="mt-1 text-zinc-600">Status is in progress. Refresh below or re-scan to verify the finding.</p>
+            <div className="space-y-2 text-[12px]">
+              <div className="rounded-xl border border-emerald-200/70 bg-emerald-50/70 px-3 py-2.5">
+                <p className="font-semibold text-emerald-950">Execution dispatched</p>
+                <p className="mt-1 break-all font-mono text-[11px] text-zinc-700">
+                  {dispatch!.automation_execution_id}
+                </p>
+                <p className="mt-1 text-zinc-600">
+                  In progress in {regionValue}. Refresh below or re-scan to verify the finding.
+                </p>
+              </div>
               <button
                 type="button"
                 disabled={running}
                 onClick={() => startMutation.mutate()}
-                className="mt-2 text-[11px] font-medium text-indigo-700 underline disabled:opacity-50"
+                className="text-[11px] font-medium text-indigo-700 underline disabled:opacity-50"
               >
                 Start again
               </button>
@@ -283,31 +354,45 @@ function SsmRemediationPanel({
 
           {startFailed && (
             <div className="rounded-xl border border-amber-200/80 bg-amber-50/80 px-3 py-2.5 text-[12px] text-amber-950">
-              <div className="flex items-center justify-between gap-3">
-                <p className="font-semibold">Execution did not start</p>
-                {dispatch?.plan_id && (
-                  <span className="shrink-0 font-mono text-[10px] text-amber-800/70">
-                    plan {dispatch.plan_id.slice(0, 8)}…
-                  </span>
+              <p className="font-semibold">Could not start SSM Automation</p>
+              <p className="mt-1.5 leading-relaxed">
+                {formatAutomationStartError(dispatch!.automation_error ?? "")}
+              </p>
+              {dispatch!.plan_id && (
+                <p className="mt-2 font-mono text-[11px] text-amber-900/75">
+                  Plan {dispatch.plan_id.slice(0, 8)}… (saved; not executed)
+                </p>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                {dispatch!.automation_error?.includes("StartAutomationExecution") && (
+                  <Link
+                    to="/accounts"
+                    className="inline-flex rounded-lg border border-indigo-200 bg-white px-3.5 py-2 text-[12px] font-semibold text-indigo-800 shadow-sm hover:bg-indigo-50"
+                  >
+                    Update AWS connector
+                  </Link>
                 )}
+                <button
+                  type="button"
+                  disabled={running}
+                  onClick={() => startMutation.mutate()}
+                  className="inline-flex items-center gap-2 rounded-lg border border-amber-300/70 bg-white px-3.5 py-1.5 text-[12px] font-semibold text-amber-950 transition hover:bg-amber-50 disabled:opacity-50"
+                >
+                  {running && (
+                    <span
+                      className="h-3 w-3 animate-spin rounded-full border-2 border-amber-300 border-t-amber-800"
+                      aria-hidden
+                    />
+                  )}
+                  {running ? "Retrying…" : "Retry"}
+                </button>
               </div>
-              <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap break-words rounded-lg border border-amber-200/70 bg-white/60 px-2.5 py-2 font-mono text-[10px] leading-relaxed text-amber-950">
-                {dispatch!.automation_error}
-              </pre>
-              <button
-                type="button"
-                disabled={running}
-                onClick={() => startMutation.mutate()}
-                className="mt-2 rounded-lg border border-amber-300/70 bg-white px-3 py-1.5 text-[12px] font-semibold text-amber-950 transition hover:bg-amber-50 disabled:opacity-50"
-              >
-                Retry
-              </button>
             </div>
           )}
         </div>
       </section>
 
-      <ExecutionStatus findingId={findingId} />
+      {!startFailed && <ExecutionStatus findingId={findingId} />}
 
       {dispatch && (
         <div className="overflow-hidden rounded-xl border border-zinc-200/70 bg-white shadow-sm shadow-zinc-900/[0.02]">
@@ -357,12 +442,14 @@ export function IaCRemediationSection({
   checkId,
   embedMode,
   accountId,
+  resourceRegion,
 }: {
   findingId: string;
   checkId: string;
   bucketName?: string;
   embedMode: "terraform" | "automation";
   accountId?: string | null;
+  resourceRegion?: string | null;
 }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ["iac-snippets", findingId],
@@ -447,11 +534,18 @@ export function IaCRemediationSection({
     );
   }
 
+  const region =
+    resourceRegion ??
+    data.ssm_remediation.resource_region ??
+    data.ssm_remediation.automation_region ??
+    "us-east-1";
+
   return (
     <SsmRemediationPanel
       findingId={findingId}
       checkId={checkId}
       accountId={accountId ?? null}
+      resourceRegion={region}
       ssm={data.ssm_remediation}
     />
   );
@@ -472,23 +566,50 @@ function ExecutionStatus({ findingId }: { findingId: string }) {
   });
   if (!data || data.status === "none") return null;
   const ok = data.status === "success" || data.result?.ok;
-  const inProgress = data.status === "pending" || data.status === "running";
+  const failed = data.status === "failed";
+  const inProgress = data.status === "running";
+  const dispatchedOnly = data.status === "dispatched";
+  if (dispatchedOnly && !data.error) return null;
   return (
     <div
       className={`rounded-lg border px-3 py-2 text-[12px] ${
-        ok ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-zinc-200 bg-zinc-50 text-zinc-700"
+        ok
+          ? "border-emerald-200 bg-emerald-50 text-emerald-900"
+          : failed
+            ? "border-amber-200 bg-amber-50/80 text-amber-950"
+            : "border-zinc-200 bg-zinc-50 text-zinc-700"
       }`}
     >
-      <div className="flex items-center justify-between gap-2">
-        <p>
-          Execution <span className="font-semibold">{data.status}</span>
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 leading-relaxed">
+          {ok ? (
+            <>
+              Execution <span className="font-semibold">completed</span>
+            </>
+          ) : failed ? (
+            <>
+              Execution <span className="font-semibold">did not start</span>
+            </>
+          ) : inProgress ? (
+            <>
+              Execution <span className="font-semibold">in progress</span>
+            </>
+          ) : (
+            <>
+              Execution <span className="font-semibold">{data.status}</span>
+            </>
+          )}
           {data.plan_id && (
             <>
               {" "}
               · plan <span className="font-mono text-[11px]">{data.plan_id.slice(0, 8)}…</span>
             </>
           )}
-          {data.error && <> — {data.error}</>}
+          {data.error && (
+            <span className="mt-1 block text-[11px] leading-snug opacity-90">
+              {formatAutomationStartError(data.error)}
+            </span>
+          )}
         </p>
         {inProgress && (
           <button

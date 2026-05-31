@@ -8,15 +8,15 @@ document only when extra guardrails are needed.
 ## Architecture
 
 ```
-Vigil UI -> review -> explicit Start remediation -> ssm:StartAutomationExecution
+Vigil UI -> review -> explicit Start remediation -> ssm:StartAutomationExecution (automation_region)
 -> AWS-owned runbook or Vigil guardrail document
 -> SSM Automation assumes customer remediation role
--> document applies the approved action in resource_region
+-> document applies the approved action in resource_region (same region for EC2/SSM resources)
 ```
 
 - **No dynamic IAM attach**: write permissions are static on the customer-owned automation role.
 - **AWS-native execution**: execution history and output live in Systems Manager.
-- **Automation region != resource region**: deploy `vigil-remediation-ssm.yaml` in the configured automation region; the document calls AWS APIs in `resource_region` from the plan.
+- **Region-aligned automation**: for regional resources (security groups, SSM parameters, etc.), `automation_region` matches `resource_region` from the finding. Deploy `vigil-remediation-ssm.yaml` in **each region** you remediate. IAM access keys use `REMEDIATION_AUTOMATION_REGION` (global IAM APIs).
 - **Exact-match revoke**: security-group fixes only remove tuples from `exact_match_rules`; returns `stale_plan` if live rules drifted.
 - **No custom Lambda runner**: SSM owns execution, audit trail, and output.
 
@@ -27,11 +27,11 @@ Vigil UI -> review -> explicit Start remediation -> ssm:StartAutomationExecution
    `ssm:StartAutomationExecution`, `ssm:GetAutomationExecution`, and `iam:PassRole` for
    `VigilRemediationAutomationRole` only.
 
-2. **Custom Vigil document** (SG exact-match, IAM access keys, SSM parameters) — deploy once per automation region:
+2. **Custom Vigil document** (SG exact-match, IAM access keys, SSM parameters) — deploy **in each AWS region** where you have findings to fix (e.g. `us-east-2` for a security group there):
 
 ```bash
 aws cloudformation deploy \
-  --region us-east-1 \
+  --region us-east-2 \
   --stack-name Vigil-Remediation-SSM \
   --template-file infra/cfn/vigil-remediation-ssm.yaml \
   --capabilities CAPABILITY_NAMED_IAM \

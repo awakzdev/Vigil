@@ -2,23 +2,30 @@
 
 from unittest.mock import MagicMock, patch
 
+from app.data.remediation_modules import REMEDIATION_MODULES
 from app.services.account_capabilities import (
     apply_capability_verification,
+    build_capability_verification_context,
     verify_advanced_policy_generation,
 )
 
 
-@patch("app.services.account_capabilities.check_role_actions")
-@patch("app.services.account_capabilities.assume_role")
-def test_verify_advanced_inspects_role_even_when_not_enabled(mock_assume, mock_check):
-    mock_sess = MagicMock()
-    mock_assume.return_value = mock_sess
-    mock_check.return_value = {a: False for a in (
-        "iam:GenerateServiceLastAccessedDetails",
-        "access-analyzer:StartPolicyGeneration",
-        "access-analyzer:CancelPolicyGeneration",
-        "access-analyzer:GetGeneratedPolicy",
-    )}
+@patch("app.services.account_capabilities.check_actions_on_documents")
+@patch("app.services.account_capabilities.build_capability_verification_context")
+def test_verify_advanced_inspects_role_even_when_not_enabled(mock_ctx_build, mock_check):
+    mock_ctx_build.return_value = MagicMock(
+        session_error=None,
+        scanner_documents=[{"Statement": []}],
+    )
+    mock_check.return_value = {
+        a: False
+        for a in (
+            "iam:GenerateServiceLastAccessedDetails",
+            "access-analyzer:StartPolicyGeneration",
+            "access-analyzer:CancelPolicyGeneration",
+            "access-analyzer:GetGeneratedPolicy",
+        )
+    }
     acc = MagicMock(
         enable_advanced_policy_generation=False,
         role_arn="arn:aws:iam::123456789012:role/VigilScannerRole",
@@ -30,13 +37,13 @@ def test_verify_advanced_inspects_role_even_when_not_enabled(mock_assume, mock_c
     mock_check.assert_called_once()
 
 
-@patch("app.services.account_capabilities.check_role_actions")
-@patch("app.services.account_capabilities.assume_role")
-@patch("app.services.account_capabilities.verify_account")
-def test_verify_advanced_assumes_derived_role(mock_verify, mock_assume, mock_check):
-    mock_verify.return_value = (True, "123456789012", None, None)
-    mock_sess = MagicMock()
-    mock_assume.return_value = mock_sess
+@patch("app.services.account_capabilities.check_actions_on_documents")
+@patch("app.services.account_capabilities.build_capability_verification_context")
+def test_verify_advanced_all_granted(mock_ctx_build, mock_check):
+    mock_ctx_build.return_value = MagicMock(
+        session_error=None,
+        scanner_documents=[{"Statement": []}],
+    )
     mock_check.return_value = {a: True for a in (
         "iam:GenerateServiceLastAccessedDetails",
         "access-analyzer:StartPolicyGeneration",
@@ -46,7 +53,7 @@ def test_verify_advanced_assumes_derived_role(mock_verify, mock_assume, mock_che
     )}
     acc = MagicMock(
         enable_advanced_policy_generation=True,
-        role_arn="arn:aws:iam::123456789012:role/VigilReadOnlyScannerRole",
+        role_arn="arn:aws:iam::123456789012:role/VigilScannerRole",
         external_id="ext",
     )
     out = verify_advanced_policy_generation(acc)
@@ -99,3 +106,53 @@ def test_apply_syncs_enable_when_iam_has_advanced(mock_adv, mock_rem):
     apply_capability_verification(acc)
     assert acc.advanced_policy_generation_deployed is True
     assert acc.enable_advanced_policy_generation is True
+
+
+@patch("app.services.account_capabilities.check_remediation_runner")
+@patch("app.services.account_capabilities.load_role_policy_names", return_value=(set(), set()))
+@patch("app.services.account_capabilities.load_role_policy_documents", return_value=[])
+@patch("app.services.account_capabilities.assume_role")
+def test_apply_assumes_role_once(mock_assume, mock_load_docs, mock_load_names, mock_runner):
+    mock_sess = MagicMock()
+    mock_assume.return_value = mock_sess
+    mock_sess.client.return_value.get_caller_identity.return_value = {"Account": "123456789012"}
+    mock_runner.return_value = {"ready": True, "blockers": []}
+
+    acc = MagicMock(
+        role_arn="arn:aws:iam::123456789012:role/VigilScannerRole",
+        external_id="ext",
+        enable_advanced_policy_generation=True,
+        advanced_policy_generation_deployed=False,
+    )
+    for spec in REMEDIATION_MODULES:
+        setattr(acc, spec.enable_column, True)
+        setattr(acc, spec.deployed_column, False)
+
+    apply_capability_verification(acc)
+
+    assert mock_assume.call_count == 1
+    assert mock_load_docs.call_count == 2
+    assert mock_runner.call_count == 1
+    mock_runner.assert_called_once()
+    assert mock_runner.call_args.kwargs.get("session") is mock_sess
+    assert mock_runner.call_args.kwargs.get("scanner_policy_documents") == []
+
+
+@patch("app.services.account_capabilities.check_remediation_runner")
+@patch("app.services.account_capabilities.load_role_policy_names", return_value=(set(), set()))
+@patch("app.services.account_capabilities.load_role_policy_documents", return_value=[])
+@patch("app.services.account_capabilities.assume_role")
+def test_build_context_single_runner_check(mock_assume, mock_load_docs, mock_load_names, mock_runner):
+    mock_sess = MagicMock()
+    mock_assume.return_value = mock_sess
+    mock_sess.client.return_value.get_caller_identity.return_value = {"Account": "123456789012"}
+    mock_runner.return_value = {"ready": False, "blockers": ["missing doc"]}
+
+    acc = MagicMock(
+        role_arn="arn:aws:iam::123456789012:role/VigilScannerRole",
+        external_id="ext",
+    )
+    ctx = build_capability_verification_context(acc)
+    assert ctx.session is mock_sess
+    assert mock_assume.call_count == 1
+    assert mock_runner.call_count == 1

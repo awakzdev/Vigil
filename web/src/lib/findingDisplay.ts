@@ -28,6 +28,174 @@ export function regionsFromFindingEvidence(ev: Record<string, unknown>): string[
   return raw.filter((r): r is string => typeof r === "string" && r.trim().length > 0);
 }
 
+function evidenceString(e: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const k of keys) {
+    const v = e[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return null;
+}
+
+/** AWS region from a standard ARN (empty partition segment for global S3 → us-east-1). */
+export function resourceRegionForFinding(f: FindingLike): string {
+  const fromEvidence = evidenceString(f.evidence, "region", "home_region");
+  if (fromEvidence) return fromEvidence;
+  return awsRegionFromArn(f.resource_arn) ?? "us-east-1";
+}
+
+export function awsRegionFromArn(arn: string): string | null {
+  const parts = arn.split(":");
+  if (parts.length < 4) return null;
+  if (parts[2] === "s3" && !parts[3]) return "us-east-1";
+  return parts[3] || null;
+}
+
+export type ResourceDetailRow = {
+  label: string;
+  value: string;
+  mono?: boolean;
+};
+
+export function resourceDetailRowsFromFinding(f: FindingLike): ResourceDetailRow[] {
+  const e = f.evidence;
+  const rows: ResourceDetailRow[] = [];
+  const push = (label: string, value: string | null | undefined, mono = false) => {
+    if (value) rows.push({ label, value, mono });
+  };
+
+  const cid = f.check_id;
+
+  if (cid.startsWith("ec2.security_group.")) {
+    push("Name", evidenceString(e, "group_name"));
+    push("Security group", evidenceString(e, "group_id"), true);
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    push("VPC", evidenceString(e, "vpc_id"), true);
+    if (e.is_default === true) push("Default SG", "Yes");
+    return rows;
+  }
+
+  if (cid.startsWith("vpc.")) {
+    push("VPC", evidenceString(e, "vpc_id"), true);
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("iam.access_key")) {
+    push("Access key", evidenceString(e, "key_id"), true);
+    push("IAM user", evidenceString(e, "user_name", "user_arn"));
+    return rows;
+  }
+
+  if (cid.startsWith("iam.user.")) {
+    push("IAM user", evidenceString(e, "user_name", "user_arn"));
+    return rows;
+  }
+
+  if (cid.startsWith("iam.role.")) {
+    push("IAM role", evidenceString(e, "role_name", "role_arn"));
+    return rows;
+  }
+
+  if (cid.startsWith("s3.bucket.") || cid.startsWith("s3.")) {
+    push("Bucket", evidenceString(e, "bucket_name", "name"));
+    return rows;
+  }
+
+  if (cid.startsWith("kms.")) {
+    push("Key", evidenceString(e, "key_id"), true);
+    push("Alias", evidenceString(e, "alias"));
+    return rows;
+  }
+
+  if (cid.startsWith("rds.")) {
+    push("Instance", evidenceString(e, "db_instance_id"), true);
+    push("Engine", evidenceString(e, "engine"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("dynamodb.")) {
+    push("Table", evidenceString(e, "table_name"), true);
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("ec2.instance") || cid === "ec2.imdsv2.not_required") {
+    push("Instance", evidenceString(e, "instance_id"), true);
+    push("Type", evidenceString(e, "instance_type"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("ec2.ebs") || cid.startsWith("ebs.")) {
+    push("Volume", evidenceString(e, "volume_id"), true);
+    push("Snapshot", evidenceString(e, "snapshot_id"), true);
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("lambda.")) {
+    push("Function", evidenceString(e, "function_name"));
+    push("Runtime", evidenceString(e, "runtime"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("cloudtrail.")) {
+    push("Trail", evidenceString(e, "trail_name", "name"));
+    push("Home region", evidenceString(e, "home_region", "region"), true);
+    return rows;
+  }
+
+  if (cid.startsWith("ssm.")) {
+    push("Parameter", evidenceString(e, "parameter_name"), true);
+    push("Type", evidenceString(e, "parameter_type"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("secretsmanager.")) {
+    push("Secret", evidenceString(e, "secret_name", "name"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("elb.") || cid.startsWith("elasticloadbalancing.")) {
+    push("Load balancer", evidenceString(e, "name", "load_balancer_name"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("sns.") || cid.startsWith("sqs.")) {
+    push("Name", evidenceString(e, "topic_name", "queue_name", "name"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  if (cid.startsWith("acm.")) {
+    push("Domain", evidenceString(e, "domain_name"));
+    push("Region", evidenceString(e, "region") ?? awsRegionFromArn(f.resource_arn), true);
+    return rows;
+  }
+
+  push("Region", evidenceString(e, "region", "home_region") ?? awsRegionFromArn(f.resource_arn), true);
+  return rows;
+}
+
+/** Primary resource label without region suffix (Resources tab detail). */
+export function resourceShortName(f: FindingLike): string {
+  const e = f.evidence;
+  const pick = (...keys: string[]) => evidenceString(e, ...keys);
+  if (f.check_id.startsWith("ec2.security_group.")) {
+    return pick("group_name") ?? resourceName(f.resource_arn);
+  }
+  const full = resourceDisplayName(f);
+  const region = pick("region") ?? awsRegionFromArn(f.resource_arn);
+  if (region && full.endsWith(` · ${region}`)) return full.slice(0, -(region.length + 3));
+  if (region && full.endsWith(` (${region})`)) return full.slice(0, -(region.length + 3));
+  return full;
+}
+
 export function resourceDisplayName(f: FindingLike): string {
   const e = f.evidence;
   const regions = regionsFromFindingEvidence(e);
@@ -35,13 +203,15 @@ export function resourceDisplayName(f: FindingLike): string {
     const n = typeof e.region_count === "number" ? e.region_count : regions.length;
     return `${n} region${n === 1 ? "" : "s"}`;
   }
-  const pick = (...keys: string[]) => {
-    for (const k of keys) {
-      const v = e[k];
-      if (typeof v === "string" && v.trim()) return v;
-    }
-    return null;
-  };
+  const pick = (...keys: string[]) => evidenceString(e, ...keys);
+  if (f.check_id.startsWith("ec2.security_group.")) {
+    const name = pick("group_name") ?? resourceName(f.resource_arn);
+    const region = pick("region") ?? awsRegionFromArn(f.resource_arn);
+    const gid = pick("group_id");
+    if (region && gid) return `${name} · ${region}`;
+    if (region) return `${name} (${region})`;
+    return name;
+  }
   return (
     pick(
       "user_name",
@@ -59,7 +229,10 @@ export function resourceDisplayName(f: FindingLike): string {
       "topic_name",
       "queue_name",
       "load_balancer_name",
-      "policy_name"
+      "policy_name",
+      "db_instance_id",
+      "vpc_id",
+      "parameter_name"
     ) ?? resourceName(f.resource_arn)
   );
 }
