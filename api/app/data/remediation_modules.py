@@ -18,6 +18,9 @@ class RemediationModuleSpec:
     runner_supported: bool
 
 
+SSM_EXECUTOR_POLICY_NAME = "VigilRemediationAutomation"
+
+
 REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
     RemediationModuleSpec(
         id="security_groups",
@@ -26,10 +29,9 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         enable_column="enable_remediation_sg",
         deployed_column="remediation_sg_deployed",
         cfn_parameter="EnableSecurityGroupRemediation",
-        iam_policy_name="VigilRemediationSecurityGroups",
+        iam_policy_name=SSM_EXECUTOR_POLICY_NAME,
         permissions=(
             "ec2:RevokeSecurityGroupIngress",
-            "ec2:AuthorizeSecurityGroupIngress",
         ),
         runner_supported=True,
     ),
@@ -40,7 +42,7 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         enable_column="enable_remediation_s3",
         deployed_column="remediation_s3_deployed",
         cfn_parameter="EnableS3Remediation",
-        iam_policy_name="VigilRemediationS3",
+        iam_policy_name=SSM_EXECUTOR_POLICY_NAME,
         permissions=(
             "s3:PutBucketPublicAccessBlock",
             "s3:PutBucketPolicy",
@@ -54,12 +56,10 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         enable_column="enable_remediation_iam_keys",
         deployed_column="remediation_iam_keys_deployed",
         cfn_parameter="EnableIamAccessKeyRemediation",
-        iam_policy_name="VigilRemediationIamAccessKeys",
+        iam_policy_name=SSM_EXECUTOR_POLICY_NAME,
         permissions=(
             "iam:UpdateAccessKey",
             "iam:DeleteAccessKey",
-            "iam:GetAccessKeyLastUsed",
-            "iam:ListAccessKeys",
         ),
         runner_supported=True,
     ),
@@ -70,7 +70,7 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         enable_column="enable_remediation_iam_policy",
         deployed_column="remediation_iam_policy_deployed",
         cfn_parameter="EnableIamPolicyRemediation",
-        iam_policy_name="VigilRemediationIamPolicy",
+        iam_policy_name=SSM_EXECUTOR_POLICY_NAME,
         permissions=(
             "iam:PutRolePolicy",
             "iam:DetachRolePolicy",
@@ -87,7 +87,7 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         enable_column="enable_remediation_ssm_parameters",
         deployed_column="remediation_ssm_parameters_deployed",
         cfn_parameter="EnableSsmParameterRemediation",
-        iam_policy_name="VigilRemediationAutomation",
+        iam_policy_name=SSM_EXECUTOR_POLICY_NAME,
         permissions=(
             "ssm:GetParameter",
             "ssm:PutParameter",
@@ -101,7 +101,7 @@ REMEDIATION_MODULES: tuple[RemediationModuleSpec, ...] = (
         enable_column="enable_remediation_cloudtrail",
         deployed_column="remediation_cloudtrail_deployed",
         cfn_parameter="EnableCloudTrailRemediation",
-        iam_policy_name="VigilRemediationCloudTrail",
+        iam_policy_name=SSM_EXECUTOR_POLICY_NAME,
         permissions=(
             "cloudtrail:UpdateTrail",
             "cloudtrail:StartLogging",
