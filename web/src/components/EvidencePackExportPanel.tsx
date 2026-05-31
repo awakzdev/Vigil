@@ -26,14 +26,14 @@ const readinessStyles: Record<
     dot: "bg-emerald-500",
     bar: "bg-emerald-500",
     headline: "text-emerald-900",
-    surface: "from-emerald-50/80 via-white to-white",
+    surface: "from-emerald-50/70 via-white to-white",
   },
   partial: {
     badge: "bg-amber-50/90 text-amber-950 ring-amber-200/70",
     dot: "bg-amber-400",
     bar: "bg-amber-400",
     headline: "text-amber-950",
-    surface: "from-amber-50/80 via-white to-white",
+    surface: "from-amber-50/70 via-white to-white",
   },
   limited: {
     badge: "bg-zinc-100 text-zinc-800 ring-zinc-200/80",
@@ -47,14 +47,14 @@ const readinessStyles: Record<
     dot: "bg-rose-500",
     bar: "bg-rose-400",
     headline: "text-zinc-900",
-    surface: "from-rose-50/70 via-white to-white",
+    surface: "from-rose-50/60 via-white to-white",
   },
   snapshot: {
     badge: "bg-indigo-50 text-indigo-900 ring-indigo-200/80",
     dot: "bg-indigo-500",
     bar: "bg-indigo-500",
     headline: "text-indigo-900",
-    surface: "from-indigo-50/80 via-white to-white",
+    surface: "from-indigo-50/70 via-white to-white",
   },
   neutral: {
     badge: "bg-zinc-100 text-zinc-800 ring-zinc-200/80",
@@ -70,96 +70,53 @@ function getFrameworkExportCopy(frameworkId: string) {
     return {
       eyebrow: "SOC 2 Type II",
       subtitle: "Build a reviewer-ready package around the Type II sampling window.",
-      scopeHelper: "SOC 2 Type II needs a continuous 90-day audit period. Shorter exports are useful for dry runs, but the 90-day window should be the default audit packet.",
-      dateHelper: "Choose the end date for the Type II sampling window.",
       contextLabel: "90-day evidence window",
+      periodHint: "90d is the Type II default. Other windows are mainly for dry runs.",
     };
   }
 
   if (frameworkId === "cis_aws_l1") {
     return {
       eyebrow: "CIS AWS Foundations",
-      subtitle: "Package the latest benchmark posture with optional history for reviewers.",
-      scopeHelper: "CIS is usually a point-in-time benchmark. Use Last scan for the cleanest packet, or add a lookback window when you want evidence history.",
-      dateHelper: "Optional snapshot anchor. This is not a fixed CIS requirement.",
+      subtitle: "Package benchmark posture with optional evidence history.",
       contextLabel: "Benchmark snapshot",
+      periodHint: "CIS is usually snapshot-based. History is optional.",
     };
   }
 
   if (frameworkId === "iso27001") {
     return {
       eyebrow: "ISO 27001",
-      subtitle: "Export control evidence and historical posture without forcing an audit date.",
-      scopeHelper: "ISO exports can include evidence history, but there is no hard 90-day requirement here. Pick the period that matches the reviewer request.",
-      dateHelper: "Optional as-of date for the evidence package.",
+      subtitle: "Export control evidence and historical posture.",
       contextLabel: "Evidence history",
+      periodHint: "ISO does not require a fixed 90-day export window.",
     };
   }
 
   return {
     eyebrow: "Evidence export",
     subtitle: "Create an evidence package for this framework.",
-    scopeHelper: "Choose the export scope that matches the review request.",
-    dateHelper: "Optional as-of date for the evidence package.",
     contextLabel: "Audit package",
+    periodHint: "Choose the export scope that matches the review request.",
   };
-}
-
-function getWindowOptionMeta(frameworkId: string, value: string | number) {
-  if (value === "last_scan") {
-    return {
-      title: "Latest posture",
-      detail:
-        frameworkId === "soc2"
-          ? "Point-in-time dry run"
-          : "Best for CIS and snapshot reviews",
-      badge: frameworkId === "soc2" ? null : "Cleanest",
-    };
-  }
-
-  if (frameworkId === "soc2") {
-    if (value === 90) {
-      return { title: "Type II window", detail: "Continuous audit period", badge: "Recommended" };
-    }
-    if (value === 30) return { title: "Short dry run", detail: "Not enough for Type II", badge: null };
-    if (value === 180) return { title: "Extended trail", detail: "More than required", badge: null };
-    return { title: "Full-year trail", detail: "Broad historical export", badge: null };
-  }
-
-  if (frameworkId === "cis_aws_l1") {
-    if (value === 30) return { title: "Recent drift", detail: "Short evidence history", badge: null };
-    if (value === 90) return { title: "Quarter view", detail: "Optional context", badge: null };
-    if (value === 180) return { title: "Half-year view", detail: "Longer trend", badge: null };
-    return { title: "Full-year view", detail: "Deep history", badge: null };
-  }
-
-  if (value === 30) return { title: "Recent evidence", detail: "Short history", badge: null };
-  if (value === 90) return { title: "Quarter evidence", detail: "Common review window", badge: null };
-  if (value === 180) return { title: "Half-year evidence", detail: "Expanded history", badge: null };
-  return { title: "Full-year evidence", detail: "Maximum context", badge: null };
 }
 
 function EvidenceCoverageSection({
   ui,
   loading,
+  stats,
 }: {
   ui: FrameworkEvidenceUi;
   loading?: boolean;
+  stats: { label: string; value: string }[];
 }) {
   const styles = readinessStyles[ui.tone];
   return (
     <section
-      className={`relative overflow-hidden rounded-2xl border border-zinc-200/80 bg-gradient-to-br ${styles.surface} p-4 shadow-sm`}
+      className={`rounded-2xl border border-zinc-200/80 bg-gradient-to-br ${styles.surface} p-4 shadow-sm`}
       aria-label="Evidence coverage"
     >
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-indigo-200/80 to-transparent" />
-      <div className="flex items-start gap-3">
-        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white/80 text-indigo-700 shadow-sm ring-1 ring-zinc-200/80">
-          <svg className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden>
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M12 3.75 5.25 6v5.25c0 4.2 2.84 8.12 6.75 9.25 3.91-1.13 6.75-5.05 6.75-9.25V6L12 3.75Z" />
-          </svg>
-        </div>
-
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span
@@ -172,11 +129,11 @@ function EvidenceCoverageSection({
           </div>
 
           {ui.headline && (
-            <p className={`mt-3 text-sm font-semibold tabular-nums ${styles.headline}`}>{ui.headline}</p>
+            <p className={`mt-2 text-sm font-semibold tabular-nums ${styles.headline}`}>{ui.headline}</p>
           )}
 
           {ui.showProgressBar && (
-            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-200/80">
+            <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-zinc-200/80">
               <div
                 className={`h-full rounded-full transition-all duration-300 ${ui.progressPct > 0 ? styles.bar : "bg-transparent"}`}
                 style={{ width: `${Math.min(100, Math.max(0, ui.progressPct))}%` }}
@@ -189,80 +146,59 @@ function EvidenceCoverageSection({
             </div>
           )}
 
-          {ui.detailLine && (
-            <p className="mt-2.5 text-sm leading-relaxed text-zinc-600">{ui.detailLine}</p>
-          )}
-
-          {ui.guidanceLine && (
-            <div
-              className="mt-3 flex items-start gap-2 rounded-xl border border-amber-200/70 bg-amber-50/90 px-3 py-2.5 text-xs font-medium leading-snug text-amber-950"
-              role="note"
-            >
-              <span
-                className="mt-px flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold leading-none text-amber-800 ring-1 ring-amber-200/80"
-                aria-hidden
-              >
-                i
-              </span>
-              <span>{ui.guidanceLine}</span>
-            </div>
+          {(ui.guidanceLine || ui.detailLine) && (
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
+              {ui.guidanceLine ?? ui.detailLine}
+            </p>
           )}
         </div>
+
+        <dl className="grid min-w-[11rem] grid-cols-3 gap-3 rounded-xl border border-zinc-200/70 bg-white/70 px-3 py-2 sm:grid-cols-1 sm:gap-1.5">
+          {stats.map((item) => (
+            <div key={item.label} className="min-w-0 sm:flex sm:items-center sm:justify-between sm:gap-4">
+              <dt className="truncate text-[10px] font-semibold uppercase tracking-wider text-zinc-400 sm:text-[11px] sm:normal-case sm:tracking-normal">
+                {item.label}
+              </dt>
+              <dd className="mt-1 text-sm font-bold tabular-nums text-zinc-950 sm:mt-0">{item.value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
     </section>
-  );
-}
-
-function MetricCards({
-  items,
-}: {
-  items: { label: string; value: string }[];
-}) {
-  return (
-    <dl className="grid grid-cols-3 gap-2">
-      {items.map((item) => (
-        <div
-          key={item.label}
-          className="rounded-xl border border-zinc-200/80 bg-white px-3 py-2.5 shadow-sm"
-        >
-          <dt className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400">{item.label}</dt>
-          <dd className="mt-1 text-base font-bold tabular-nums text-zinc-950">{item.value}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }
 
 function PeriodWindowPicker({
   frameworkId,
   scopeLabel,
-  helper,
+  hint,
   periodKey,
   onPeriodChange,
 }: {
   frameworkId: string;
   scopeLabel: string;
-  helper: string;
+  hint: string;
   periodKey: string | number;
   onPeriodChange: (key: string | number) => void;
 }) {
   return (
     <div>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{scopeLabel}</p>
-          <p className="mt-1 text-xs leading-relaxed text-zinc-500">{helper}</p>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{scopeLabel}</p>
+        {frameworkId === "soc2" && periodKey === 90 && (
+          <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 ring-1 ring-indigo-100">
+            Recommended
+          </span>
+        )}
       </div>
 
       <div
-        className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-5"
+        className="mt-2 grid grid-cols-5 gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1"
         role="radiogroup"
         aria-label={scopeLabel}
       >
         {WINDOW_OPTIONS.map((opt) => {
           const active = periodKey === opt.value;
-          const meta = getWindowOptionMeta(frameworkId, opt.value);
           return (
             <button
               key={String(opt.value)}
@@ -270,44 +206,19 @@ function PeriodWindowPicker({
               onClick={() => onPeriodChange(opt.value)}
               role="radio"
               aria-checked={active}
-              className={`group relative min-h-[4.75rem] rounded-xl border p-3 text-left transition ${
+              className={`rounded-lg px-2 py-2 text-center text-xs font-bold tabular-nums transition ${
                 active
-                  ? "border-indigo-300 bg-indigo-50/80 shadow-sm ring-1 ring-indigo-200"
-                  : "border-zinc-200/80 bg-white hover:border-zinc-300 hover:bg-zinc-50/80"
+                  ? "bg-white text-indigo-700 shadow-sm ring-1 ring-zinc-200/80"
+                  : "text-zinc-500 hover:bg-white/60 hover:text-zinc-900"
               }`}
             >
-              <span className="flex items-start justify-between gap-2">
-                <span
-                  className={`text-sm font-bold tabular-nums ${
-                    active ? "text-indigo-950" : "text-zinc-900"
-                  }`}
-                >
-                  {opt.label}
-                </span>
-                <span
-                  className={`mt-0.5 h-2 w-2 rounded-full ${
-                    active ? "bg-indigo-600" : "bg-zinc-200 group-hover:bg-zinc-300"
-                  }`}
-                  aria-hidden
-                />
-              </span>
-              <span
-                className={`mt-1 block text-[11px] font-semibold ${
-                  active ? "text-indigo-900" : "text-zinc-600"
-                }`}
-              >
-                {meta.title}
-              </span>
-              <span className="mt-0.5 block text-[10px] leading-snug text-zinc-500">{meta.detail}</span>
-              {meta.badge && (
-                <span className="mt-2 inline-flex rounded-full bg-white/80 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-indigo-800 ring-1 ring-indigo-200/80">
-                  {meta.badge}
-                </span>
-              )}
+              {opt.label}
             </button>
           );
         })}
       </div>
+
+      <p className="mt-2 text-xs leading-relaxed text-zinc-500">{hint}</p>
     </div>
   );
 }
@@ -681,11 +592,11 @@ export function EvidencePackExportPanel({
         </div>
       </header>
 
-      <div className="mt-3 space-y-4">
-        <EvidenceCoverageSection ui={evidenceUi} loading={coverageLoading} />
-
-        <MetricCards
-          items={[
+      <div className="mt-3 space-y-3">
+        <EvidenceCoverageSection
+          ui={evidenceUi}
+          loading={coverageLoading}
+          stats={[
             { label: "Controls", value: String(controlsEvaluated) },
             { label: "Findings", value: String(openFindings) },
             { label: "Passing", value: String(passingCount) },
@@ -696,7 +607,7 @@ export function EvidencePackExportPanel({
           <PeriodWindowPicker
             frameworkId={frameworkId}
             scopeLabel={scopeLabel}
-            helper={copy.scopeHelper}
+            hint={copy.periodHint}
             periodKey={periodKey}
             onPeriodChange={onPeriodChange}
           />
@@ -711,8 +622,7 @@ export function EvidencePackExportPanel({
                   </span>
                 )}
               </p>
-              <p className="mt-1 text-xs leading-relaxed text-zinc-500">{copy.dateHelper}</p>
-              <div className="mt-3">
+              <div className="mt-2">
                 <AuditAsOfPicker value={asOf} onChange={onAsOfChange} maxIso={maxIso} />
               </div>
             </div>
