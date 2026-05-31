@@ -11,10 +11,10 @@ import {
 
 const WINDOW_OPTIONS = [
   { value: "last_scan" as const, label: "Last scan" },
-  { value: 30 as const, label: "30d" },
-  { value: 90 as const, label: "90d" },
-  { value: 180 as const, label: "180d" },
-  { value: 365 as const, label: "365d" },
+  { value: 30 as const, label: "Last 30 days" },
+  { value: 90 as const, label: "Last 90 days" },
+  { value: 180 as const, label: "Last 180 days" },
+  { value: 365 as const, label: "Last 365 days" },
 ];
 
 const readinessStyles: Record<
@@ -71,7 +71,6 @@ function getFrameworkExportCopy(frameworkId: string) {
       eyebrow: "SOC 2 Type II",
       subtitle: "Build a reviewer-ready package around the Type II sampling window.",
       contextLabel: "90-day evidence window",
-      periodNotice: "Exports generated today may not satisfy a full 90-day Type II period.",
     };
   }
 
@@ -80,7 +79,6 @@ function getFrameworkExportCopy(frameworkId: string) {
       eyebrow: "CIS AWS Foundations",
       subtitle: "Package benchmark posture with optional evidence history.",
       contextLabel: "Benchmark snapshot",
-      periodNotice: null,
     };
   }
 
@@ -89,7 +87,6 @@ function getFrameworkExportCopy(frameworkId: string) {
       eyebrow: "ISO 27001",
       subtitle: "Export control evidence and historical posture.",
       contextLabel: "Evidence history",
-      periodNotice: null,
     };
   }
 
@@ -97,7 +94,6 @@ function getFrameworkExportCopy(frameworkId: string) {
     eyebrow: "Evidence export",
     subtitle: "Create an evidence package for this framework.",
     contextLabel: "Audit package",
-    periodNotice: null,
   };
 }
 
@@ -146,11 +142,19 @@ function EvidenceCoverageSection({
             </div>
           )}
 
-          {(ui.guidanceLine || ui.detailLine) && (
-            <p className="mt-2 text-xs leading-relaxed text-zinc-500">
-              {ui.guidanceLine ?? ui.detailLine}
-            </p>
-          )}
+          {ui.guidanceLine ? (
+            <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200/70 bg-amber-50/90 px-3 py-2 text-xs font-medium text-amber-950">
+              <span
+                className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold leading-none text-amber-800 ring-1 ring-amber-200/80"
+                aria-hidden
+              >
+                i
+              </span>
+              <span>{ui.guidanceLine}</span>
+            </div>
+          ) : ui.detailLine ? (
+            <p className="mt-2 text-xs leading-relaxed text-zinc-500">{ui.detailLine}</p>
+          ) : null}
         </div>
 
         <dl className="grid min-w-[11rem] grid-cols-3 gap-3 rounded-xl border border-zinc-200/70 bg-white/70 px-3 py-2 sm:grid-cols-1 sm:gap-1.5">
@@ -170,56 +174,51 @@ function EvidenceCoverageSection({
 
 function PeriodWindowPicker({
   scopeLabel,
-  notice,
   periodKey,
   onPeriodChange,
 }: {
   scopeLabel: string;
-  notice: string | null;
   periodKey: string | number;
   onPeriodChange: (key: string | number) => void;
 }) {
+  const selected = WINDOW_OPTIONS.find((opt) => opt.value === periodKey) ?? WINDOW_OPTIONS[0];
+
   return (
     <div>
       <p className="text-[10px] font-semibold uppercase tracking-wider text-zinc-500">{scopeLabel}</p>
 
-      <div
-        className="mt-2 grid grid-cols-5 gap-1 rounded-xl border border-zinc-200/80 bg-zinc-100/60 p-1"
-        role="radiogroup"
-        aria-label={scopeLabel}
-      >
-        {WINDOW_OPTIONS.map((opt) => {
-          const active = periodKey === opt.value;
-          return (
-            <button
-              key={String(opt.value)}
-              type="button"
-              onClick={() => onPeriodChange(opt.value)}
-              role="radio"
-              aria-checked={active}
-              className={`rounded-lg px-2 py-2 text-center text-xs font-bold tabular-nums transition ${
-                active
-                  ? "bg-white text-indigo-700 shadow-sm ring-1 ring-zinc-200/80"
-                  : "text-zinc-500 hover:bg-white/60 hover:text-zinc-900"
-              }`}
-            >
+      <label className="relative mt-2 block">
+        <span className="pointer-events-none absolute left-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg bg-white text-indigo-700 ring-1 ring-indigo-100">
+          <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24" aria-hidden>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16M4 12h16M4 17h10" />
+          </svg>
+        </span>
+        <select
+          value={String(selected.value)}
+          onChange={(event) => {
+            const next = event.target.value;
+            onPeriodChange(next === "last_scan" ? next : Number(next));
+          }}
+          className="h-11 w-full appearance-none rounded-xl border border-zinc-200/90 bg-gradient-to-b from-white to-zinc-50 pl-12 pr-10 text-sm font-semibold text-zinc-900 shadow-sm outline-none transition hover:border-zinc-300 focus:border-indigo-300 focus:ring-2 focus:ring-indigo-100"
+          aria-label={scopeLabel}
+        >
+          {WINDOW_OPTIONS.map((opt) => (
+            <option key={String(opt.value)} value={String(opt.value)}>
               {opt.label}
-            </button>
-          );
-        })}
-      </div>
-
-      {notice && (
-        <div className="mt-2 flex items-center gap-2 rounded-lg border border-amber-200/70 bg-amber-50/90 px-3 py-2 text-xs font-medium text-amber-950">
-          <span
-            className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-amber-100 text-[10px] font-bold leading-none text-amber-800 ring-1 ring-amber-200/80"
-            aria-hidden
-          >
-            i
-          </span>
-          <span>{notice}</span>
-        </div>
-      )}
+            </option>
+          ))}
+        </select>
+        <svg
+          className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          viewBox="0 0 24 24"
+          aria-hidden
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" d="m6 9 6 6 6-6" />
+        </svg>
+      </label>
     </div>
   );
 }
@@ -366,7 +365,7 @@ function AuditAsOfPicker({
         <div
           role="dialog"
           aria-label="Choose as-of date"
-          className="absolute right-0 z-10 mt-2 w-[18rem] rounded-2xl border border-zinc-200/90 bg-white p-3 shadow-xl shadow-zinc-950/15 ring-1 ring-zinc-950/[0.04]"
+          className="absolute bottom-full right-0 z-20 mb-2 w-[18rem] rounded-2xl border border-zinc-200/90 bg-white p-3 shadow-xl shadow-zinc-950/15 ring-1 ring-zinc-950/[0.04]"
         >
           <div className="mb-3 flex items-center justify-between rounded-xl bg-zinc-50 px-1.5 py-1">
             <button
@@ -606,7 +605,6 @@ export function EvidencePackExportPanel({
         <section className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm">
           <PeriodWindowPicker
             scopeLabel={scopeLabel}
-            notice={copy.periodNotice}
             periodKey={periodKey}
             onPeriodChange={onPeriodChange}
           />
@@ -637,7 +635,7 @@ export function EvidencePackExportPanel({
           <>
             <svg className="h-3.5 w-3.5 shrink-0 animate-spin" fill="none" viewBox="0 0 24 24" aria-hidden>
               <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 12h4Z" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8V0C5.373 0 0 5.373 0 12h4Z" />
             </svg>
             Generating…
           </>
