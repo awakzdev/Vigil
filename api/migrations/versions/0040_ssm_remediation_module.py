@@ -4,7 +4,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0040_ssm_remediation_module"
-down_revision = "0039_cfn_stack_name"
+down_revision = "0039"
 branch_labels = None
 depends_on = None
 
