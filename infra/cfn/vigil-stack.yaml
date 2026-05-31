@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  VigilAccountConnector — parent stack for Vigil in your AWS account. Core scanner (read-only role),
+  VigilAccountConnector - parent stack for Vigil in your AWS account. Core scanner (read-only role),
   optional policy generation, optional remediation modules (scoped write). Stack name is not the IAM role name.
 
 Parameters:

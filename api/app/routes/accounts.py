@@ -62,6 +62,7 @@ from app.models.resources import (
 )
 from app.data.remediation_modules import (
     REMEDIATION_MODULES,
+    any_remediation_enabled,
     remediation_deployed_dict,
     remediation_modules_dict,
     set_remediation_modules,
@@ -132,6 +133,12 @@ def _modules_from_body(body: RemediationModulesIn) -> dict[str, bool]:
     return body.model_dump()
 
 
+def _cfn_console_base_url() -> str:
+    """Regional CloudFormation console (stack create/update deep links)."""
+    region = settings.CFN_CONSOLE_REGION or "us-east-1"
+    return f"https://{region}.console.aws.amazon.com/cloudformation/home?region={region}"
+
+
 def _cfn_stack_params(
     external_id: str,
     *,
@@ -167,7 +174,7 @@ def _launch_url(
         remediation_modules=remediation_modules,
     )
     qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
-    return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
+    return f"{_cfn_console_base_url()}#/stacks/create/review?{qs}"
 
 
 def _update_launch_url(
@@ -183,8 +190,18 @@ def _update_launch_url(
         enable_advanced_policy_generation=enable_advanced_policy_generation,
         remediation_modules=remediation_modules,
     )
-    qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
-    return f"https://console.aws.amazon.com/cloudformation/home#/stacks/update/review?{qs}"
+    stack = (params.get("stackName") or "").strip() or settings.CFN_STACK_NAME
+    params["stackName"] = stack
+    # stackName + templateURL first — console update/review route can drop stackName and send '*'.
+    ordered: list[tuple[str, str]] = [
+        ("stackName", stack),
+        ("templateURL", params["templateURL"]),
+    ]
+    for key, value in params.items():
+        if key not in ("stackName", "templateURL"):
+            ordered.append((key, value))
+    qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in ordered)
+    return f"{_cfn_console_base_url()}#/stacks/update/template?{qs}"
 
 
 def _cli_command(
@@ -245,7 +262,18 @@ def _remediation_launch_url() -> str:
         "stackName": "VigilRemediationSSM",
     }
     qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
-    return f"https://console.aws.amazon.com/cloudformation/home#/stacks/create/review?{qs}"
+    return f"{_cfn_console_base_url()}#/stacks/create/review?{qs}"
+
+
+def _remediation_update_launch_url(stack_name: str) -> str:
+    """Nested remediation child stack (only if deployed standalone). Prefer parent stack update."""
+    s = get_settings()
+    params = {
+        "templateURL": s.CFN_REMEDIATION_SSM_TEMPLATE_URL,
+        "stackName": stack_name.strip() or "VigilRemediationSSM",
+    }
+    qs = "&".join(f"{k}={quote(v, safe='')}" for k, v in params.items())
+    return f"{_cfn_console_base_url()}#/stacks/update/template?{qs}"
 
 
 def _remediation_cli_command() -> str:
@@ -300,9 +328,9 @@ def _account_out(acc: AwsAccount) -> AccountOut:
         cfn_template_url=get_settings().CFN_TEMPLATE_URL,
         cfn_cli_command=_cli_command(acc.external_id, **create_opts),
         cfn_update_cli_command=_update_cli_command(acc.external_id, **update_opts),
-        remediation_cfn_launch_url=None,
-        remediation_cfn_template_url=None,
-        remediation_cfn_cli_command=None,
+        remediation_cfn_launch_url=_remediation_launch_url() if any_remediation_enabled(modules) else None,
+        remediation_cfn_template_url=get_settings().CFN_REMEDIATION_SSM_TEMPLATE_URL,
+        remediation_cfn_cli_command=_remediation_cli_command() if any_remediation_enabled(modules) else None,
         last_scan_at=acc.last_scan_at,
     )
 

@@ -30,6 +30,17 @@ function yesNo(flag: boolean): string {
   return flag ? "Yes" : "No";
 }
 
+/** Infer console region from S3 template host (e.g. .s3.us-east-1.amazonaws.com). */
+export function cfnConsoleRegion(templateUrl: string): string {
+  const m = templateUrl.match(/\.s3\.([a-z0-9-]+)\.amazonaws\.com/i);
+  return m?.[1] ?? "us-east-1";
+}
+
+export function cfnConsoleBase(templateUrl: string): string {
+  const region = cfnConsoleRegion(templateUrl);
+  return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}`;
+}
+
 /** Read trust principal + role name from a server-built console launch URL. */
 export function parseCfnLaunchMeta(launchUrl: string): {
   trustPrincipalArn: string;
@@ -44,8 +55,9 @@ export function parseCfnLaunchMeta(launchUrl: string): {
 }
 
 function stackNameForVariant(acc: CfnAccountSlice, variant: CfnDeployVariant): string {
+  const name = (acc.cfn_stack_name ?? "").trim();
   if (variant === "update") {
-    return acc.cfn_stack_name || CONNECTOR_STACK_NAME;
+    return name || CONNECTOR_STACK_NAME;
   }
   return displayConnectorStackName(acc);
 }
@@ -60,8 +72,9 @@ function buildLaunchUrl(
     variant === "update" ? acc.cfn_update_launch_url : acc.cfn_launch_url,
   );
   const params = new URLSearchParams();
-  params.set("templateURL", acc.cfn_template_url);
+  // stackName before templateURL — avoids console update wizard sending stackName='*'.
   params.set("stackName", stackName);
+  params.set("templateURL", acc.cfn_template_url);
   params.set("param_ExternalId", acc.external_id);
   params.set("param_VigilAccountPrincipal", meta.trustPrincipalArn);
   params.set("param_RoleName", meta.scannerRoleName);
@@ -72,11 +85,18 @@ function buildLaunchUrl(
   for (const spec of REMEDIATION_MODULE_SPECS) {
     params.set(`param_${spec.cfnParameter}`, yesNo(opts.remediation_modules[spec.id]));
   }
+  const base = cfnConsoleBase(acc.cfn_template_url);
   const path =
     variant === "update"
-      ? "https://console.aws.amazon.com/cloudformation/home#/stacks/update/review"
-      : "https://console.aws.amazon.com/cloudformation/home#/stacks/create/review";
+      ? `${base}#/stacks/update/template`
+      : `${base}#/stacks/create/review`;
   return `${path}?${params.toString()}`;
+}
+
+export function buildCfnStackListUrl(acc: CfnAccountSlice, variant: CfnDeployVariant): string {
+  const stackName = stackNameForVariant(acc, variant);
+  const base = cfnConsoleBase(acc.cfn_template_url);
+  return `${base}#/stacks?filteringText=${encodeURIComponent(stackName)}`;
 }
 
 export function buildCfnCliCommand(
@@ -112,15 +132,20 @@ export function resolveDeployArtifacts(
   acc: CfnAccountSlice,
   connectionOptions: CfnConnectionOptions | undefined,
   variant: CfnDeployVariant,
-): { consoleUrl: string; cliCommand: string } {
+): { consoleUrl: string; cliCommand: string; stackListUrl: string; stackName: string } {
+  const stackName = stackNameForVariant(acc, variant);
   if (!connectionOptions) {
     return {
       consoleUrl: variant === "update" ? acc.cfn_update_launch_url : acc.cfn_launch_url,
       cliCommand: variant === "update" ? acc.cfn_update_cli_command : acc.cfn_cli_command,
+      stackListUrl: buildCfnStackListUrl(acc, variant),
+      stackName,
     };
   }
   return {
     consoleUrl: buildLaunchUrl(acc, connectionOptions, variant),
     cliCommand: buildCfnCliCommand(acc, connectionOptions, variant),
+    stackListUrl: buildCfnStackListUrl(acc, variant),
+    stackName,
   };
 }

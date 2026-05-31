@@ -60,6 +60,37 @@ const drawerFooterSecondary =
 const drawerFooterException =
   "flex-[0.88] rounded-lg border border-amber-200/50 bg-amber-50/40 px-3 py-2 text-[13px] font-medium text-amber-800/75 transition-all duration-200 hover:border-amber-300/60 hover:bg-amber-50/70 hover:text-amber-900 active:scale-[0.995]";
 
+function DrawerChevronButton({
+  expanded,
+  title,
+  onClick,
+}: {
+  expanded: boolean;
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-7 w-7 items-center justify-center rounded-md text-zinc-400 transition-all duration-150 hover:bg-zinc-100 hover:text-zinc-700 active:scale-95"
+      aria-label={expanded ? `Collapse ${title}` : `Expand ${title}`}
+      aria-expanded={expanded}
+    >
+      <svg
+        className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        viewBox="0 0 24 24"
+        aria-hidden
+      >
+        <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+      </svg>
+    </button>
+  );
+}
+
 function DrawerSection({
   title,
   children,
@@ -91,14 +122,11 @@ function DrawerSection({
         <div className="flex shrink-0 items-center gap-2">
           {action}
           {collapsible && (
-            <button
-              type="button"
+            <DrawerChevronButton
+              expanded={expanded}
+              title={title}
               onClick={() => setExpanded(!expanded)}
-              className="text-[11px] font-medium text-zinc-500 transition-colors hover:text-zinc-800"
-              aria-expanded={expanded}
-            >
-              {expanded ? "Hide" : "Show"}
-            </button>
+            />
           )}
         </div>
       </div>
@@ -127,7 +155,7 @@ function RemediationModeToggle({
     { id: "console", label: "Console" },
     { id: "cli", label: "CLI" },
     ...(hideTerraform ? [] : [{ id: "terraform" as const, label: "Terraform" }]),
-    { id: "automation", label: "Automation" },
+    { id: "automation", label: "SSM Automation" },
   ];
   return (
     <div className="inline-flex max-w-full flex-wrap gap-0.5 rounded-lg bg-zinc-100/80 p-0.5">

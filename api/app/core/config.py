@@ -62,6 +62,8 @@ class Settings(BaseSettings):
         "https://amzn-s3-vigil.s3.us-east-1.amazonaws.com/infra/vigil-remediation-ssm.yaml"
     )
 
+    # CloudFormation console deep links (customer deploys connector stack).
+    CFN_CONSOLE_REGION: str = "us-east-1"
     # Customer remediation automation home region.
     REMEDIATION_AUTOMATION_REGION: str = "us-east-1"
     REMEDIATION_SSM_DOCUMENT_NAME: str = "Vigil-RemediationPlanExecutor"

@@ -1304,8 +1304,12 @@ function RemediationAutomationSection({
                         ))}
                       </ul>
                       {spec.runnerSupported && verify?.runner_ready === false && (
-                        <p className="mt-2 text-[11px] font-medium text-amber-800">
-                          SSM remediation automation is not ready.
+                        <p className="mt-2 text-[11px] leading-relaxed font-medium text-amber-800">
+                          SSM document not ready. Use{" "}
+                          <span className="font-semibold">Manage capabilities → Update CloudFormation</span>{" "}
+                          on stack{" "}
+                          <span className="font-mono">{CONNECTOR_STACK_NAME}</span> with this module
+                          enabled — not a blank stack update with only the SSM YAML.
                         </p>
                       )}
                     </div>
@@ -1696,7 +1700,7 @@ function DeployMethodTabs({
   const tab = activeTab ?? internalTab;
   const setTab = onActiveTabChange ?? setInternalTab;
   const isUpdate = variant === "update";
-  const { consoleUrl, cliCommand } = resolveDeployArtifacts(
+  const { consoleUrl, cliCommand, stackListUrl, stackName } = resolveDeployArtifacts(
     acc,
     deployOptions,
     isUpdate ? "update" : "create",
@@ -1731,6 +1735,15 @@ function DeployMethodTabs({
       <div className="mt-3">
         {tab === "console" && (
           <div className="space-y-2.5">
+            {isUpdate && (
+              <p className="text-[11px] leading-relaxed text-zinc-600">
+                Updates stack{" "}
+                <span className="font-mono font-medium text-zinc-800">{stackName}</span> (
+                <span className="font-mono text-zinc-700">vigil-stack.yaml</span>
+                ). SSM remediation modules are parameters on this connector stack — not a separate
+                template update.
+              </p>
+            )}
             <div className={deployBtnRow}>
               <a href={consoleUrl} target="_blank" rel="noreferrer" className={deployPrimaryBtn}>
                 {consoleLabel}
@@ -1744,12 +1757,12 @@ function DeployMethodTabs({
                 </svg>
               </a>
               <a
-                href={acc.cfn_template_url}
+                href={isUpdate ? stackListUrl : acc.cfn_template_url}
                 target="_blank"
                 rel="noreferrer"
                 className={deploySecondaryBtn}
               >
-                Review Template
+                {isUpdate ? "Find stack" : "View template YAML"}
               </a>
             </div>
           </div>

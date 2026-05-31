@@ -42,6 +42,24 @@ AWS-owned runbooks (S3 public access, CloudTrail) do not require this stack.
 
 Set Vigil `REMEDIATION_AUTOMATION_REGION=us-east-1` to the automation home region.
 
+## Console: "Failed to load stack policy"
+
+This is **not** a bad `vigil-stack.yaml` body. The CloudFormation console calls
+`cloudformation:GetStackPolicy` on your existing stack before it will continue an update.
+If your IAM user/role lacks that action (common with custom admin policies or SCPs), the
+wizard stops on **Specify template** with that red banner.
+
+**Workaround:** use the CLI from Vigil Accounts → Manage capabilities → CLI (includes
+`--stack-name` and module parameters), or add to your role:
+
+- `cloudformation:GetStackPolicy`
+- `cloudformation:DescribeStacks`
+- `cloudformation:GetTemplateSummary`
+- `cloudformation:UpdateStack`
+
+Templates on S3 must stay in sync: upload all three files under `infra/cfn/` with
+`Content-Type: text/yaml` (see `.env.example`).
+
 ## Supported Actions
 
 | Check | SSM action |
